@@ -50,6 +50,14 @@ main() {
     if [ -z "${HOME:-}" ] || [ "$HOME" = "/" ] || [ ! -w "$HOME" ]; then
         export HOME="$APP_HOME"
     fi
+    if [ ! -w "$HOME" ]; then
+        echo "WARN: HOME ($HOME) is not writable by UID $CURRENT_UID. Mount a writable folder there or set APP_HOME to one."
+    fi
+    # bash takes UID from the environment when it's passed in, so a value
+    # other than the real UID means one was requested
+    if [ "${UID:-$CURRENT_UID}" != "$CURRENT_UID" ] || [ -n "${GID:-}${USER_ID:-}${GROUP_ID:-}" ]; then
+        echo "INFO: Ignoring UID/GID settings: the container was started as UID $CURRENT_UID (--user), which takes precedence."
+    fi
     set_up_all_paths
     mkdir -p "$CONFIG_DIR" "$DATA_DIR" 2>/dev/null || echo "WARN: Could not create $CONFIG_DIR or $DATA_DIR as UID $CURRENT_UID. Mount them writable for this user."
     exec "$@"
