@@ -3,6 +3,7 @@ import pathlib
 import re
 import traceback
 from functools import partial
+from urllib.parse import urlsplit, urlunsplit
 
 import aiofiles
 import arrow
@@ -152,8 +153,7 @@ class AltDownloadManager(DownloadManager):
     async def _alt_download_sendreq(self, item, c, ele, placeholderObj):
         try:
             _attempt = self._alt_attempt_get(item)
-            base_url = re.sub("[0-9a-z]*\.mpd$", "", ele.mpd, re.IGNORECASE)
-            url = f"{base_url}{item['origname']}"
+            url = _mpd_segment_url(ele.mpd, item["origname"])
             common_globals.log.debug(
                 f"{get_medialog(ele)} Attempting to download media {item['origname']} with {url}"
             )
@@ -176,11 +176,10 @@ class AltDownloadManager(DownloadManager):
             total = None
             common_globals.log.debug(f"{get_medialog(ele)} resume header {headers}")
             params = get_alt_params(ele)
-            base_url = re.sub("[0-9a-z]*\.mpd$", "", ele.mpd, re.IGNORECASE)
-            url = f"{base_url}{item['origname']}"
+            url = _mpd_segment_url(ele.mpd, item["origname"])
             headers = {"Cookie": f"{ele.hls_header}{auth_requests.get_cookies_str()}"}
             common_globals.log.debug(
-                f"{get_medialog(ele)} [attempt {self._alt_attempt_get(item).get()}/{get_download_retries()}] Downloading media with url  {ele.mpd}"
+                f"{get_medialog(ele)} [attempt {self._alt_attempt_get(item).get()}/{get_download_retries()}] Downloading media with url  {url}"
             )
             async with c.requests_async(
                 url=url,
@@ -190,8 +189,27 @@ class AltDownloadManager(DownloadManager):
                 total_timeout=None,
                 read_timeout=get_chunk_timeout(),
             ) as l:
-                item["total"] = int(l.headers.get("content-length"))
-                total = item["total"]
+                content_type = (l.headers.get("content-type") or "").lower()
+                cl_raw = l.headers.get("content-length")
+                try:
+                    total = int(cl_raw) if cl_raw is not None else None
+                except (TypeError, ValueError):
+                    total = None
+                item["total"] = total
+
+                if any(
+                    x in content_type
+                    for x in ("dash+xml", "mpegurl", "application/xml", "text/xml")
+                ):
+                    raise Exception(
+                        f"{get_medialog(ele)} DRM segment returned playlist "
+                        f"content-type={content_type!r} url={url}"
+                    )
+                if not total or total <= 0:
+                    raise Exception(
+                        f"{get_medialog(ele)} DRM segment empty size "
+                        f"(content-type={content_type or 'unknown'}, url={url})"
+                    )
 
                 data = {
                     "content-total": total,
@@ -420,6 +438,20 @@ class AltDownloadManager(DownloadManager):
             f"{get_medialog(ele)} resume_size: {resume_size}  and total: {total }"
         )
 
+        if total is None or int(total) <= 0:
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    common_globals.thread,
+                    partial(
+                        cache.set,
+                        f"{item['name']}_{ele.id}_{ele.username}_headers",
+                        None,
+                    ),
+                )
+            except Exception:
+                pass
+            return item, False
+
         if await self._check_forced_skip(ele, total) == 0:
             item["total"] = 0
             return item, True
@@ -470,9 +502,12 @@ class AltDownloadManager(DownloadManager):
         video_total = video["total"] if video else 0
 
         if (audio_total + video_total) == 0:
-            if ele.mediatype.capitalize() != "Forced_skipped":
-                await self._force_download(ele, username, model_id)
-            return ele.mediatype, 0
+            if ele.mediatype.capitalize() == "Forced_skipped":
+                return ele.mediatype, 0
+            raise Exception(
+                f"{get_medialog(ele)} DRM download produced 0 bytes "
+                "(audio+video). Not marking as downloaded."
+            )
 
         for m in [audio, video]:
             if m is not None:
@@ -503,3 +538,15 @@ class AltDownloadManager(DownloadManager):
             total=total,
         )
         return task1
+
+def _mpd_segment_url(mpd_url: str, segment_name: str) -> str:
+    parts = urlsplit((mpd_url or "").strip())
+    name = (segment_name or "").strip().lstrip("/")
+    path = parts.path or ""
+    base_path = re.sub(r"[^/]+\.mpd$", "", path, flags=re.IGNORECASE)
+    if base_path == path:
+        base_path = (path.rsplit("/", 1)[0] + "/") if "/" in path else "/"
+    elif not base_path.endswith("/"):
+        base_path += "/"
+    return urlunsplit((parts.scheme, parts.netloc, base_path + name, parts.query, ""))
+
