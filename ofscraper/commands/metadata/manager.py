@@ -19,7 +19,6 @@ from functools import partial
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.utils.cache.cache as cache
 import ofscraper.utils.hash as hash
-import ofscraper.utils.paths.collisions as collisions
 import ofscraper.utils.settings as settings
 from ofscraper.db.operations_.media import (
     mark_media_as_downloaded,
@@ -61,42 +60,52 @@ class MetaDataManager:
                 )
                 or {}
             )
-            fileData = prevData
-            lost = await self._metadata_shared_path(prevData, model_id, username)
-            if lost:
-                # several media are recorded at this path (old overwrites);
-                # the file there can't be attributed to any one of them, so
-                # record the resolved path and let a download fetch it (#48)
-                fileData = {}
+            recorded = self._metadata_recorded_file(prevData)
+            if recorded:
+                # this media's file can be under another name than the
+                # template's when that name held a different file (#48)
+                await mark_media_as_downloaded(
+                    ele,
+                    filepath=recorded,
+                    model_id=model_id,
+                    username=username,
+                    downloaded=1,
+                    hashdata=(
+                        hash.get_hash(recorded)
+                        if settings.get_settings().hash
+                        else prevData.get("hash")
+                    ),
+                    size=recorded.stat().st_size,
+                )
+                return (
+                    ele.mediatype
+                    if prevData
+                    != await prev_download_media_data(
+                        ele, model_id=model_id, username=username
+                    )
+                    else "Forced_skipped"
+                )
             await mark_media_as_downloaded(
                 ele,
-                filename=self._metadata_file_helper(placeholderObj, fileData),
-                directory=self._metadata_dir_helper(placeholderObj, fileData),
+                filename=self._metadata_file_helper(placeholderObj, prevData),
+                directory=self._metadata_dir_helper(placeholderObj, prevData),
                 model_id=model_id,
                 username=username,
-                downloaded=(
-                    0
-                    if lost
-                    else self._metadata_downloaded_helper(placeholderObj, fileData)
-                ),
-                hashdata=self._metadata_hash_helper(placeholderObj, fileData, ele),
-                size=self._metadata_size_helper(placeholderObj, fileData),
+                downloaded=self._metadata_downloaded_helper(placeholderObj, prevData),
+                hashdata=self._metadata_hash_helper(placeholderObj, prevData, ele),
+                size=self._metadata_size_helper(placeholderObj, prevData),
             )
             effected = prevData != await prev_download_media_data(
                 ele, model_id=model_id, username=username
             )
         return ele.mediatype if effected else "Forced_skipped"
 
-    async def _metadata_shared_path(self, prevData, model_id, username):
-        # checks the previously recorded path itself, which a changed filename
-        # template may no longer produce
+    def _metadata_recorded_file(self, prevData):
+        """In update mode, this media's previously recorded file, if it's still there."""
         if settings.get_settings().metadata != "update" or not prevData.get("filename"):
-            return False
-        return await collisions.shared_in_db(
-            pathlib.Path(prevData.get("directory") or "", prevData["filename"]),
-            model_id,
-            username,
-        )
+            return None
+        recorded = pathlib.Path(prevData.get("directory") or "", prevData["filename"])
+        return recorded if recorded.is_file() else None
 
     def _metadata_downloaded_helper(self, placeholderObj, prevData):
         if settings.get_settings().metadata == "check":

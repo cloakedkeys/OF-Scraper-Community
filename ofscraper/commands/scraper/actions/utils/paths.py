@@ -2,13 +2,18 @@ import logging
 import os
 import pathlib
 import platform
+import errno
 import shutil
 from collections.abc import Iterable
 
+import xxhash
+
 import ofscraper.commands.scraper.actions.utils.globals as common_globals
+import ofscraper.utils.config.data as config_data
 import ofscraper.utils.dates as dates
-import ofscraper.utils.paths.collisions as collisions
+import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.paths.common as common_paths
+import ofscraper.utils.paths.paths as path_utils
 from ofscraper.commands.scraper.actions.utils.log import get_medialog
 
 try:
@@ -16,23 +21,111 @@ try:
 except ModuleNotFoundError:
     pass
 
+MAX_CANDIDATES = 1000
+
 
 def moveHelper(temp, path_to_file, ele, log_=None):
-    if not path_to_file.exists():
-        shutil.move(temp, path_to_file)
-    elif collisions.takes_over(path_to_file):
-        # the file there may be another media's, left by an old collision
-        shutil.move(temp, path_to_file)
-    elif (
+    """
+    Move a finished download into place and return the path it ended up at.
+
+    A filename template (e.g. one built on {text}) can give different media
+    the same path (#48). A free name is reserved by creating it exclusively
+    (O_EXCL), which only one download can do, across threads and processes,
+    and then replaced with the download. An existing file with identical
+    content is this download already, so it's kept. Anything else at that
+    name, including another download's reservation, is left alone and the
+    download goes to name_<media_id>, then name_<media_id>_2 and so on. The
+    filesystem decides whether a name is taken, so its own case rules apply.
+    Callers must record the returned path. filename_collision "overwrite"
+    keeps the old behaviour: the larger file wins.
+    """
+    log_ = log_ or logging.getLogger("shared")
+    path_to_file = pathlib.Path(path_to_file)
+    if str(config_data.get_filename_collision()).lower() == "overwrite":
+        return _move_overwrite(temp, path_to_file, ele, log_)
+    for candidate in _candidates(path_to_file, ele.id):
+        if _reserve(candidate):
+            _replace_reserved(temp, candidate)
+            break
+        if _same_content(temp, candidate):
+            pathlib.Path(temp).unlink(missing_ok=True)
+            break
+    else:
+        raise RuntimeError(f"{get_medialog(ele)} no free path found for {path_to_file}")
+    if candidate != path_to_file:
+        log_.debug(
+            f"{get_medialog(ele)} {path_to_file.name} holds another file; saved as {candidate.name}"
+        )
+    return candidate
+
+
+def _reserve(path):
+    """Create path if nothing is there; False if something already is."""
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0))
+    except FileExistsError:
+        return False
+    os.close(fd)
+    return True
+
+
+def _replace_reserved(temp, path):
+    try:
+        os.replace(temp, path)
+    except OSError as E:
+        # a temp dir on another drive can't be renamed across; copy instead
+        if E.errno == errno.EXDEV or getattr(E, "winerror", None) == 17:
+            try:
+                shutil.copy2(temp, path)
+            except BaseException:
+                pathlib.Path(path).unlink(missing_ok=True)
+                raise
+            pathlib.Path(temp).unlink(missing_ok=True)
+        else:
+            pathlib.Path(path).unlink(missing_ok=True)
+            raise
+
+
+def _move_overwrite(temp, path_to_file, ele, log_):
+    if not path_to_file.exists() or (
         pathlib.Path(temp).absolute().stat().st_size
-        >= pathlib.Path(path_to_file).absolute().stat().st_size
+        >= path_to_file.absolute().stat().st_size
     ):
         shutil.move(temp, path_to_file)
     else:
         pathlib.Path(temp).unlink(missing_ok=True)
-        log_ = log_ or logging.getLogger("shared")
         log_.debug(f"{get_medialog(ele)} smaller then previous file")
-    # set variables based on parent process
+    return path_to_file
+
+
+def with_media_id(path, media_id, n=1):
+    path = pathlib.Path(path)
+    tail = f"_{media_id}" if n == 1 else f"_{media_id}_{n}"
+    return path.with_name(f"{path.stem}{tail}{path.suffix}")
+
+
+def _candidates(path, media_id):
+    yield path
+    for n in range(1, MAX_CANDIDATES):
+        # a trailing _<digits> survives truncation, but check the result anyway
+        yield pathlib.Path(path_utils.truncate(with_media_id(path, media_id, n)))
+
+
+def _same_content(a, b):
+    a, b = pathlib.Path(a), pathlib.Path(b)
+    if not b.is_file() or a.stat().st_size != b.stat().st_size:
+        return False
+    return _file_hash(a) == _file_hash(b)
+
+
+def _file_hash(path):
+    # not hash.get_hash: that caches by path, and these files are replaced
+    hasher = xxhash.xxh128()
+    size = of_env.getattr("BUF_SIZE")
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(size), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
 
 
 def _resolve(path):
