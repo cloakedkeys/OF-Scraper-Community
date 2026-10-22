@@ -36,14 +36,18 @@ def _raw(ctx, port):
     ctx.wrap_socket(sock, server_hostname=HOST).do_handshake()
 
 
+# trust_env=False: a proxy set in the environment (HTTPS_PROXY etc.) would
+# otherwise carry the localhost capture away from the test server.
 def _httpx(ctx, port):
-    with httpx.Client(http2=True, verify=ctx) as client:
+    with httpx.Client(http2=True, verify=ctx, trust_env=False) as client:
         client.get(f"https://{HOST}:{port}/")
 
 
 def _aiohttp(ctx, port):
     async def go():
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ctx)) as s:
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=ctx), trust_env=False
+        ) as s:
             async with s.get(f"https://{HOST}:{port}/"):
                 pass
 
