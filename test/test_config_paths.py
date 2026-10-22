@@ -61,3 +61,10 @@ def test_settings_falls_back_to_env_default_for_empty_ffmpeg(ffmpeg_env, monkeyp
 
     monkeypatch.setattr(settings.config_data, "get_ffmpeg", lambda: "")
     assert settings.merged_settings().ffmpeg == "/opt/ffmpeg"
+
+
+def test_save_location_is_unquoted():
+    import ofscraper.utils.paths.common as common_paths
+
+    config = {"file_options": {"save_location": '"D:\Media\OnlyFans"'}}
+    assert common_paths.get_save_location(config=config) == "D:\Media\OnlyFans"
