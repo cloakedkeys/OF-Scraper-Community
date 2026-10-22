@@ -19,6 +19,7 @@ from functools import partial
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.utils.cache.cache as cache
 import ofscraper.utils.hash as hash
+import ofscraper.utils.paths.collisions as collisions
 import ofscraper.utils.settings as settings
 from ofscraper.db.operations_.media import (
     mark_media_as_downloaded,
@@ -60,20 +61,38 @@ class MetaDataManager:
                 )
                 or {}
             )
+            fileData = prevData
+            lost = self._metadata_shared_path(prevData)
+            if lost:
+                # several media are recorded at this path (old overwrites);
+                # the file there can't be attributed to any one of them, so
+                # record the resolved path and let a download fetch it (#48)
+                fileData = {}
             await mark_media_as_downloaded(
                 ele,
-                filename=self._metadata_file_helper(placeholderObj, prevData),
-                directory=self._metadata_dir_helper(placeholderObj, prevData),
+                filename=self._metadata_file_helper(placeholderObj, fileData),
+                directory=self._metadata_dir_helper(placeholderObj, fileData),
                 model_id=model_id,
                 username=username,
-                downloaded=self._metadata_downloaded_helper(placeholderObj, prevData),
-                hashdata=self._metadata_hash_helper(placeholderObj, prevData, ele),
-                size=self._metadata_size_helper(placeholderObj, prevData),
+                downloaded=(
+                    0
+                    if lost
+                    else self._metadata_downloaded_helper(placeholderObj, fileData)
+                ),
+                hashdata=self._metadata_hash_helper(placeholderObj, fileData, ele),
+                size=self._metadata_size_helper(placeholderObj, fileData),
             )
             effected = prevData != await prev_download_media_data(
                 ele, model_id=model_id, username=username
             )
         return ele.mediatype if effected else "Forced_skipped"
+
+    def _metadata_shared_path(self, prevData):
+        if settings.get_settings().metadata != "update" or not prevData.get("filename"):
+            return False
+        return collisions.shared_in_db(
+            pathlib.Path(prevData.get("directory") or "", prevData["filename"])
+        )
 
     def _metadata_downloaded_helper(self, placeholderObj, prevData):
         if settings.get_settings().metadata == "check":

@@ -28,13 +28,13 @@ def db(tmp_path, monkeypatch):
         lambda self, model_id, username: path,
     )
 
-    def add(media_id, filepath, post_id=1):
+    def add(media_id, filepath, post_id=1, downloaded=1):
         with closing(sqlite3.connect(path)) as conn, conn:
             conn.execute(mediaCreate)
             conn.execute(
                 "INSERT INTO medias (media_id, post_id, directory, filename, model_id, downloaded)"
-                " VALUES (?, ?, ?, ?, ?, 1)",
-                (media_id, post_id + media_id, str(filepath.parent), filepath.name, MODEL),
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (media_id, post_id + media_id, str(filepath.parent), filepath.name, MODEL, downloaded),
             )
 
     return add
@@ -183,3 +183,32 @@ def test_normal_path_keeps_larger_existing_file(tmp_path, db):
     temp.write_bytes(b"short")
     action_paths.moveHelper(temp, target, _media(5))
     assert target.read_bytes() == b"complete earlier download"
+
+
+def test_owner_not_marked_downloaded_replaces_file(tmp_path, db):
+    # e.g. after metadata update reset an old collision: the file there
+    # isn't known to be this media's
+    import ofscraper.commands.scraper.actions.utils.paths as action_paths
+
+    target = tmp_path / "caption.jpg"
+    db(5, target, downloaded=0)
+    target.write_bytes(b"another media's larger image")
+    assert _resolve(target, 5) == target
+    temp = tmp_path / "temp.part"
+    temp.write_bytes(b"media 5")
+    action_paths.moveHelper(temp, target, _media(5))
+    assert target.read_bytes() == b"media 5"
+
+
+@pytest.mark.parametrize("mode,expected", [("update", True), ("check", False)])
+def test_metadata_update_distrusts_shared_path(tmp_path, db, monkeypatch, mode, expected):
+    import ofscraper.commands.metadata.manager as metadata_manager
+
+    target = tmp_path / "caption.jpg"
+    db(5, target)
+    db(9, target)
+    _resolve(target, 9)  # Placeholders.init runs this before the helpers
+    monkeypatch.setattr(metadata_manager.settings, "get_settings", lambda: SimpleNamespace(metadata=mode))
+    prev = {"directory": str(target.parent), "filename": target.name}
+    assert metadata_manager.MetaDataManager()._metadata_shared_path(prev) is expected
+    assert metadata_manager.MetaDataManager()._metadata_shared_path({}) is False

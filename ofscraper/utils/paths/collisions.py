@@ -13,7 +13,9 @@ media, so the same media resolves to the same path on every run.
 If several media are recorded at one path (left by the old overwrite
 behaviour), the lowest media id keeps it. The file there may hold any of
 those media, so the keeper's next download replaces it whatever its size
-(see takes_over()).
+(see takes_over()). The same goes for a media whose own row at the path
+isn't marked downloaded (e.g. after `metadata -md update`, see
+shared_in_db()), since the file there isn't known to be its own.
 
 The trailing _<digits> survives path truncation (paths.truncate keeps it with
 the extension), so a truncated name stays unique.
@@ -29,7 +31,7 @@ log = logging.getLogger("shared")
 
 # normalized path -> media id that claimed it in this run
 _claims = {}
-# normalized path -> media ids the database records at that path
+# normalized path -> {media_id: downloaded} the database records at that path
 _db_owners = {}
 # normalized paths whose current file may belong to another media
 _take_over = set()
@@ -65,22 +67,27 @@ async def _owners_in_db(path, model_id, username):
         from ofscraper.db.operations_.media import get_media_ids_at_path
 
         try:
-            _db_owners[key] = set(
+            _db_owners[key] = dict(
                 await get_media_ids_at_path(
                     path.parent, path.name, model_id=model_id, username=username
                 )
             )
         except Exception as E:
             log.debug(f"could not read download paths from the database: {E}")
-            _db_owners[key] = set()
+            _db_owners[key] = {}
     return _db_owners[key]
+
+
+def shared_in_db(path):
+    """True if the database records several media at this (already resolved) path."""
+    return len(_db_owners.get(_key(path), {})) > 1
 
 
 def _taken_by_other(key, media_id, db_owners):
     claimed = _claims.get(key)
     if claimed is not None and claimed != media_id:
         return True
-    others = db_owners - {media_id}
+    others = set(db_owners) - {media_id}
     if not others:
         return False
     # shared by several media in the database: lowest id keeps the path
@@ -98,7 +105,7 @@ async def resolve(path, ele):
     key = _key(path)
     if not _taken_by_other(key, media_id, db_owners):
         _claims[key] = media_id
-        if len(db_owners) > 1:
+        if media_id in db_owners and (len(db_owners) > 1 or not db_owners[media_id]):
             _take_over.add(key)
         return path
     unique = with_media_id(path, media_id)
