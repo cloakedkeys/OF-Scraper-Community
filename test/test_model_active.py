@@ -24,8 +24,9 @@ def _model(status, expires_in_days, renewed=None):
         # cancelled but paid until a future date is still scraped (#6)
         ("Set to Expire", 20, True),
         (None, 20, True),
-        # within the grace window after expiry
-        (None, -1, True),
+        # within the grace window after expiry (EXPIRED_GRACE_DEFAULT is 1 day);
+        # exactly -1 races the boundary
+        (None, -0.5, True),
         # long expired
         (None, -30, False),
     ],
