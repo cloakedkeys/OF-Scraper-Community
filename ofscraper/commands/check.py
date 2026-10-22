@@ -1,4 +1,5 @@
 import asyncio
+import ofscraper.utils.system.system as system
 import inspect
 import logging
 import re
@@ -753,7 +754,7 @@ def thread_starters(ROWS_):
 
 
 def start_table(ROWS_):
-    loop = asyncio.new_event_loop()
+    loop = system.new_event_loop()
     asyncio.set_event_loop(loop)
     ROWS = ROWS_
     app.app(table_data=ROWS)
