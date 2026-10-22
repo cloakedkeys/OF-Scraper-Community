@@ -374,8 +374,9 @@ class AltDownloadManager(DownloadManager):
             f"Moving intermediate path {temp_path} to {sharedPlaceholderObj.trunicated_filepath}"
         )
 
-        # Thread executor for disk I/O move operation
-        await asyncio.get_event_loop().run_in_executor(
+        # Thread executor for disk I/O move operation; the file can end up
+        # under another name if a different file already has this one (#48)
+        final_path = await asyncio.get_event_loop().run_in_executor(
             common_globals.thread,
             partial(
                 common_paths.moveHelper,
@@ -385,7 +386,7 @@ class AltDownloadManager(DownloadManager):
             ),
         )
 
-        (common_paths.addGlobalDir(sharedPlaceholderObj.filedir))
+        (common_paths.addGlobalDir(final_path.parent))
 
         if ele.postdate:
             newDate = dates.convert_local_time(ele.postdate)
@@ -396,7 +397,7 @@ class AltDownloadManager(DownloadManager):
                 common_globals.thread,
                 partial(
                     common_paths.set_time,
-                    sharedPlaceholderObj.trunicated_filepath,
+                    final_path,
                     newDate,
                 ),
             )
@@ -404,16 +405,16 @@ class AltDownloadManager(DownloadManager):
         if ele.id:
             await mark_media_as_downloaded(
                 ele,
-                filepath=sharedPlaceholderObj.trunicated_filepath,
+                filepath=final_path,
                 model_id=model_id,
                 username=username,
                 downloaded=True,
-                hashdata=await common.get_hash(sharedPlaceholderObj),
-                size=sharedPlaceholderObj.size,
+                hashdata=await common.get_hash(final_path),
+                size=final_path.stat().st_size,
             )
-        ele.add_filepath(sharedPlaceholderObj.trunicated_filepath)
+        ele.add_filepath(final_path)
 
-        await self._after_download_script(sharedPlaceholderObj.trunicated_filepath)
+        await self._after_download_script(final_path)
 
         audio_total = audio["total"] if audio else 0
         video_total = video["total"] if video else 0
