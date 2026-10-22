@@ -272,3 +272,54 @@ def test_metadata_checks_previous_path_after_template_change(tmp_path, db, monke
     prev = {"directory": str(old.parent), "filename": old.name}
     shared = metadata_manager.MetaDataManager()._metadata_shared_path
     assert asyncio.run(shared(prev, MODEL, "model")) is True
+
+
+@pytest.fixture
+def case_sensitive_dir(tmp_path):
+    """A Windows directory with per-directory case sensitivity (as WSL uses)."""
+    import subprocess
+    import sys
+
+    if sys.platform != "win32":
+        pytest.skip("per-directory case sensitivity is a Windows feature")
+    d = tmp_path / "cs"
+    d.mkdir()
+    r = subprocess.run(
+        ["fsutil", "file", "setCaseSensitiveInfo", str(d), "enable"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        pytest.skip(f"can't enable case sensitivity here: {r.stdout or r.stderr}")
+    return d
+
+
+def test_case_sensitive_windows_dir_keeps_distinct_names(case_sensitive_dir, db):
+    # review on #116: these are two different files in a case-sensitive dir
+    upper, lower = case_sensitive_dir / "CaseName.JPG", case_sensitive_dir / "casename.jpg"
+    upper.write_bytes(b"media 1")
+    lower.write_bytes(b"media 2")
+    assert not upper.samefile(lower)
+    db(1, upper)
+    db(2, lower)
+    assert collisions.case_insensitive(lower) is False
+    assert _resolve(lower, 2) == lower
+    assert asyncio.run(collisions.shared_in_db(lower, MODEL, "model")) is False
+
+
+def test_new_subdir_inherits_case_sensitivity(case_sensitive_dir, db):
+    (case_sensitive_dir / "probe.txt").write_bytes(b"x")
+    new = case_sensitive_dir / "Posts" / "Images"  # not created yet
+    assert collisions.case_insensitive(new / "a.jpg") is False
+    assert collisions._key(new / "A.jpg") != collisions._key(new / "a.jpg")
+
+
+def test_case_insensitive_parent_still_folds_its_own_names(case_sensitive_dir, tmp_path):
+    # tmp_path (ordinary storage) ignores case for the "cs" name itself; the
+    # names inside cs keep their case
+    (case_sensitive_dir / "probe.txt").write_bytes(b"x")
+    if not collisions.case_insensitive(tmp_path / "x"):
+        pytest.skip("temp storage here is case-sensitive")
+    a = collisions._key(tmp_path / "CS" / "Name.jpg")
+    b = collisions._key(tmp_path / "cs" / "Name.jpg")
+    c = collisions._key(tmp_path / "cs" / "name.jpg")
+    assert a == b and b != c

@@ -13,9 +13,10 @@ to the same path on every run.
 "Taken" means:
 - recorded in the model's database as another media's download path, or
 - claimed earlier in this run by another media (not in the database yet).
-Paths are compared the way the target filesystem does: case-insensitively
-where a case-swapped name reaches the same directory (Windows, default
-macOS), exactly elsewhere.
+Paths are compared the way the target filesystem does: each name is
+case-folded only if the directory holding it ignores case (most Windows
+and macOS storage), so case-sensitive directories, including Windows ones
+with per-directory case sensitivity, keep exact names.
 
 If several media are recorded at one path (left by the old overwrite
 behaviour), the lowest media id keeps it. The file there may hold any of
@@ -25,7 +26,6 @@ isn't marked downloaded (e.g. after `metadata -md update`, see
 shared_in_db()), since the file there isn't known to be its own.
 """
 
-import functools
 import logging
 import os
 import pathlib
@@ -51,34 +51,73 @@ def reset():
     _index.clear()
     _claims.clear()
     _take_over.clear()
+    _dir_case.clear()
 
 
-@functools.lru_cache(maxsize=None)
-def _case_insensitive_dir(existing_dir):
-    """Whether the filesystem holding existing_dir ignores case."""
-    d = pathlib.Path(existing_dir)
-    for part in (d, *d.parents):
-        name = part.name
-        if name and name.swapcase() != name:
-            other = part.with_name(name.swapcase())
-            try:
-                return other.exists() and os.path.samefile(other, part)
-            except OSError:
-                break
-    return sys.platform in ("win32", "darwin")
+PLATFORM_DEFAULT_INSENSITIVE = sys.platform in ("win32", "darwin")
+# directory -> whether names inside it are compared case-insensitively
+_dir_case = {}
+SCAN_LIMIT = 200
+
+
+def _contents_case_insensitive(directory):
+    """
+    Whether names inside directory are compared case-insensitively.
+
+    Windows can enable case sensitivity per directory, so this is decided by
+    looking up an existing entry's case-swapped name inside the directory
+    itself. A directory with no entry to test, or that doesn't exist yet,
+    takes its parent's answer: new NTFS directories inherit the flag, and
+    macOS decides per volume.
+    """
+    directory = os.path.normpath(str(directory))
+    if directory in _dir_case:
+        return _dir_case[directory]
+    result = None
+    if os.path.isdir(directory):
+        try:
+            with os.scandir(directory) as entries:
+                for n, entry in enumerate(entries):
+                    if n >= SCAN_LIMIT:
+                        break
+                    swapped = entry.name.swapcase()
+                    if swapped == entry.name:
+                        continue
+                    other = os.path.join(directory, swapped)
+                    result = os.path.exists(other) and os.path.samefile(
+                        other, entry.path
+                    )
+                    break
+        except OSError:
+            result = None
+    if result is None:
+        parent = os.path.dirname(directory)
+        result = (
+            PLATFORM_DEFAULT_INSENSITIVE
+            if parent == directory
+            else _contents_case_insensitive(parent)
+        )
+    _dir_case[directory] = result
+    return result
 
 
 def case_insensitive(path):
-    d = pathlib.Path(os.path.normpath(str(path))).parent
-    for existing in (d, *d.parents):
-        if existing.exists():
-            return _case_insensitive_dir(str(existing))
-    return sys.platform in ("win32", "darwin")
+    """Whether path's name is compared case-insensitively in its directory."""
+    return _contents_case_insensitive(os.path.dirname(os.path.normpath(str(path))))
 
 
 def _key(path):
-    norm = os.path.normcase(os.path.normpath(str(path)))
-    return norm.casefold() if case_insensitive(path) else norm
+    # each component is folded only if the directory holding it ignores case
+    norm = os.path.normpath(str(path))
+    drive, rest = os.path.splitdrive(norm)
+    anchor = drive + (os.sep if rest.startswith(os.sep) else "")
+    parts = [p for p in rest.split(os.sep) if p]
+    key = [anchor.casefold() if os.name == "nt" else anchor]
+    current = anchor or os.curdir
+    for part in parts:
+        key.append(part.casefold() if _contents_case_insensitive(current) else part)
+        current = os.path.join(current, part)
+    return tuple(key)
 
 
 async def _load(model_id, username):
