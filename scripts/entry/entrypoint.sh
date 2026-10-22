@@ -44,9 +44,16 @@ main() {
             exec "$@" # Execute command as current user (root/remapped root)
         fi
   else
-    echo "ERROR: Entrypoint running as non-root container user. Exiting..."
-    exit 1
-fi
+    # Started with --user / 'user:' (e.g. rootless setups). Users can't be
+    # created or files chowned without root, so run the command as this user.
+    echo "INFO: Running as non-root UID $CURRENT_UID; skipping user setup and permission changes."
+    if [ -z "${HOME:-}" ] || [ "$HOME" = "/" ] || [ ! -w "$HOME" ]; then
+        export HOME="$APP_HOME"
+    fi
+    set_up_all_paths
+    mkdir -p "$CONFIG_DIR" "$DATA_DIR" 2>/dev/null || echo "WARN: Could not create $CONFIG_DIR or $DATA_DIR as UID $CURRENT_UID. Mount them writable for this user."
+    exec "$@"
+  fi
 }
 
 # Call the main function to start execution
