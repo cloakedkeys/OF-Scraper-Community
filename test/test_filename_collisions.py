@@ -247,6 +247,30 @@ def test_temp_on_another_drive_is_copied(tmp_path, monkeypatch):
     assert got.read_bytes() == b"media 1" and not temp.exists()
 
 
+def test_cross_drive_move_sweeps_abandoned_staging_files(tmp_path, monkeypatch):
+    import errno
+    import os
+    import time
+
+    stale = tmp_path / ".ofs-move-killed"
+    fresh = tmp_path / ".ofs-move-in-progress"
+    stale.write_bytes(b"partial")
+    fresh.write_bytes(b"partial")
+    old = time.time() - action_paths.STALE_STAGING_SECONDS - 60
+    os.utime(stale, (old, old))
+    replace = os.replace
+    temp = _download(tmp_path, b"media 1")
+
+    def cross_device(src, dst):
+        if src == temp:
+            raise OSError(errno.EXDEV, "cross-device link")
+        return replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", cross_device)
+    action_paths.moveHelper(temp, tmp_path / "caption.jpg", _media(1))
+    assert not stale.exists() and fresh.exists()
+
+
 def test_failed_move_removes_its_reservation(tmp_path, monkeypatch):
     import os
 

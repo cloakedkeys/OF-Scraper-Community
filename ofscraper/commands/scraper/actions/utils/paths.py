@@ -24,6 +24,7 @@ except ModuleNotFoundError:
     pass
 
 MAX_CANDIDATES = 1000
+STALE_STAGING_SECONDS = 24 * 60 * 60
 
 
 def moveHelper(temp, path_to_file, ele, log_=None):
@@ -79,6 +80,7 @@ def _replace_reserved(temp, path):
         # Other downloads must never hash a partially copied destination.
         if E.errno == errno.EXDEV or getattr(E, "winerror", None) == 17:
             staged = None
+            _sweep_staging(pathlib.Path(path).parent)
             try:
                 fd, staged = tempfile.mkstemp(
                     prefix=".ofs-move-", dir=pathlib.Path(path).parent
@@ -96,6 +98,18 @@ def _replace_reserved(temp, path):
         else:
             pathlib.Path(path).unlink(missing_ok=True)
             raise
+
+
+def _sweep_staging(directory):
+    # A hard kill mid-copy leaves a staging file behind. A live copy is
+    # seconds or minutes old, so anything a day old is abandoned.
+    cutoff = time.time() - STALE_STAGING_SECONDS
+    for leftover in directory.glob(".ofs-move-*"):
+        try:
+            if leftover.stat().st_mtime < cutoff:
+                leftover.unlink()
+        except OSError:
+            pass
 
 
 def _replace(source, destination):
