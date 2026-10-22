@@ -66,5 +66,5 @@ def test_settings_falls_back_to_env_default_for_empty_ffmpeg(ffmpeg_env, monkeyp
 def test_save_location_is_unquoted():
     import ofscraper.utils.paths.common as common_paths
 
-    config = {"file_options": {"save_location": '"D:\Media\OnlyFans"'}}
-    assert common_paths.get_save_location(config=config) == "D:\Media\OnlyFans"
+    config = {"file_options": {"save_location": r'"D:\Media\OnlyFans"'}}
+    assert common_paths.get_save_location(config=config) == r"D:\Media\OnlyFans"
