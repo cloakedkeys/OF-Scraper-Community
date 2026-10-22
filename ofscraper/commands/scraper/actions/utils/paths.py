@@ -31,34 +31,30 @@ def moveHelper(temp, path_to_file, ele, log_=None):
     # set variables based on parent process
 
 
+def _resolve_dir(path):
+    path = pathlib.Path(path)
+    try:
+        path = path.resolve()
+    except OSError:
+        # some network/virtual drives (e.g. WinError 1005 on mapped Windows
+        # volumes) can't be resolved; the directory set is only used to
+        # date folders afterwards, so an absolute path is enough
+        path = path.absolute()
+    return path if path.is_dir() else path.parent
+
+
 def addGlobalDir(path):
-    paths = [path] if not isinstance(path, Iterable) else path
-    paths = list(
-        map(
-            lambda x: (
-                path.resolve(x).parent
-                if not pathlib.Path(x).is_dir()
-                else path.resolve(x)
-            ),
-            paths,
-        )
+    paths = (
+        [path]
+        if isinstance(path, (str, os.PathLike)) or not isinstance(path, Iterable)
+        else path
     )
-    common_globals.dirSet.update(paths)
+    common_globals.dirSet.update(map(_resolve_dir, paths))
 
 
 def addLocalDir(path):
     paths = [path] if not isinstance(path, list) else path
-    paths = list(
-        map(
-            lambda x: (
-                path.resolve(x).parent
-                if not pathlib.Path(x).is_dir()
-                else path.resolve(x)
-            ),
-            paths,
-        )
-    )
-    common_globals.dirSet.update(paths)
+    common_globals.dirSet.update(map(_resolve_dir, paths))
 
 
 def set_time(path, timestamp):
@@ -92,4 +88,7 @@ def setDirectoriesDate(log=None):
             ele = ele.parent
     log.debug(f"Directories list {output}")
     for ele in output:
-        set_time(ele, dates.get_current_time())
+        try:
+            set_time(ele, dates.get_current_time())
+        except OSError as E:
+            log.debug(f"could not set date on {ele}: {E}")
