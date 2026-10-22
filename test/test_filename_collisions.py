@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -218,7 +219,7 @@ def test_concurrent_processes_reserve_distinct_names(tmp_path):
         assert p.returncode == 0, err[-2000:]
         results.append(out.strip().splitlines()[-1])
     assert len(set(results)) == 6
-    contents = sorted(open(r, "rb").read() for r in results)
+    contents = sorted(Path(r).read_bytes() for r in results)
     assert contents == sorted(f"media {i}".encode() for i in range(1, 7))
 
 

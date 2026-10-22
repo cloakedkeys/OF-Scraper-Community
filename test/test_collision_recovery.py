@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 import subprocess
 import sys
 from pathlib import Path
@@ -13,14 +14,14 @@ from ofscraper.db.operations_.media import mediaCreate
 @pytest.fixture(params=["DELETE", "WAL"])
 def database(tmp_path, request):
     db = tmp_path / "user_data.db"
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         conn.execute(f"PRAGMA journal_mode={request.param}")
         conn.execute(mediaCreate)
     return db
 
 
 def add(db, media, path, post=None, downloaded=1):
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         conn.execute(
             "INSERT INTO medias (media_id,model_id,post_id,directory,filename,downloaded,size,hash) "
             "VALUES (?,10,?,?,?,?,100,'old-hash')",
@@ -29,12 +30,12 @@ def add(db, media, path, post=None, downloaded=1):
 
 
 def rows(db):
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         return conn.execute("SELECT * FROM medias ORDER BY id").fetchall()
 
 
 def flags(db):
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn, conn:
         return conn.execute("SELECT media_id,downloaded FROM medias ORDER BY id").fetchall()
 
 
@@ -56,7 +57,7 @@ def test_preview_and_apply_only_reset_ambiguous_media(database, tmp_path):
     assert all(len(row) == 5 and row[-1] == 1 for row in record["rows"])
     assert not list(tmp_path.glob("*.sqlite"))
     assert flags(database) == [(1, 0), (2, 0), (2, 0), (3, 1)]
-    with sqlite3.connect(database) as conn:
+    with closing(sqlite3.connect(database)) as conn, conn:
         columns = [r[1] for r in conn.execute("PRAGMA table_info(medias)")]
     index = columns.index("downloaded")
     for old, new in zip(original, rows(database)):
@@ -121,7 +122,7 @@ def test_relative_paths_require_explicit_root(database, tmp_path):
 def test_apply_rolls_back_all_flags_when_update_fails(database, tmp_path):
     add(database, 1, tmp_path / "same.jpg")
     add(database, 2, tmp_path / "same.jpg")
-    with sqlite3.connect(database) as conn:
+    with closing(sqlite3.connect(database)) as conn, conn:
         conn.execute("CREATE TRIGGER fail_update BEFORE UPDATE ON medias "
                      "WHEN NEW.media_id=2 BEGIN SELECT RAISE(ABORT,'test failure'); END")
     with pytest.raises(sqlite3.IntegrityError):
@@ -189,7 +190,7 @@ def test_undo_checks_database_and_row_identity(database, tmp_path):
     other.touch()
     with pytest.raises(ValueError, match="does not belong"):
         undo(other, result["undo_file"], apply=True)
-    with sqlite3.connect(database) as conn:
+    with closing(sqlite3.connect(database)) as conn, conn:
         conn.execute("UPDATE medias SET media_id=99 WHERE media_id=1")
     assert undo(database, result["undo_file"], apply=True)["rows_to_restore"] == 1
     assert flags(database) == [(99, 0), (2, 1)]

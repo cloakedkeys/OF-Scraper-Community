@@ -24,7 +24,7 @@ Remotes:
 - **Parallel work:** use git worktrees, one per branch (e.g. `../ofs-wt/<name>`). Run code from a worktree with `PYTHONPATH=.` and the main checkout's venv.
 
 ## Tests
-- **Run:** `python -m pytest test -W error::SyntaxWarning` (`test/legacy` is excluded by config). The suite has no invalid escape sequences; keep it that way (use raw strings for Windows paths). Every fix needs a test that fails without it; check that by running the test against the previous commit.
+- **Run:** `python -m pytest test` (`test/legacy` is excluded by config). Warnings are errors (`filterwarnings` in `pyproject.toml`), so an invalid escape sequence, an unclosed file or sqlite connection, or an exception in a background thread fails the run. Fix the cause; use raw strings for Windows paths and `closing()` for sqlite connections (`with sqlite3.connect(...)` only commits, it doesn't close). Add a filter only for a third-party warning you can't fix, with a comment saying why. Every fix needs a test that fails without it; check that by running the test against the previous commit.
 - **`test/conftest.py` handles two quirks you'll hit in scripts too:**
   - `ofscraper` parses `sys.argv` the first time settings are read, so clear it (`sys.argv = sys.argv[:1]`) before importing the app in a script, and never pass your script's own arguments on the command line. Use environment variables instead.
   - Importing a leaf module first can hit a circular import (`settings` ↔ `console` ↔ `config`). Import `ofscraper.main.open.load` or `ofscraper.__main__` first.
