@@ -69,3 +69,10 @@ def test_settings_falls_back_to_config_textlength(monkeypatch):
     monkeypatch.setattr(read_args, "retriveArgs", lambda: args)
     monkeypatch.setattr(config_data, "get_textlength", lambda *a, **k: 75)
     assert settings.merged_settings().text_length == 75
+
+
+def test_word_mode_counts_existing_replacer_chars_as_breaks(fake_settings):
+    # documented limitation: "_" already in the caption ("snake_case title")
+    # can't be told apart from a replaced space once file_cleanup has run
+    fake_settings(text_length=2, text_type="word", space_replacer="_")
+    assert base().text_trunicate("snake_case_title_here") == "snake_case"

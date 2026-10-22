@@ -25,7 +25,10 @@ class base:
             return f"{''.join(list(text)[:length])}"
         else:
             # text has usually been through file_cleanup already, which swaps
-            # spaces for space_replacer, so words are split on that
+            # spaces for space_replacer, so words are split on that. If the
+            # original text already contained that character (e.g. "_" in a
+            # caption with "_" as the replacer), it also counts as a word
+            # break; the original spaces can't be told apart at this point.
             sep = settings.get_settings().space_replacer or " "
             if sep not in text:
                 sep = " "
