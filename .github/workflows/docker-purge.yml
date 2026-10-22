@@ -1,6 +1,11 @@
 name: Docker Purge
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only log what would be deleted"
+        type: boolean
+        default: true
   schedule:
     - cron: "0 0 * * *" # every day at midnight
 permissions: read-all
@@ -23,6 +28,8 @@ jobs:
           timestamp-to-use: created_at
           account: user
           token: ${{ secrets.DOCKER_DELETE}}
+          # Manual runs default to a dry run; the nightly schedule deletes
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           image-tags: "sha*"
           tag-selection: tagged
           cut-off: 1s
@@ -33,4 +40,6 @@ jobs:
           cut-off: 1s
           account: user
           token: ${{ secrets.DOCKER_DELETE}}
+          # Manual runs default to a dry run; the nightly schedule deletes
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
           tag-selection: untagged
