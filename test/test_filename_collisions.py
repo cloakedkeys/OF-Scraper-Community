@@ -210,5 +210,65 @@ def test_metadata_update_distrusts_shared_path(tmp_path, db, monkeypatch, mode, 
     _resolve(target, 9)  # Placeholders.init runs this before the helpers
     monkeypatch.setattr(metadata_manager.settings, "get_settings", lambda: SimpleNamespace(metadata=mode))
     prev = {"directory": str(target.parent), "filename": target.name}
-    assert metadata_manager.MetaDataManager()._metadata_shared_path(prev) is expected
-    assert metadata_manager.MetaDataManager()._metadata_shared_path({}) is False
+    shared = metadata_manager.MetaDataManager()._metadata_shared_path
+    assert asyncio.run(shared(prev, MODEL, "model")) is expected
+    assert asyncio.run(shared({}, MODEL, "model")) is False
+
+
+def test_suffix_owned_by_another_media_in_db_is_skipped(tmp_path, db):
+    # review on #116: media 3 is recorded at caption_2.jpg, which is media
+    # 2's first fallback; media 2 must not land on it
+    import ofscraper.commands.scraper.actions.utils.paths as action_paths
+
+    db(1, tmp_path / "caption.jpg")
+    db(3, tmp_path / "caption_2.jpg")
+    (tmp_path / "caption_2.jpg").write_bytes(b"media 3")
+    got = _resolve(tmp_path / "caption.jpg", 2)
+    assert got not in {tmp_path / "caption.jpg", tmp_path / "caption_2.jpg"}
+    temp = tmp_path / "temp.part"
+    temp.write_bytes(b"media 2, a larger file than media 3")
+    action_paths.moveHelper(temp, got, _media(2))
+    assert (tmp_path / "caption_2.jpg").read_bytes() == b"media 3"
+
+
+def test_suffix_claimed_earlier_in_run_is_skipped(tmp_path, db):
+    assert _resolve(tmp_path / "same_2.jpg", 3) == tmp_path / "same_2.jpg"
+    assert _resolve(tmp_path / "same.jpg", 1) == tmp_path / "same.jpg"
+    got = _resolve(tmp_path / "same.jpg", 2)
+    assert got not in {tmp_path / "same.jpg", tmp_path / "same_2.jpg"}
+    # media 3 keeps its claim
+    assert _resolve(tmp_path / "same_2.jpg", 3) == tmp_path / "same_2.jpg"
+
+
+def test_case_detection_matches_the_filesystem(tmp_path):
+    (tmp_path / "probe.txt").write_bytes(b"x")
+    really_insensitive = (tmp_path / "PROBE.TXT").exists()
+    assert collisions.case_insensitive(tmp_path / "probe.txt") is really_insensitive
+
+
+def test_case_variant_of_recorded_path(tmp_path, db):
+    # review on #116: on a case-insensitive filesystem CaseName.JPG and
+    # casename.jpg are the same file
+    recorded = tmp_path / "CaseName.JPG"
+    db(1, recorded)
+    recorded.write_bytes(b"media 1")
+    got = _resolve(tmp_path / "casename.jpg", 2)
+    if collisions.case_insensitive(recorded):
+        assert got == tmp_path / "casename_2.jpg"
+    else:
+        assert got == tmp_path / "casename.jpg"
+
+
+def test_metadata_checks_previous_path_after_template_change(tmp_path, db, monkeypatch):
+    # review on #116: the old shared path is no longer what the template
+    # renders, so it was never looked up
+    import ofscraper.commands.metadata.manager as metadata_manager
+
+    old = tmp_path / "old_shared.jpg"
+    db(5, old)
+    db(9, old)
+    assert _resolve(tmp_path / "media_9.jpg", 9) == tmp_path / "media_9.jpg"
+    monkeypatch.setattr(metadata_manager.settings, "get_settings", lambda: SimpleNamespace(metadata="update"))
+    prev = {"directory": str(old.parent), "filename": old.name}
+    shared = metadata_manager.MetaDataManager()._metadata_shared_path
+    assert asyncio.run(shared(prev, MODEL, "model")) is True

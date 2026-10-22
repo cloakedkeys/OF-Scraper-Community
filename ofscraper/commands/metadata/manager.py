@@ -62,7 +62,7 @@ class MetaDataManager:
                 or {}
             )
             fileData = prevData
-            lost = self._metadata_shared_path(prevData)
+            lost = await self._metadata_shared_path(prevData, model_id, username)
             if lost:
                 # several media are recorded at this path (old overwrites);
                 # the file there can't be attributed to any one of them, so
@@ -87,11 +87,15 @@ class MetaDataManager:
             )
         return ele.mediatype if effected else "Forced_skipped"
 
-    def _metadata_shared_path(self, prevData):
+    async def _metadata_shared_path(self, prevData, model_id, username):
+        # checks the previously recorded path itself, which a changed filename
+        # template may no longer produce
         if settings.get_settings().metadata != "update" or not prevData.get("filename"):
             return False
-        return collisions.shared_in_db(
-            pathlib.Path(prevData.get("directory") or "", prevData["filename"])
+        return await collisions.shared_in_db(
+            pathlib.Path(prevData.get("directory") or "", prevData["filename"]),
+            model_id,
+            username,
         )
 
     def _metadata_downloaded_helper(self, placeholderObj, prevData):
