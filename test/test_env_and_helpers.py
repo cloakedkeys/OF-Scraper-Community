@@ -81,3 +81,27 @@ def test_jsonloader():
     assert jsonloader('{"a": 1}') == {"a": 1}
     assert jsonloader("{bad") is None
     assert jsonloader(None) is None
+
+
+def test_unencodable_output_is_replaced_not_raised():
+    import io
+
+    from rich.console import Console
+
+    from ofscraper.utils.console import replace_unencodable_output
+
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    replace_unencodable_output([stream])
+    Console(file=stream, force_terminal=False).print("Cherry \U0001F352 model")
+    stream.flush()
+    assert stream.buffer.getvalue().decode("cp1252").strip() == "Cherry ? model"
+
+
+def test_utf8_output_is_left_alone():
+    import io
+
+    from ofscraper.utils.console import replace_unencodable_output
+
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    replace_unencodable_output([stream])
+    assert stream.errors == "strict"
