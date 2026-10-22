@@ -16,7 +16,8 @@ to the same path on every run.
 Paths are compared the way the target filesystem does: each name is
 case-folded only if the directory holding it ignores case (most Windows
 and macOS storage), so case-sensitive directories, including Windows ones
-with per-directory case sensitivity, keep exact names.
+with per-directory case sensitivity, keep exact names. Each existing
+directory's own setting is read (see _contents_case_insensitive()).
 
 If several media are recorded at one path (left by the old overwrite
 behaviour), the lowest media id keeps it. The file there may hold any of
@@ -30,6 +31,7 @@ import logging
 import os
 import pathlib
 import sys
+import tempfile
 
 import ofscraper.utils.config.data as config_data
 import ofscraper.utils.paths.paths as paths
@@ -60,45 +62,116 @@ _dir_case = {}
 SCAN_LIMIT = 200
 
 
+def _windows_case_sensitive_flag(directory):
+    """The directory's own per-directory case-sensitivity flag (Windows), or
+    None where it can't be read (other systems, older Windows, some shares)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    ]
+    kernel32.GetFileInformationByHandleEx.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD,
+    ]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    class FILE_CASE_SENSITIVE_INFO(ctypes.Structure):
+        _fields_ = [("Flags", wintypes.ULONG)]
+
+    FILE_READ_ATTRIBUTES, OPEN_EXISTING = 0x80, 3
+    FILE_FLAG_BACKUP_SEMANTICS = 0x02000000  # needed to open a directory
+    FileCaseSensitiveInfo, FILE_CS_FLAG_CASE_SENSITIVE_DIR = 23, 0x1
+    handle = kernel32.CreateFileW(
+        directory, FILE_READ_ATTRIBUTES, 0x7, None, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS, None,
+    )
+    if handle in (None, wintypes.HANDLE(-1).value):
+        return None
+    try:
+        info = FILE_CASE_SENSITIVE_INFO()
+        if not kernel32.GetFileInformationByHandleEx(
+            handle, FileCaseSensitiveInfo, ctypes.byref(info), ctypes.sizeof(info)
+        ):
+            return None
+        return bool(info.Flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _probe_entries(directory):
+    """Look up an existing entry's case-swapped name; None if there's none to test."""
+    with os.scandir(directory) as entries:
+        for n, entry in enumerate(entries):
+            if n >= SCAN_LIMIT:
+                break
+            swapped = entry.name.swapcase()
+            if swapped == entry.name:
+                continue
+            other = os.path.join(directory, swapped)
+            return os.path.exists(other) and os.path.samefile(other, entry.path)
+    return None
+
+
+def _probe_with_file(directory):
+    """Create a lowercase temp file and look it up in upper case; None if it can't."""
+    try:
+        fd, probe = tempfile.mkstemp(prefix="ofscraper-case-probe-", dir=directory)
+    except OSError:
+        return None
+    os.close(fd)
+    try:
+        name = os.path.basename(probe)
+        other = os.path.join(directory, name.upper())
+        if name.upper() == name:
+            return None
+        return os.path.exists(other) and os.path.samefile(other, probe)
+    finally:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+
+
 def _contents_case_insensitive(directory):
     """
     Whether names inside directory are compared case-insensitively.
 
-    Windows can enable case sensitivity per directory, so this is decided by
-    looking up an existing entry's case-swapped name inside the directory
-    itself. A directory with no entry to test, or that doesn't exist yet,
-    takes its parent's answer: new NTFS directories inherit the flag, and
-    macOS decides per volume.
+    Windows can enable case sensitivity per directory, so an existing
+    directory is asked directly: its Windows flag where readable, else an
+    existing entry's case-swapped name, else a short-lived probe file. Only
+    a directory that doesn't exist yet takes its parent's answer (new NTFS
+    and casefold directories inherit the setting; macOS decides per volume),
+    and such guesses aren't cached, so the directory is checked for real
+    once it exists.
     """
     directory = os.path.normpath(str(directory))
     if directory in _dir_case:
         return _dir_case[directory]
     result = None
     if os.path.isdir(directory):
-        try:
-            with os.scandir(directory) as entries:
-                for n, entry in enumerate(entries):
-                    if n >= SCAN_LIMIT:
-                        break
-                    swapped = entry.name.swapcase()
-                    if swapped == entry.name:
-                        continue
-                    other = os.path.join(directory, swapped)
-                    result = os.path.exists(other) and os.path.samefile(
-                        other, entry.path
-                    )
-                    break
-        except OSError:
-            result = None
-    if result is None:
-        parent = os.path.dirname(directory)
-        result = (
-            PLATFORM_DEFAULT_INSENSITIVE
-            if parent == directory
-            else _contents_case_insensitive(parent)
-        )
-    _dir_case[directory] = result
-    return result
+        flag = _windows_case_sensitive_flag(directory)
+        if flag is not None:
+            result = not flag
+        else:
+            try:
+                result = _probe_entries(directory)
+            except OSError:
+                result = None
+            if result is None:
+                result = _probe_with_file(directory)
+    if result is not None:
+        _dir_case[directory] = result
+        return result
+    parent = os.path.dirname(directory)
+    if parent == directory:
+        return PLATFORM_DEFAULT_INSENSITIVE
+    return _contents_case_insensitive(parent)
 
 
 def case_insensitive(path):

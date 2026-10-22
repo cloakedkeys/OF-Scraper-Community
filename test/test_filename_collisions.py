@@ -323,3 +323,44 @@ def test_case_insensitive_parent_still_folds_its_own_names(case_sensitive_dir, t
     b = collisions._key(tmp_path / "cs" / "Name.jpg")
     c = collisions._key(tmp_path / "cs" / "name.jpg")
     assert a == b and b != c
+
+
+def test_empty_case_sensitive_dir_first_run_and_after_reset(case_sensitive_dir, db):
+    # review on #116: the directory is empty at the first lookup
+    upper, lower = case_sensitive_dir / "A.jpg", case_sensitive_dir / "a.jpg"
+    assert _resolve(upper, 1) == upper
+    upper.write_bytes(b"media 1")
+    assert _resolve(lower, 2) == lower  # not a_2.jpg
+    lower.write_bytes(b"media 2")
+    assert not upper.samefile(lower)
+    db(1, upper)
+    db(2, lower)
+    collisions.reset()  # next run, with both paths recorded
+    assert _resolve(lower, 2) == lower
+    assert _resolve(upper, 1) == upper
+    assert not (case_sensitive_dir / "a_2.jpg").exists()
+
+
+def test_windows_flag_is_read_from_the_directory_itself(case_sensitive_dir, tmp_path):
+    assert collisions._windows_case_sensitive_flag(str(case_sensitive_dir)) is True
+    assert collisions._windows_case_sensitive_flag(str(tmp_path)) is False
+
+
+@pytest.mark.parametrize("sensitive", [True, False])
+def test_probe_file_decides_an_empty_dir(case_sensitive_dir, tmp_path, monkeypatch, sensitive):
+    # where the Windows flag can't be read (other systems, some shares)
+    monkeypatch.setattr(collisions, "_windows_case_sensitive_flag", lambda d: None)
+    empty = case_sensitive_dir if sensitive else tmp_path / "plain"
+    empty.mkdir(exist_ok=True)
+    really_insensitive = not sensitive and collisions.case_insensitive(tmp_path / "x")
+    assert collisions._contents_case_insensitive(empty) is really_insensitive
+    assert list(empty.iterdir()) == []  # probe removed
+
+
+def test_unknown_existing_dir_isnt_cached(tmp_path, monkeypatch):
+    monkeypatch.setattr(collisions, "_windows_case_sensitive_flag", lambda d: None)
+    monkeypatch.setattr(collisions, "_probe_with_file", lambda d: None)
+    empty = tmp_path / "unknown"
+    empty.mkdir()
+    collisions._contents_case_insensitive(empty)
+    assert str(empty) not in collisions._dir_case
