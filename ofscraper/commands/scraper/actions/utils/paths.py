@@ -4,6 +4,8 @@ import pathlib
 import platform
 import errno
 import shutil
+import tempfile
+import time
 from collections.abc import Iterable
 
 import xxhash
@@ -31,8 +33,8 @@ def moveHelper(temp, path_to_file, ele, log_=None):
     A filename template (e.g. one built on {text}) can give different media
     the same path (#48). A free name is reserved by creating it exclusively
     (O_EXCL), which only one download can do, across threads and processes,
-    and then replaced with the download. An existing file with identical
-    content is this download already, so it's kept. Anything else at that
+    and then replaced with the download. An existing nonempty file with
+    identical content is this download already, so it's kept. Anything else at that
     name, including another download's reservation, is left alone and the
     download goes to name_<media_id>, then name_<media_id>_2 and so on. The
     filesystem decides whether a name is taken, so its own case rules apply.
@@ -71,19 +73,42 @@ def _reserve(path):
 
 def _replace_reserved(temp, path):
     try:
-        os.replace(temp, path)
+        _replace(temp, path)
     except OSError as E:
-        # a temp dir on another drive can't be renamed across; copy instead
+        # Copy privately on the destination drive, then publish atomically.
+        # Other downloads must never hash a partially copied destination.
         if E.errno == errno.EXDEV or getattr(E, "winerror", None) == 17:
+            staged = None
             try:
-                shutil.copy2(temp, path)
+                fd, staged = tempfile.mkstemp(
+                    prefix=".ofs-move-", dir=pathlib.Path(path).parent
+                )
+                os.close(fd)
+                shutil.copy2(temp, staged)
+                _replace(staged, path)
             except BaseException:
                 pathlib.Path(path).unlink(missing_ok=True)
                 raise
+            finally:
+                if staged is not None:
+                    pathlib.Path(staged).unlink(missing_ok=True)
             pathlib.Path(temp).unlink(missing_ok=True)
         else:
             pathlib.Path(path).unlink(missing_ok=True)
             raise
+
+
+def _replace(source, destination):
+    # Windows can briefly deny replacement while a competing exclusive-open
+    # or stat checks the reservation. Keep owning it while retrying.
+    for attempt in range(6):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError as error:
+            if getattr(error, "winerror", None) not in (5, 32, 33) or attempt == 5:
+                raise
+            time.sleep(0.02 * (attempt + 1))
 
 
 def _move_overwrite(temp, path_to_file, ele, log_):
@@ -113,9 +138,18 @@ def _candidates(path, media_id):
 
 def _same_content(a, b):
     a, b = pathlib.Path(a), pathlib.Path(b)
-    if not b.is_file() or a.stat().st_size != b.stat().st_size:
+    try:
+        # Empty files may be reservations, so never deduplicate against them.
+        if (
+            not b.is_file()
+            or not b.stat().st_size
+            or a.stat().st_size != b.stat().st_size
+        ):
+            return False
+        return _file_hash(a) == _file_hash(b)
+    except FileNotFoundError:
+        # A competing failed move can remove its reservation during this check.
         return False
-    return _file_hash(a) == _file_hash(b)
 
 
 def _file_hash(path):

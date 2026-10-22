@@ -74,8 +74,8 @@ def test_fallback_holding_another_file_is_skipped(tmp_path):
     assert (tmp_path / "caption_2.jpg").read_bytes() == b"media 3"
 
 
-def test_old_collision_is_recovered_by_redownloading(tmp_path):
-    # the old behaviour left media 9's file where media 5 was also recorded
+def test_existing_different_content_is_preserved(tmp_path):
+    # Prevention preserves an existing file without interpreting database ownership.
     target = tmp_path / "caption.jpg"
     target.write_bytes(b"media 9, the larger image")
     assert _move(tmp_path, target, 9, b"media 9, the larger image") == target
@@ -234,11 +234,15 @@ def test_temp_on_another_drive_is_copied(tmp_path, monkeypatch):
     import errno
     import os
 
+    replace = os.replace
+    temp = _download(tmp_path, b"media 1")
+
     def cross_device(src, dst):
-        raise OSError(errno.EXDEV, "cross-device link")
+        if src == temp:
+            raise OSError(errno.EXDEV, "cross-device link")
+        return replace(src, dst)
 
     monkeypatch.setattr(os, "replace", cross_device)
-    temp = _download(tmp_path, b"media 1")
     got = action_paths.moveHelper(temp, tmp_path / "caption.jpg", _media(1))
     assert got.read_bytes() == b"media 1" and not temp.exists()
 
@@ -269,3 +273,158 @@ def test_failed_move_leaves_other_files_alone(tmp_path, monkeypatch):
         _move(tmp_path, tmp_path / "caption.jpg", 2, b"media 2")
     assert (tmp_path / "caption.jpg").read_bytes() == b"media 1"
     assert not (tmp_path / "caption_2.jpg").exists()
+
+
+@pytest.mark.parametrize("fail_copy", [False, True])
+def test_cross_drive_partial_copy_is_not_deduplicated(tmp_path, monkeypatch, fail_copy):
+    import errno
+    import os
+    from pathlib import Path
+
+    target = tmp_path / "caption.jpg"
+    temp = _download(tmp_path, b"prefix and remainder", "first.part")
+    second = _download(tmp_path, b"prefix", "second.part")
+    replace = os.replace
+    results = []
+
+    def cross_device(src, dst):
+        if src == temp:
+            raise OSError(errno.EXDEV, "cross-device link")
+        return replace(src, dst)
+
+    def interrupted_copy(src, dst):
+        Path(dst).write_bytes(b"prefix")
+        # Deterministically interleave a second completed download mid-copy.
+        results.append(action_paths.moveHelper(second, target, _media(2)))
+        if fail_copy:
+            raise OSError("copy interrupted")
+        Path(dst).write_bytes(Path(src).read_bytes())
+
+    monkeypatch.setattr(os, "replace", cross_device)
+    monkeypatch.setattr(action_paths.shutil, "copy2", interrupted_copy)
+    if fail_copy:
+        with pytest.raises(OSError, match="copy interrupted"):
+            action_paths.moveHelper(temp, target, _media(1))
+        assert temp.exists() and not target.exists()
+    else:
+        assert action_paths.moveHelper(temp, target, _media(1)) == target
+        assert target.read_bytes() == b"prefix and remainder"
+    assert results == [tmp_path / "caption_2.jpg"]
+    assert results[0].read_bytes() == b"prefix"
+    assert not list(tmp_path.glob(".ofs-move-*"))
+
+
+def test_empty_download_does_not_consume_another_reservation(tmp_path):
+    target = tmp_path / "caption.jpg"
+    assert action_paths._reserve(target)
+    assert _move(tmp_path, target, 2, b"") == tmp_path / "caption_2.jpg"
+    assert target.exists()
+
+
+@pytest.mark.parametrize("permanent", [False, True])
+def test_windows_sharing_error_keeps_reservation_during_retry(tmp_path, monkeypatch, permanent):
+    import os
+    replace = os.replace
+    target = tmp_path / "caption.jpg"
+    temp = _download(tmp_path, b"media")
+    attempts = []
+
+    def busy(src, dst):
+        assert target.is_file() and target.stat().st_size == 0
+        attempts.append(dst)
+        if permanent or len(attempts) == 1:
+            error = PermissionError("sharing conflict")
+            error.winerror = 5
+            raise error
+        return replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", busy)
+    monkeypatch.setattr(action_paths.time, "sleep", lambda delay: None)
+    if permanent:
+        with pytest.raises(PermissionError):
+            action_paths.moveHelper(temp, target, _media(1))
+        assert len(attempts) == 6
+        assert temp.exists() and not target.exists()
+    else:
+        assert action_paths.moveHelper(temp, target, _media(1)) == target
+        assert len(attempts) == 2 and target.read_bytes() == b"media"
+
+
+def test_disappearing_reservation_is_not_an_error(tmp_path, monkeypatch):
+    target = tmp_path / "caption.jpg"
+    target.write_bytes(b"same size")
+    temp = _download(tmp_path, b"same size")
+    original = action_paths._file_hash
+
+    def disappear(path):
+        if path == target:
+            target.unlink()
+        return original(path)
+
+    monkeypatch.setattr(action_paths, "_file_hash", disappear)
+    assert not action_paths._same_content(temp, target)
+    assert temp.exists()
+
+
+@pytest.mark.parametrize("downloader", ["normal", "drm"])
+def test_downloaders_record_and_use_final_path(tmp_path, monkeypatch, downloader):
+    import asyncio
+    from unittest.mock import AsyncMock, Mock
+    import ofscraper.commands.scraper.actions.download.managers.main_download as normal
+    import ofscraper.commands.scraper.actions.download.managers.alt_download as drm
+
+    module = normal if downloader == "normal" else drm
+    target = tmp_path / "caption.jpg"
+    target.write_bytes(b"existing owner")
+    final = tmp_path / "caption_2.jpg"
+    payload = b"new download"
+    temp = tmp_path / "download.part"
+    placeholder = SimpleNamespace(trunicated_filepath=target, size=999)
+    ele = _media(2)
+    ele.mediatype, ele.postdate, ele.duration = "Images", "2020-01-01", 1
+    ele.add_filepath = Mock()
+
+    async def filename():
+        return target.name
+
+    ele.final_filename = filename() if downloader == "normal" else None
+    manager = SimpleNamespace(_size_checker=AsyncMock(), _after_download_script=AsyncMock())
+    database = AsyncMock()
+    hashing = AsyncMock(return_value="new-hash")
+    dating = Mock()
+    monkeypatch.setattr(module.common_globals, "thread", None, raising=False)
+    monkeypatch.setattr(module.common_globals, "log", Mock())
+    monkeypatch.setattr(module, "mark_media_as_downloaded", database)
+    monkeypatch.setattr(module.common, "get_hash", hashing)
+    monkeypatch.setattr(module.common_paths, "set_time", dating)
+    monkeypatch.setattr(module.common_paths, "addGlobalDir", Mock())
+    if downloader == "normal":
+        temp.write_bytes(payload)
+        monkeypatch.setattr(normal, "set_profile_cache", AsyncMock())
+        asyncio.run(normal.MainDownloadManager._handle_result_main(
+            manager, (len(payload), temp, placeholder), ele, "model", 10
+        ))
+    else:
+        monkeypatch.setattr(drm.placeholder, "tempFilePlaceholder", lambda *a: SimpleNamespace(
+            init=AsyncMock(return_value=SimpleNamespace(tempfilepath=temp))
+        ))
+
+        async def merge(*args, **kwargs):
+            temp.write_bytes(payload)
+            return SimpleNamespace(stderr=b"", stdout=b"")
+
+        monkeypatch.setattr(drm, "async_run", merge)
+        monkeypatch.setattr(drm, "get_ffmpeg", lambda: "ffmpeg")
+        monkeypatch.setattr(drm, "verify_media_integrity", lambda *a: True)
+        asyncio.run(drm.AltDownloadManager._handle_result_alt(
+            manager, placeholder, ele, None, None, "model", 10
+        ))
+    assert target.read_bytes() == b"existing owner"
+    assert final.read_bytes() == payload
+    assert database.await_args.kwargs["filepath"] == final
+    assert database.await_args.kwargs["size"] == len(payload)
+    assert database.await_args.kwargs["hashdata"] == "new-hash"
+    hashing.assert_awaited_once_with(final)
+    assert dating.call_args.args[0] == final
+    ele.add_filepath.assert_called_once_with(final)
+    manager._after_download_script.assert_awaited_once_with(final)
