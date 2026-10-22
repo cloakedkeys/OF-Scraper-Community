@@ -102,7 +102,7 @@ def process_download_queue():
                 )
 
             except Exception as e:
-                log.debug(
+                log.warning(
                     f"An error occurred while processing the batch for {username}."
                 )
                 log.traceback_(e)
@@ -114,7 +114,7 @@ def process_download_queue():
             manager.Manager.stats_manager.clear_scraper_activity_stats()
             log.info("Download processing complete. Waiting for new items...")
         except Exception as e:
-            log.debug(
+            log.warning(
                 f"An error occurred during the final cleanup phase. The cart state or stats may not have reset properly. {e}"
             )
             log.traceback_(traceback.format_exc())
