@@ -46,6 +46,7 @@ https://pypi.org/project/ofscraper/#history
   - [Table-of-contents](#table-of-contents)
   - [Description](#description)
   - [Documentation](#documentation)
+    - [Skipping a model during --scrape-paid](#skipping-a-model-during---scrape-paid)
   - [Issues](#issues)
     - [Private Reports](#private-reports)
   - [Feature Requests](#feature-requests)
@@ -75,6 +76,17 @@ For detailed instructions on:
 - And other pertinent information you might need
 
 [Official Documention](https://of-scraper.gitbook.io/of-scraper)
+
+### Skipping a model during --scrape-paid
+
+`--excluded-username` also applies to `--scrape-paid`, for both downloads and metadata runs. Names are matched case-insensitively; separate several with commas.
+
+```bash
+ofscraper --scrape-paid --excluded-username modelname
+ofscraper metadata --scrape-paid update --excluded-username modelname,othermodel
+```
+
+The skipped model is logged and isn't counted in the run's totals. Its profile is still looked up to learn its username, so a deleted account can only be excluded by the username recorded for it in an earlier run.
 
 <h3>DISCLAIMERS:</h3>
 <ol>
