@@ -48,13 +48,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        registry:
-          - id: ghcr
-            name: GitHub Packages
-            sign: false
-          - id: dockerhub
-            name: Docker Hub
-            sign: true
+        # Docker Hub publishing (datawhores/of-scraper) needs upstream's secrets,
+        # so forks only build the GitHub Packages image.
+        registry: ${{ fromJSON(github.repository_owner == 'datawhores' && '[{"id":"ghcr","name":"GitHub Packages","sign":false},{"id":"dockerhub","name":"Docker Hub","sign":true}]' || '[{"id":"ghcr","name":"GitHub Packages","sign":false}]') }}
 
     steps:
       - name: Checkout repository
