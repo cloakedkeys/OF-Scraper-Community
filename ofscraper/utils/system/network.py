@@ -31,7 +31,9 @@ def check_cdm():
             wait_max=of_env.getattr("CDM_MAX_WAIT"),
         ) as c:
             with c.requests(url=url, headers={}) as r:
-                if r.ok:
+                # the cdrm decrypt endpoint only accepts POST, so a GET
+                # answering 405 means it is there
+                if r.ok or (keymode == "cdrm" and r.status == 405):
                     console.print("[green] CDM service seems to be working\n[/green]")
                     console.print(
                         "[yellow]WARNING:Make sure you have all the correct settings for choosen cdm\nhttps://of-scraper.gitbook.io/of-scraper/cdm-options\n\n[/yellow]"
