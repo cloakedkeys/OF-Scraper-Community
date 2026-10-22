@@ -16,6 +16,10 @@ set_data_dir_path() {
     if [ -z "${DATA_DIR-}" ]; then # Checking the current value of DATA_DIR (which would be unset/empty if not provided as ENV var)
         DATA_DIR="$APP_HOME/data"
     fi
+    # Save downloads into DATA_DIR (the mounted folder) unless told otherwise.
+    # The app's own default, ~/Data/ofscraper, is a different folder on a
+    # case-sensitive filesystem, so downloads stayed inside the container.
+    export OFSC_SAVE_PATH_DEFAULT="${OFSC_SAVE_PATH_DEFAULT:-$DATA_DIR}"
 }
 
 # Function to set CONFIG_DIR.
