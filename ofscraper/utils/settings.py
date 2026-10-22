@@ -98,7 +98,7 @@ def merged_settings():
     args = read_args.retriveArgs()
     merged = deepcopy(args)
     # --- FFMPEG---
-    merged.ffmpeg=config_data.get_ffmpeg()
+    merged.ffmpeg=config_data.get_ffmpeg() or of_env.getattr("FFMPEG_DEFAULT")
 
     # --- Cache Logic ---
     cache_mode = (

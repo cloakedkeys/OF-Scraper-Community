@@ -340,8 +340,9 @@ def get_ffmpeg(config=None):
         return of_env.getattr("FFMPEG_DEFAULT")
     val = config.get("ffmpeg") or config.get("binary_options", {}).get("ffmpeg")
     val = strip_path_quotes(val)
-    # an empty string is the shipped default, so let OFSC_FFMPEG_DEFAULT apply
-    return val if val else of_env.getattr("FFMPEG_DEFAULT")
+    # "" is kept as-is so a config rewrite doesn't save OFSC_FFMPEG_DEFAULT
+    # into the file; settings applies that fallback at runtime
+    return val if val is not None else of_env.getattr("FFMPEG_DEFAULT")
 
 
 @wrapper.config_reader

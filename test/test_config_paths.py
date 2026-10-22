@@ -34,10 +34,30 @@ def test_ffmpeg_path_is_unquoted():
     assert data.get_ffmpeg(config=config) == "C:\\ffmpeg\\bin\\ffmpeg.exe"
 
 
-def test_empty_ffmpeg_falls_back_to_env_default(monkeypatch):
+@pytest.fixture
+def ffmpeg_env(monkeypatch):
+    real = data.of_env.getattr
     monkeypatch.setattr(
         data.of_env,
         "getattr",
-        lambda key, *a: "/opt/ffmpeg" if key == "FFMPEG_DEFAULT" else None,
+        lambda key, *a: "/opt/ffmpeg" if key == "FFMPEG_DEFAULT" else real(key),
     )
-    assert data.get_ffmpeg(config={"binary_options": {"ffmpeg": ""}}) == "/opt/ffmpeg"
+
+
+def test_empty_ffmpeg_is_not_replaced_by_env_default(ffmpeg_env):
+    assert data.get_ffmpeg(config={"binary_options": {"ffmpeg": ""}}) == ""
+
+
+def test_config_rewrite_keeps_empty_ffmpeg(ffmpeg_env):
+    # auto_update_config writes this schema back to config.json
+    import ofscraper.utils.config.schema as schema
+
+    new = schema.get_current_config_schema({"binary_options": {"ffmpeg": ""}})
+    assert new["binary_options"]["ffmpeg"] == ""
+
+
+def test_settings_falls_back_to_env_default_for_empty_ffmpeg(ffmpeg_env, monkeypatch):
+    import ofscraper.utils.settings as settings
+
+    monkeypatch.setattr(settings.config_data, "get_ffmpeg", lambda: "")
+    assert settings.merged_settings().ffmpeg == "/opt/ffmpeg"
