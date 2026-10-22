@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,8 @@ def _media(media_id):
 @pytest.fixture
 def db(tmp_path, monkeypatch):
     path = tmp_path / "user_data.db"
-    with sqlite3.connect(path) as conn:
+    # a sqlite3 connection's own context manager commits but doesn't close
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute("CREATE TABLE medias (media_id INTEGER, model_id INTEGER, downloaded INTEGER)")
         conn.executemany(
             "INSERT INTO medias VALUES (?, ?, ?)",
