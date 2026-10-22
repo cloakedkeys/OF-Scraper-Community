@@ -31,15 +31,19 @@ def moveHelper(temp, path_to_file, ele, log_=None):
     # set variables based on parent process
 
 
-def _resolve_dir(path):
+def _resolve(path):
     path = pathlib.Path(path)
     try:
-        path = path.resolve()
+        return path.resolve()
     except OSError:
         # some network/virtual drives (e.g. WinError 1005 on mapped Windows
         # volumes) can't be resolved; the directory set is only used to
         # date folders afterwards, so an absolute path is enough
-        path = path.absolute()
+        return path.absolute()
+
+
+def _resolve_dir(path):
+    path = _resolve(path)
     return path if path.is_dir() else path.parent
 
 
@@ -67,25 +71,31 @@ def setDirectoriesDate(log=None):
     log = log or common_globals.log
     log.info("Setting Date for modified directories")
     output = set()
-    rootDir = pathlib.Path(common_paths.get_save_location())
+    # resolved the same way as dirSet so is_relative_to compares like with like
+    # (resolve() can turn a mapped drive letter into a UNC path)
+    rootDir = _resolve(common_paths.get_save_location())
     log.debug(f"Original DirSet {list(common_globals.dirSet)}")
     log.debug(f"rootDir {rootDir}")
 
     for ele in common_globals.dirSet:
         output.add(ele)
-        while not os.path.samefile(ele, rootDir) and not os.path.samefile(
-            ele.parent, rootDir
-        ):
-            if ele.parent in output:
-                # We already added all subsequent paths in this tree
-                break
-            if not pathlib.PurePath(ele.parent).is_relative_to(rootDir):
-                # Don't descend if the parent path is outside rootDir such as
-                # when a symlink was used somewhere in the path
-                break
-            common_globals.log.debug(f"Setting Dates ele:{ele} rootDir:{rootDir}")
-            output.add(ele.parent)
-            ele = ele.parent
+        try:
+            while not os.path.samefile(ele, rootDir) and not os.path.samefile(
+                ele.parent, rootDir
+            ):
+                if ele.parent in output:
+                    # We already added all subsequent paths in this tree
+                    break
+                if not pathlib.PurePath(ele.parent).is_relative_to(rootDir):
+                    # Don't descend if the parent path is outside rootDir such as
+                    # when a symlink was used somewhere in the path
+                    break
+                common_globals.log.debug(f"Setting Dates ele:{ele} rootDir:{rootDir}")
+                output.add(ele.parent)
+                ele = ele.parent
+        except OSError as E:
+            # samefile stats both paths, which fails on the same drives
+            log.debug(f"could not walk up from {ele}: {E}")
     log.debug(f"Directories list {output}")
     for ele in output:
         try:
