@@ -6,10 +6,11 @@ from ofscraper.utils.of_env import get_all_configs
 import os
 
 
-def getattr(val):
+def getattr(val, default=None):
     """
     Retrieves a configuration value.
     Order of precedence: Environment Variable > Custom Config > Default Config.
+    Returns default if the key isn't set anywhere.
     """
     # Load all settings if not already loaded
     config_dict = get_all_configs()
@@ -19,7 +20,7 @@ def getattr(val):
         return env_val
     if val in config_dict:  # Check if key exists in the aggregated settings
         return config_dict.get(val)
-    return None  # Or raise KeyError(f"Configuration key '{val}' not found.")
+    return default
 
 
 def getkeys(forced=False):
