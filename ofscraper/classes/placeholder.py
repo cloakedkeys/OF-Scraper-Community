@@ -9,6 +9,7 @@ import ofscraper.utils.config.data as data
 import ofscraper.utils.config.file as config_file
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.me as me
+import ofscraper.utils.paths.collisions as collisions
 import ofscraper.utils.paths.common as common_paths
 import ofscraper.utils.paths.paths as paths
 import ofscraper.utils.profiles.data as profile_data
@@ -163,6 +164,8 @@ class Placeholders(basePlaceholder):
             self._filepath = paths.truncate(pathlib.Path(dir, file))
         else:
             self._filepath = paths.truncate(pathlib.Path(script_name))
+        # another media may already use this path (#48)
+        self._filepath = await collisions.resolve(self._filepath, self._ele)
         return self
 
     def add_price_variables(self, username):

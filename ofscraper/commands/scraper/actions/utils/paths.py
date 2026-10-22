@@ -7,6 +7,7 @@ from collections.abc import Iterable
 
 import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.utils.dates as dates
+import ofscraper.utils.paths.collisions as collisions
 import ofscraper.utils.paths.common as common_paths
 from ofscraper.commands.scraper.actions.utils.log import get_medialog
 
@@ -18,6 +19,9 @@ except ModuleNotFoundError:
 
 def moveHelper(temp, path_to_file, ele, log_=None):
     if not path_to_file.exists():
+        shutil.move(temp, path_to_file)
+    elif collisions.takes_over(path_to_file):
+        # the file there may be another media's, left by an old collision
         shutil.move(temp, path_to_file)
     elif (
         pathlib.Path(temp).absolute().stat().st_size

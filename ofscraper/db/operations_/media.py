@@ -115,6 +115,11 @@ SELECT filename
 FROM medias
 where hash=(?)
 """
+mediaIdsAtPath = """
+SELECT DISTINCT media_id
+FROM medias
+WHERE directory=(?) AND filename=(?) AND media_id IS NOT NULL
+"""
 mediaInsertAPI = """INSERT INTO 'medias'(
 media_id,post_id,link,api_type,
 media_type,preview,linked,
@@ -378,6 +383,21 @@ def get_dupe_media_files(
     with contextlib.closing(conn.cursor()) as cur:
         cur.execute(mediaDupeFiles, [hash])
         return [dict(row)["filename"] for row in cur.fetchall()]
+
+
+@wrapper.operation_wrapper_async
+def get_media_ids_at_path(
+    directory, filename, model_id=None, username=None, conn=None, **kwargs
+) -> list:
+    """media_ids whose recorded download path is directory/filename"""
+    with contextlib.closing(conn.cursor()) as cur:
+        # a new model's database has no table yet; querying it would raise
+        # OperationalError, which the wrapper retries with backoff
+        cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='medias'")
+        if cur.fetchone() is None:
+            return []
+        cur.execute(mediaIdsAtPath, [str(directory), str(filename)])
+        return [int(dict(row)["media_id"]) for row in cur.fetchall()]
 
 
 @wrapper.operation_wrapper_async
