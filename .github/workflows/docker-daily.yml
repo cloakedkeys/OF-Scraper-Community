@@ -48,9 +48,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Docker Hub publishing (datawhores/of-scraper) needs upstream's secrets,
-        # so forks only build the GitHub Packages image.
-        registry: ${{ fromJSON(github.repository_owner == 'datawhores' && '[{"id":"ghcr","name":"GitHub Packages","sign":false},{"id":"dockerhub","name":"Docker Hub","sign":true}]' || '[{"id":"ghcr","name":"GitHub Packages","sign":false}]') }}
+        # Docker Hub publishing needs DOCKERHUB_* secrets; forks opt in by setting
+        # the DOCKERHUB_IMAGE repo variable (e.g. user/of-scraper).
+        registry: ${{ fromJSON((github.repository_owner == 'datawhores' || vars.DOCKERHUB_IMAGE != '') && '[{"id":"ghcr","name":"GitHub Packages","sign":false},{"id":"dockerhub","name":"Docker Hub","sign":true}]' || '[{"id":"ghcr","name":"GitHub Packages","sign":false}]') }}
 
     steps:
       - name: Checkout repository
@@ -72,7 +72,7 @@ jobs:
         id: meta_normal
         uses: docker/metadata-action@v6
         with:
-          images: ${{ matrix.registry.id == 'ghcr' && format('ghcr.io/{0}', github.repository) || 'datawhores/of-scraper' }}
+          images: ${{ matrix.registry.id == 'ghcr' && format('ghcr.io/{0}', github.repository) || vars.DOCKERHUB_IMAGE || 'datawhores/of-scraper' }}
           tags: |
             type=ref,event=branch
             type=raw,value=${{ needs.generate_version.outputs.base_version }}-${{ needs.generate_version.outputs.short_hash }}-${{ needs.generate_version.outputs.commit_timestamp }}

@@ -78,7 +78,7 @@ jobs:
         id: meta_hub_stable
         uses: docker/metadata-action@v6
         with:
-          images: datawhores/of-scraper
+          images: ${{ vars.DOCKERHUB_IMAGE || 'datawhores/of-scraper' }}
           tags: |
             type=raw,value=${{ inputs.package_version }}
             type=raw,value=stable,enable=true
@@ -150,7 +150,7 @@ jobs:
         id: meta_hub_dev
         uses: docker/metadata-action@v6
         with:
-          images: datawhores/of-scraper
+          images: ${{ vars.DOCKERHUB_IMAGE || 'datawhores/of-scraper' }}
           tags: |
             type=raw,value=${{ inputs.package_version }}
             type=raw,value=dev,enable=true
