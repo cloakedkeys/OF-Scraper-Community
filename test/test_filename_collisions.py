@@ -271,6 +271,36 @@ def test_cross_drive_move_sweeps_abandoned_staging_files(tmp_path, monkeypatch):
     assert not stale.exists() and fresh.exists()
 
 
+def test_sweep_spares_a_live_copy_of_an_old_download(tmp_path, monkeypatch):
+    import errno
+    import os
+    import time
+
+    # A .part completed by a killed run is moved without being rewritten, so
+    # its mtime can be days old. Another download moving into the same folder
+    # sweeps it while this copy is about to be published.
+    temp = _download(tmp_path, b"media 1")
+    old = time.time() - 2 * action_paths.STALE_STAGING_SECONDS
+    os.utime(temp, (old, old))
+    replace, publish = os.replace, action_paths._replace
+
+    def cross_device(src, dst):
+        if src == temp:
+            raise OSError(errno.EXDEV, "cross-device link")
+        return replace(src, dst)
+
+    def publish_after_concurrent_sweep(src, dst):
+        if ".ofs-move-" in str(src):
+            action_paths._sweep_staging(dst.parent)
+        return publish(src, dst)
+
+    monkeypatch.setattr(os, "replace", cross_device)
+    monkeypatch.setattr(action_paths, "_replace", publish_after_concurrent_sweep)
+    got = action_paths.moveHelper(temp, tmp_path / "caption.jpg", _media(1))
+    assert got.read_bytes() == b"media 1"
+    assert abs(got.stat().st_mtime - old) < 1 and not temp.exists()
+
+
 def test_failed_move_removes_its_reservation(tmp_path, monkeypatch):
     import os
 
@@ -325,7 +355,7 @@ def test_cross_drive_partial_copy_is_not_deduplicated(tmp_path, monkeypatch, fai
         Path(dst).write_bytes(Path(src).read_bytes())
 
     monkeypatch.setattr(os, "replace", cross_device)
-    monkeypatch.setattr(action_paths.shutil, "copy2", interrupted_copy)
+    monkeypatch.setattr(action_paths.shutil, "copyfile", interrupted_copy)
     if fail_copy:
         with pytest.raises(OSError, match="copy interrupted"):
             action_paths.moveHelper(temp, target, _media(1))

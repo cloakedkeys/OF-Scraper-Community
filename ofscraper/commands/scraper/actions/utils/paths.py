@@ -86,7 +86,9 @@ def _replace_reserved(temp, path):
                     prefix=".ofs-move-", dir=pathlib.Path(path).parent
                 )
                 os.close(fd)
-                shutil.copy2(temp, staged)
+                # Copy times only once published: an old .part's mtime on the
+                # staging file would let another download's sweep remove it.
+                shutil.copyfile(temp, staged)
                 _replace(staged, path)
             except BaseException:
                 pathlib.Path(path).unlink(missing_ok=True)
@@ -94,6 +96,7 @@ def _replace_reserved(temp, path):
             finally:
                 if staged is not None:
                     pathlib.Path(staged).unlink(missing_ok=True)
+            shutil.copystat(temp, path)
             pathlib.Path(temp).unlink(missing_ok=True)
         else:
             pathlib.Path(path).unlink(missing_ok=True)
