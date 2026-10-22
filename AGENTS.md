@@ -19,12 +19,12 @@ Remotes:
 6. **Don't send OnlyFans credentials to third parties.** `--key-mode cdrm` posts the request headers, cookies included, to cdrm-project.com. Don't run a live cdrm decrypt without the maintainer's approval.
 
 ## Setup
-- **Python:** `requires-python` is `>=3.11, <3.14` on `main` (PR #109 extends it to 3.15). On Windows, lxml 5.1 has no 3.13 wheel, so use 3.12 or 3.11. CI tests on 3.11.
-- **Environment:** `uv sync --python 3.12 --extra test` creates `.venv` from `uv.lock`. Don't change `uv.lock` unless you're changing dependencies; when you do, use `uv lock -P <package>` rather than a full upgrade.
+- **Python:** `requires-python` is `>=3.11, <3.16`. CI tests on 3.11 (the minimum) and 3.15.1. On 3.15, lz4 and faust-cchardet have no wheels and build from source, so a C compiler is needed (MSVC on Windows).
+- **Environment:** `uv sync --python 3.15 --extra test` (or `--python 3.11` for the minimum) creates `.venv` from `uv.lock`. Don't change `uv.lock` unless you're changing dependencies; when you do, use `uv lock -P <package>` rather than a full upgrade.
 - **Parallel work:** use git worktrees, one per branch (e.g. `../ofs-wt/<name>`). Run code from a worktree with `PYTHONPATH=.` and the main checkout's venv.
 
 ## Tests
-- **Run:** `python -m pytest test` (`test/legacy` is excluded by config). Every fix needs a test that fails without it; check that by running the test against the previous commit.
+- **Run:** `python -m pytest test -W error::SyntaxWarning` (`test/legacy` is excluded by config). The suite has no invalid escape sequences; keep it that way (use raw strings for Windows paths). Every fix needs a test that fails without it; check that by running the test against the previous commit.
 - **`test/conftest.py` handles two quirks you'll hit in scripts too:**
   - `ofscraper` parses `sys.argv` the first time settings are read, so clear it (`sys.argv = sys.argv[:1]`) before importing the app in a script, and never pass your script's own arguments on the command line. Use environment variables instead.
   - Importing a leaf module first can hit a circular import (`settings` ↔ `console` ↔ `config`). Import `ofscraper.main.open.load` or `ofscraper.__main__` first.
@@ -51,12 +51,12 @@ PYTHONIOENCODING=utf-8 PYTHONPATH=. .venv/Scripts/python -c "from ofscraper.__ma
 ## Docker
 - **Layout:** two-stage `Dockerfile`; the runtime setup is in `scripts/entry/` (`entrypoint.sh`, `lib_user_setup.sh`, `lib_paths.sh`).
 - **`docker compose exec` skips the entrypoint.** Anything the app needs in that workflow must be an `ENV` in the image, not only an entrypoint export.
-- **bash always sets `UID`** (0 when running as root). It only counts as user-provided when it differs from `id -u`.
+- **bash always sets `UID`** (0 when running as root), so its value doesn't show whether one was passed in. `lib_user_setup.sh` checks the container's startup environment (`grep -qz '^UID=' /proc/$$/environ`) instead, which also keeps an explicit `UID=0`.
 - **Build and test:** `docker buildx build --platform linux/amd64 --load -t ofs:test .`, then `docker run --rm ofs:test sh -c '...'`. arm64 builds run under QEMU, are slow and memory-hungry. For a single step, test it in a small throwaway Dockerfile.
 - **From Git Bash on Windows:** set `MSYS_NO_PATHCONV=1`, or `-e VAR=/path` arguments get rewritten into Windows paths.
 
 ## CI
-- **Tests:** `codecov.yml` runs on pull requests (Python 3.11).
+- **Tests:** `codecov.yml` runs on pull requests (Python 3.11 and 3.15.1).
 - **Images and releases:** `commit_bundler.yml` and `docker-daily.yml` run on **every branch push**, building binaries and pushing images to the fork's private registries.
 - **If a check fails with no steps run, read its annotation.** A billing or spending-limit refusal isn't a code failure. Report it, and run the test job locally on the PR head instead.
 
