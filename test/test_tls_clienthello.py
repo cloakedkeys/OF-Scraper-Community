@@ -76,7 +76,10 @@ def test_context_builds_without_deprecated_ssl_flags():
 def test_client_hello_matches_previous_options():
     new = create_custom_ssl_context()
     old = create_custom_ssl_context()
-    old.options = ssl.Options(int(old.options) | OLD_PROTOCOL_BITS)
+    with warnings.catch_warnings():
+        # rebuilding the old option set on purpose
+        warnings.simplefilter("ignore", DeprecationWarning)
+        old.options = ssl.Options(int(old.options) | OLD_PROTOCOL_BITS)
     assert _fingerprint(_client_hello(new)) == _fingerprint(_client_hello(old))
 
 
