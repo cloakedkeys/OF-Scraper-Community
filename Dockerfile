@@ -67,10 +67,12 @@ COPY --from=builder /app/dist/*.whl .
 RUN \
     WHEEL_FILE=$(ls *.whl) && \
     apt-get update && apt-get install -y --no-install-recommends \
-    build-essential && \
+    build-essential libyaml-dev libyaml-0-2 && \
     uv pip install "${WHEEL_FILE}[ffmpeg]" -v && \
     rm "${WHEEL_FILE}" && \
-    apt-get purge -y --auto-remove build-essential && \
+    # PyYAML has no 3.15 wheel; libyaml-dev lets it build its C extension.
+    # libyaml-0-2 was installed explicitly, so --auto-remove keeps it.
+    apt-get purge -y --auto-remove build-essential libyaml-dev && \
     rm -rf /var/lib/apt/lists/*
 USER root 
 ENTRYPOINT ["/usr/local/bin/entry/entrypoint.sh"]
