@@ -31,7 +31,7 @@ def _stub_daemon(monkeypatch, jobs, runner):
         SimpleNamespace(current_model_manager=SimpleNamespace(sync_models=lambda: None)),
     )
     monkeypatch.setattr(scraper.actions, "select_areas", lambda: None)
-    monkeypatch.setattr(scraper, "set_schedule", lambda *args: None)
+    monkeypatch.setattr(scraper, "set_schedule", lambda *args, **kwargs: None)
 
 
 def test_idle_interrupt_shuts_down_without_task_done_error(monkeypatch):
@@ -81,7 +81,7 @@ def test_sigterm_while_idle_exits_with_keyboard_interrupt():
             current_model_manager=SimpleNamespace(sync_models=lambda: None)
         )
         scraper.actions.select_areas = lambda: None
-        scraper.set_schedule = lambda *args: None
+        scraper.set_schedule = lambda *args, **kwargs: None
         try:
             scraper.daemon_process()
         except KeyboardInterrupt:
