@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ofscraper.commands.recover_collisions import recover
+from ofscraper.commands.recover_collisions import recover, undo
 from ofscraper.db.operations_.media import mediaCreate
 
 
@@ -48,10 +48,13 @@ def test_preview_and_apply_only_reset_ambiguous_media(database, tmp_path):
     original = rows(database)
     assert recover(database)["media_to_mark"] == 2
     assert rows(database) == original
-    assert not list(tmp_path.glob("*.collision-backup-*"))
+    assert not list(tmp_path.glob("*.collision-undo-*"))
     result = recover(database, apply=True)
     assert result["rows_marked"] == 3
-    assert rows(result["backup"]) == original
+    record = json.loads(Path(result["undo_file"]).read_text())
+    assert len(record["rows"]) == 3
+    assert all(len(row) == 5 and row[-1] == 1 for row in record["rows"])
+    assert not list(tmp_path.glob("*.sqlite"))
     assert flags(database) == [(1, 0), (2, 0), (2, 0), (3, 1)]
     with sqlite3.connect(database) as conn:
         columns = [r[1] for r in conn.execute("PRAGMA table_info(medias)")]
@@ -60,7 +63,7 @@ def test_preview_and_apply_only_reset_ambiguous_media(database, tmp_path):
         assert old[:index] + old[index + 1:] == new[:index] + new[index + 1:]
     assert shared.read_bytes() == b"surviving content"
     again = recover(database, apply=True)
-    assert again["rows_marked"] == 0 and again["backup"] is None
+    assert again["rows_marked"] == 0 and again["undo_file"] is None
 
 
 def test_same_media_in_two_posts_is_not_a_collision(database, tmp_path):
@@ -124,6 +127,7 @@ def test_apply_rolls_back_all_flags_when_update_fails(database, tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         recover(database, apply=True)
     assert flags(database) == [(1, 1), (2, 1)]
+    assert not list(tmp_path.glob("*.collision-undo-*"))
 
 
 def test_cli_defaults_to_preview_and_never_creates_missing_db(database, tmp_path):
@@ -134,22 +138,58 @@ def test_cli_defaults_to_preview_and_never_creates_missing_db(database, tmp_path
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["applied"] is False
     assert flags(database) == [(1, 1), (2, 1)]
+    applied = subprocess.run(command + [str(database), "--apply"], capture_output=True, text=True)
+    assert applied.returncode == 0, applied.stderr
+    undo_path = json.loads(applied.stdout)["undo_file"]
+    restored = subprocess.run(
+        command + [str(database), "--undo", undo_path, "--apply"],
+        capture_output=True, text=True,
+    )
+    assert restored.returncode == 0, restored.stderr
+    assert flags(database) == [(1, 1), (2, 1)]
     missing = tmp_path / "absent.db"
     result = subprocess.run(command + [str(missing), "--apply"], capture_output=True)
     assert result.returncode != 0 and not missing.exists()
 
 
-def test_backup_failure_does_not_change_flags(database, tmp_path, monkeypatch):
+def test_undo_file_failure_does_not_change_flags(database, tmp_path, monkeypatch):
     add(database, 1, tmp_path / "same.jpg")
     add(database, 2, tmp_path / "same.jpg")
     original = Path.open
 
-    def deny_backup(path, *args, **kwargs):
-        if ".collision-backup-" in path.name:
-            raise PermissionError("backup denied")
+    def deny_undo(path, *args, **kwargs):
+        if ".collision-undo-" in path.name:
+            raise PermissionError("undo file denied")
         return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "open", deny_backup)
-    with pytest.raises(PermissionError, match="backup denied"):
+    monkeypatch.setattr(Path, "open", deny_undo)
+    with pytest.raises(PermissionError, match="undo file denied"):
         recover(database, apply=True)
     assert flags(database) == [(1, 1), (2, 1)]
+
+
+def test_undo_restores_only_changed_rows_and_is_repeatable(database, tmp_path):
+    add(database, 1, tmp_path / "same.jpg")
+    add(database, 2, tmp_path / "same.jpg")
+    add(database, 3, tmp_path / "other.jpg", downloaded=0)
+    original = rows(database)
+    result = recover(database, apply=True)
+    assert undo(database, result["undo_file"])["rows_to_restore"] == 2
+    assert flags(database) == [(1, 0), (2, 0), (3, 0)]
+    assert undo(database, result["undo_file"], apply=True)["rows_to_restore"] == 2
+    assert rows(database) == original
+    assert undo(database, result["undo_file"], apply=True)["rows_to_restore"] == 0
+
+
+def test_undo_checks_database_and_row_identity(database, tmp_path):
+    add(database, 1, tmp_path / "same.jpg")
+    add(database, 2, tmp_path / "same.jpg")
+    result = recover(database, apply=True)
+    other = tmp_path / "other.db"
+    other.touch()
+    with pytest.raises(ValueError, match="does not belong"):
+        undo(other, result["undo_file"], apply=True)
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE medias SET media_id=99 WHERE media_id=1")
+    assert undo(database, result["undo_file"], apply=True)["rows_to_restore"] == 1
+    assert flags(database) == [(99, 0), (2, 1)]

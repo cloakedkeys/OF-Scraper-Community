@@ -42,12 +42,14 @@ def find_collisions(conn, path_root=None):
 
 
 def recover(database, apply=False, path_root=None):
-    """Back up and reset only download flags, in one transaction when applying."""
+    """Record changed rows in an undo file, then reset their download flags."""
     database = Path(database).resolve(strict=True)
     uri = database.as_uri()
     mode = "rw" if apply else "ro"
     with closing(sqlite3.connect(f"{uri}?mode={mode}", uri=True)) as conn:
         conn.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
+        undo_file = None
+        undo_created = False
         try:
             groups = find_collisions(conn, path_root)
             owners = {(r[0], r[1]) for group in groups for r in group}
@@ -68,21 +70,27 @@ def recover(database, apply=False, path_root=None):
                 ],
                 "media_to_mark": len(pending),
                 "rows_marked": 0,
-                "backup": None,
+                "undo_file": None,
                 "applied": apply,
             }
             if apply and pending:
-                backup = database.with_name(
-                    f"{database.name}.collision-backup-{uuid.uuid4().hex}.sqlite"
+                changed_rows = []
+                for owner in pending:
+                    changed_rows.extend(conn.execute(
+                        "SELECT id, model_id, media_id, post_id, downloaded FROM medias "
+                        "WHERE model_id IS ? AND media_id = ? AND downloaded = 1", owner
+                    ).fetchall())
+                undo_file = database.with_name(
+                    f"{database.name}.collision-undo-{uuid.uuid4().hex}.json"
                 )
-                # The write reservation prevents another writer from changing
-                # the snapshot between detection, backup and the flag updates.
-                with backup.open("xb"):
-                    pass
-                with closing(sqlite3.connect(f"{uri}?mode=ro", uri=True)) as source:
-                    with closing(sqlite3.connect(backup)) as destination:
-                        source.backup(destination)
-                result["backup"] = str(backup)
+                # Persist the small undo record before committing any flag changes.
+                with undo_file.open("x", encoding="utf-8") as output:
+                    undo_created = True
+                    json.dump({"version": 1, "database": str(database),
+                               "rows": sorted(changed_rows)}, output)
+                    output.flush()
+                    os.fsync(output.fileno())
+                result["undo_file"] = str(undo_file)
                 for owner in pending:
                     result["rows_marked"] += conn.execute(
                         "UPDATE medias SET downloaded = 0 "
@@ -93,17 +101,52 @@ def recover(database, apply=False, path_root=None):
             return result
         except BaseException:
             conn.rollback()
+            if undo_created:
+                undo_file.unlink(missing_ok=True)
             raise
+
+
+def undo(database, undo_file, apply=False):
+    """Restore recorded flags only for matching rows that are still pending."""
+    database = Path(database).resolve(strict=True)
+    record = json.loads(Path(undo_file).read_text(encoding="utf-8"))
+    if record.get("version") != 1 or record.get("database") != str(database):
+        raise ValueError("Undo file does not belong to this database")
+    rows = record.get("rows")
+    if not isinstance(rows, list) or any(
+        not isinstance(row, list) or len(row) != 5 or row[4] != 1 for row in rows
+    ):
+        raise ValueError("Invalid undo rows")
+    mode = "rw" if apply else "ro"
+    with closing(sqlite3.connect(f"{database.as_uri()}?mode={mode}", uri=True)) as conn:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
+            count = 0
+            for row_id, model, media, post, previous in rows:
+                params = (row_id, model, media, post)
+                condition = "id = ? AND model_id IS ? AND media_id = ? AND post_id = ? AND downloaded = 0"
+                if apply:
+                    count += conn.execute(
+                        f"UPDATE medias SET downloaded = ? WHERE {condition}",
+                        (previous, *params),
+                    ).rowcount
+                else:
+                    count += conn.execute(
+                        f"SELECT COUNT(*) FROM medias WHERE {condition}", params
+                    ).fetchone()[0]
+            return {"applied": apply, "rows_to_restore": count}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("database", type=Path, help="One model's user_data.db")
-    parser.add_argument("--apply", action="store_true", help="Back up the database and mark ambiguous media for re-download")
+    parser.add_argument("--apply", action="store_true", help="Apply the previewed recovery or undo operation")
+    parser.add_argument("--undo", type=Path, help="Preview restoring flags from a recovery undo file")
     parser.add_argument("--path-root", type=Path, help="Original working directory for relative recorded paths")
     args = parser.parse_args(argv)
     try:
-        result = recover(args.database, apply=args.apply, path_root=args.path_root)
+        result = (undo(args.database, args.undo, apply=args.apply) if args.undo
+                  else recover(args.database, apply=args.apply, path_root=args.path_root))
     except (OSError, sqlite3.Error, ValueError) as error:
         parser.exit(1, f"Recovery failed: {error}\n")
     print(json.dumps(result, indent=2))

@@ -23,10 +23,23 @@ Apply the report by running the command again with `--apply`:
 python -m ofscraper.commands.recover_collisions "<profile>/.data/<model_id>/user_data.db" --apply
 ```
 
-Apply rechecks the database, creates a SQLite backup beside it, then sets only
+Apply rechecks the database, writes a small JSON undo file beside it, then sets only
 `downloaded = 0` for affected media, including their other post records. It leaves
-filenames, hashes, sizes and media files intact. The backup path is in the report.
-Running it again before re-downloading makes no further changes or backup.
+filenames, hashes, sizes and media files intact. The `undo_file` path is in the
+report. It records only changed row identifiers and their previous download flags,
+plus the database path. No database copy is created. Running recovery again before
+re-downloading makes no further changes or undo file.
+
+To reverse the flag reset **before starting downloads**, preview and apply undo:
+
+```sh
+python -m ofscraper.commands.recover_collisions "<database>" --undo "<undo-file.json>"
+python -m ofscraper.commands.recover_collisions "<database>" --undo "<undo-file.json>" --apply
+```
+
+Undo only restores matching recorded rows whose flags are still zero. It rejects
+a different database path and leaves other rows and columns untouched. Keep the
+undo file until satisfied with the repair; it is not a general database backup.
 
 Then run a normal download for the affected model and content areas, with
 `--after 2000` to include old messages. Do not use `--force-all`: the cleared flags
