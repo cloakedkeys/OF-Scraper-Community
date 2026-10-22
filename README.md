@@ -69,6 +69,21 @@ This script has been thoughtfully crafted to facilitate seamless transitions fro
 
 [Recover downloads lost to filename collisions](COLLISION_RECOVERY.md)
 
+### Trigger a daemon pass early (Docker/Linux)
+
+While OF-Scraper is waiting between daemon passes, send `SIGUSR1` to start
+the next pass without restarting the container:
+
+```sh
+docker kill --signal=SIGUSR1 <container>
+```
+
+This requires a version with SIGUSR1 support and daemon mode. Signals received
+during an active pass are ignored; repeated requests do not queue extra passes.
+The normal interval resumes after the triggered pass finishes. SIGTERM and Ctrl+C
+retain their shutdown behavior. The signal is registered only in daemon mode on
+systems that provide SIGUSR1; native Windows has no equivalent in this change.
+
 For detailed instructions on:
 
 - Installation
