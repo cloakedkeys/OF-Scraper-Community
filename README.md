@@ -66,6 +66,8 @@ This script has been thoughtfully crafted to facilitate seamless transitions fro
 
 ## Documentation
 
+[Recover downloads lost to filename collisions](COLLISION_RECOVERY.md)
+
 For detailed instructions on:
 
 - Installation
