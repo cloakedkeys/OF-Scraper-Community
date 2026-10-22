@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7-labs
 # Stage 1: Build the application artifact
-FROM ghcr.io/astral-sh/uv:0.7.13-python3.11-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:0.13.5-python3.15-trixie-slim AS builder
 
 ARG BUILD_VERSION
 WORKDIR /app
@@ -33,7 +33,7 @@ RUN \
 
 
 # Stage 2: Create the final, minimal production image
-FROM ghcr.io/astral-sh/uv:0.7.13-python3.11-bookworm-slim
+FROM ghcr.io/astral-sh/uv:0.13.5-python3.15-trixie-slim
 WORKDIR /app
 
 # Configure uv's venv and cache location.
