@@ -59,6 +59,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gosu \
     && rm -rf /var/lib/apt/lists/*# STEP 2: Install all OS-level dependencies in a single layer.
+# STEP 2b: A static FFmpeg 7.x for the image's architecture. pyffmpeg only
+# ships x86_64 binaries, so on arm64 its ffmpeg fails with 'Exec format
+# error'; get_ffmpeg() then falls back to this one on PATH. DRM decryption
+# needs FFmpeg >= 6 and < 8.
+COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /ffprobe /usr/local/bin/
 # STEP 3: Copy entrypoint scripts and make them executable.
 COPY --chmod=755 ./scripts/entry/. /usr/local/bin/entry/
 
