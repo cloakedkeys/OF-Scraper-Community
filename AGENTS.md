@@ -66,7 +66,7 @@ PYTHONIOENCODING=utf-8 PYTHONPATH=. .venv/Scripts/python -c "from ofscraper.__ma
 - **Scope:** one fix per PR, and link the issue (`Fixes #N`) when the PR fully fixes it. Keep diffs minimal and match the surrounding style.
 - **Title:** conventional-commit style, e.g. `fix(drm): ...`. Squash merges reuse it as `title (#N)`.
 - **Merge strategy:** squash by default. Tests run on a PR's head, not on each commit, and most PRs are one fix with follow-up commits, so only the squashed result is known to work. Use a rebase merge only when a PR's commits are deliberately separate steps and each one passes the test suite on its own (tidy the branch with `git commit --fixup` and `git rebase --autosquash` first). Avoid plain merge commits on `main`.
-- **`cloakedkeys-dev`:** build it from `main` *after* PRs are merged, not by merging PR branches into it first. Otherwise squash merges leave it with the same files as `main` but a different history, and bringing it back needs a force-push.
+- **Branches and releases:** PRs target `main`, and there's no long-lived dev branch; test builds come from each branch push. A release is a **lightweight** tag on `main` (e.g. `3.15.0`). The version scripts sort tags by committer date, which an annotated tag doesn't have, so they skip it.
 - **Description:** say what was tested and how (unit tests, live runs, Docker builds), and say what wasn't tested.
 - **Before pushing:** check that the branch merges cleanly with the other open PRs, e.g. `git merge-tree --write-tree origin/<a> origin/<b>`.
 - **Editing a PR description:** fetch it to a UTF-8 file, edit the file, check it isn't empty, then use `gh pr edit --body-file`. Piping it through a console with a non-UTF-8 encoding has wiped a description before.
