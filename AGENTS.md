@@ -8,10 +8,12 @@ Read this before changing anything in this repository. It's written for AI codin
 Remotes:
 - `origin`: this private fork. PRs target `main`. CONTRIBUTING.md's advice to target `dev/3.XX` describes upstream, not this fork.
 - `contrib`: `cloakedkeys/OF-Scraper-upstream`, a **public** fork used only to open PRs against upstream.
+
+The repo is private for convenience, not secrecy: the upstream maintainer has abandoned the project and fixes are distributed ad hoc.
 - `upstream`: `datawhores/OF-Scraper`.
 
 ## Hard rules
-1. **Private DRM code never goes public.** The DRM download pipeline (`ofscraper/commands/scraper/actions/download/managers/alt_download.py` and the fork's changes around it) must never be pushed to `contrib`, opened as an upstream PR, pasted into issues, or included in public images. Upstream PRs are cut from upstream's branch with only the specific unrelated fix cherry-picked.
+1. **Upstream PRs carry only the intended fix.** Upstream is unmaintained, and the community shares fixes, DRM fixes included, so the fork's DRM code (`alt_download.py`, `keyhelpers.py`, `media.py` `license()`) may be made public. Cut each upstream PR from upstream's branch and cherry-pick only that fix, so other fork changes don't ride along.
 2. **No secrets or personal data in the repo, commits or PR text.** That covers `auth.json`, cookies, CDM files (`private_key.pem`, `client_id.bin`), content keys, downloaded or captured media, and logs. Before every push, grep the staged diff and commit messages for usernames, home-directory paths (`C:\Users\...`, `/home/...`) and keys. Write paths relative to the repo or use placeholders like `{home_directory}`.
 3. **Don't merge.** Open a PR, verify it, state the merge order, and stop. Merge only PRs a maintainer explicitly names in an instruction to you, using a squash merge. Never push code to `main` directly and never force-push it. The exception is `AGENTS.md` (and `CLAUDE.md`): changes to these docs are committed straight to `main` without a PR.
 4. **Commit messages carry no AI attribution** (no `Co-Authored-By` agent lines or "generated with" notes). A PR description may say it was AI-generated.
