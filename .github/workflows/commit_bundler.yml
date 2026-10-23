@@ -2,8 +2,9 @@ name: Build and Package
 
 on:
   push:
+    # main only: every other branch push used to build and publish a dev release
     branches:
-      - '**'
+      - main
     tags-ignore:
       - '**'
 

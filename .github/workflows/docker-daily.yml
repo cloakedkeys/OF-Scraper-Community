@@ -2,8 +2,9 @@ name: Docker Daily Build
 
 on:
   push:
+    # main only: every other branch push used to build and push images
     branches:
-      - '**'
+      - main
     tags-ignore:
       - '**'
 permissions:
