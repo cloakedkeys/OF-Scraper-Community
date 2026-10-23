@@ -1,3 +1,17 @@
+# OF-Scraper-Community
+
+This is a community-maintained fork of [datawhores/OF-Scraper](https://github.com/datawhores/OF-Scraper). Upstream hasn't been updated since April 2026, so fixes reported by users are collected here, including DRM, ffmpeg 8+ and Python 3.15 support.
+
+- **Install from this repo**, not PyPI. The `ofscraper` package on PyPI is upstream's last release and doesn't include these fixes:
+  ```
+  uv tool install git+https://github.com/cloakedkeys/OF-Scraper-Community
+  ```
+  or `pip install git+https://github.com/cloakedkeys/OF-Scraper-Community`.
+- **Report problems with this fork in its [issues](https://github.com/cloakedkeys/OF-Scraper-Community/issues)**, not upstream's.
+- **The GUI** is a separate project: [cjb900/OF-Scraper-GUI](https://github.com/cjb900/OF-Scraper-GUI). Fixes are sent there too.
+
+The rest of this README is upstream's and still describes upstream's releases and links.
+
 # Notice
 
 1. OF-Scraper can not bypass pay walls
