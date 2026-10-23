@@ -4,9 +4,8 @@ Thanks for helping. This is a community-maintained fork of [datawhores/OF-Scrape
 
 ### 🌿 Which branch should I use?
 
-* **Target `main`.** It has the latest code, and all fixes are merged there.
-* **`dev/3.15` isn't for PRs.** It's the test-build branch and is rebuilt from `main`.
-* Upstream's `dev/3.XX` branches aren't used here.
+* **Target `main`.** It has the latest code, and all fixes are merged there. There's no separate dev branch, and upstream's `dev/3.XX` branches aren't used here.
+* **Releases are tags on `main`**, e.g. `3.15.0`.
 
 ### 🚀 Quick start
 1. **Branch** off the latest `main`.
