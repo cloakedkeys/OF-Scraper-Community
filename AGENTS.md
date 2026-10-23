@@ -38,7 +38,7 @@ The repo is private for convenience, not secrecy: the upstream maintainer has ab
 PYTHONIOENCODING=utf-8 PYTHONPATH=. .venv/Scripts/python -c "from ofscraper.__main__ import main; main()" \
   --action download --posts messages -u <creator> --no-rich -l debug -p normal --force-all --after 2000 -mt images
 ```
-- **Config and auth:** these live in the user's config directory (`~/.config/ofscraper/`, profile `main_profile`). Ask the maintainer which creator accounts are approved for live tests. Don't edit their `config.json`; if a test needs different settings, use a temporary profile or environment variables, and restore anything you change.
+- **Config and auth:** these live in the user's config directory (`~/.config/ofscraper/`, profile `main_profile`). All of the maintainer's creator accounts are approved for live tests. Don't edit their `config.json`; if a test needs different settings, use a temporary profile or environment variables, and restore anything you change.
 - **`--after 2000`:** without it, a repeat run only scans messages newer than the last scan and finds nothing. `--force-all` re-downloads files that already exist.
 - **Logs:** the console shows only the run summary. Debug output goes to `~/.config/ofscraper/logging/<profile>_<date>/`.
 - **Big creators:** raise `--sem` for speed, and keep runs scoped with `-mt` and `--after`.
