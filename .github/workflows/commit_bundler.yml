@@ -2,11 +2,21 @@ name: Build and Package
 
 on:
   push:
-    # main only: every other branch push used to build and publish a dev release
+    # Pushes to main build the binaries as a check. A version tag (e.g. 3.15.1)
+    # also publishes them as that version's release; path filters don't apply
+    # to tag pushes.
     branches:
       - main
-    tags-ignore:
-      - '**'
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+    # doc-only changes don't need a build or test run
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'media/**'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
 
 permissions:
   contents: read # Required for git checkout and gh CLI to read workflow runs
@@ -176,7 +186,7 @@ jobs:
 
   publish_release:
     name: Publish GitHub Release
-    if: github.event_name == 'push' && !contains(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/')
     needs: [build_binaries, generate_version] # Waits for version info AND all binary builds to complete (even partially)
     runs-on: ubuntu-latest
     permissions:
@@ -197,12 +207,10 @@ jobs:
 
         with:
           artifacts: artifacts/*/* # Attach any downloaded artifacts (will include only those that were built successfully)
-          # Combined tag for uniqueness and chronological sorting
-          tag: "${{ needs.generate_version.outputs.base_version }}+${{ needs.generate_version.outputs.short_hash }}.${{ needs.generate_version.outputs.commit_timestamp }}"
-          # Human-readable name with all key details
-          name: "Dev Build ${{ needs.generate_version.outputs.base_version }} (Commit ${{ needs.generate_version.outputs.short_hash }}) - ${{ needs.generate_version.outputs.commit_timestamp }}"
-          
-          body: "This is an auto-generated development release created from commit hash `${{ needs.generate_version.outputs.long_hash }}`. Version: `${{ needs.generate_version.outputs.version }}`"
-          commit: "${{ needs.generate_version.outputs.long_hash }}"
+          # One release per version tag; a re-run updates it
+          tag: ${{ github.ref_name }}
+          name: ${{ needs.generate_version.outputs.version }}
+          generateReleaseNotes: true
           allowUpdates: true
-          prerelease: true
+          prerelease: false
+          makeLatest: true

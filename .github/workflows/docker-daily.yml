@@ -7,6 +7,13 @@ on:
       - main
     tags-ignore:
       - '**'
+    # doc-only changes don't need a build or test run
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'media/**'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
 permissions:
   contents: read
   packages: write
