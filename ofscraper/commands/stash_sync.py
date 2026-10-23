@@ -37,7 +37,18 @@ class StashClient:
         self.api_key = api_key
         self.timeout = timeout
 
-    def call(self, query, variables=None):
+    def call(self, query, variables=None, retries=5, wait=1.0):
+        # Stash's database is briefly locked while it scans or generates
+        # previews; those errors pass, so retry them
+        for attempt in range(retries + 1):
+            try:
+                return self._call(query, variables)
+            except StashError as e:
+                if "database is locked" not in str(e) or attempt == retries:
+                    raise
+                time.sleep(wait * (attempt + 1))
+
+    def _call(self, query, variables=None):
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.api_key:
             headers["ApiKey"] = self.api_key
@@ -269,13 +280,22 @@ def sync(
         if folders:
             scan(client, folders)
 
-    studio_id = find_or_create(client, "studio", studio, apply, {"urls": ["https://onlyfans.com"]})
+    # The studio, performers and tags are looked up (and created) only once a
+    # file is found, so a run that matches nothing leaves Stash unchanged
+    resolved = {}
+
+    def studio_id():
+        if "studio" not in resolved:
+            resolved["studio"] = find_or_create(client, "studio", studio, apply, {"urls": ["https://onlyfans.com"]})
+        return resolved["studio"]
+
     tag_cache = {}
     report = {"apply": apply, "models": [], "totals": defaultdict(int)}
     for database, username, files in models:
         name = username or Path(database).parent.name
         extra = {"urls": [f"https://onlyfans.com/{username}"]} if username else {}
-        performer_id = find_or_create(client, "performer", name, apply, extra)
+        performer_id = None
+        performer_checked = False
         counts = defaultdict(int)
         not_found = []
         for entry in files:
@@ -290,6 +310,9 @@ def sync(
                 if len(not_found) < sample:
                     not_found.append(stash_path)
                 continue
+            if not performer_checked:
+                performer_id = find_or_create(client, "performer", name, apply, extra)
+                performer_checked = True
             tag_ids = []
             if tags:
                 for api_type in sorted(entry["api_types"]):
@@ -297,13 +320,15 @@ def sync(
                     if tag not in tag_cache or tag_cache[tag] is None:
                         tag_cache[tag] = find_or_create(client, "tag", tag, apply)
                     tag_ids.append(tag_cache[tag])
-            changes = plan(item, entry["meta"], performer_id, studio_id, tag_ids, organized)
+            changes = plan(item, entry["meta"], performer_id, studio_id(), tag_ids, organized)
             if not changes:
                 counts["up_to_date"] += 1
                 continue
             counts["updated" if apply else "to_update"] += 1
             if apply:
                 client.call(UPDATE[kind], {"input": {"id": item["id"], **changes}})
+        if not performer_checked:
+            performer_id = find_or_create(client, "performer", name, False)
         model = {
             "database": str(database),
             "performer": name,
@@ -313,6 +338,11 @@ def sync(
         }
         if not_found:
             model["not_in_stash_sample"] = not_found
+        if counts.get("not_in_stash") and not performer_checked:
+            model["hint"] = (
+                "None of these files are in Stash. Scan the folders in Stash (or use --scan), "
+                "and if Stash sees them under another path, e.g. in Docker, add --path-map LOCAL=STASH."
+            )
         report["models"].append(model)
         for key, value in counts.items():
             report["totals"][key] += value

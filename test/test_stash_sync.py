@@ -167,6 +167,17 @@ def test_organized_only_when_asked(library):
     assert item["organized"] is True
 
 
+def test_nothing_matched_creates_nothing_and_hints(library):
+    # e.g. Stash in Docker sees the files under /data and --path-map was forgotten
+    db, _ = library
+    stash = FakeStash(scenes=["/data/creator/post.mp4"])
+    report = sync([db], stash, apply=True)
+    assert stash.created == [] and stash.updates == []
+    model = report["models"][0]
+    assert model["not_in_stash"] == 4 and model["performer_exists"] is False
+    assert "--path-map" in model["hint"]
+
+
 def test_path_map_finds_files_stash_sees_elsewhere(library):
     db, media_dir = library
     stash = FakeStash(scenes=["/data/creator/post.mp4"])
@@ -191,6 +202,30 @@ def test_unreachable_stash_exits_with_error(library, capsys):
     db, _ = library
     assert stash_sync.main([str(db), "--url", "http://127.0.0.1:9/graphql"]) == 1
     assert "can't reach Stash" in capsys.readouterr().err
+
+
+def test_locked_database_is_retried(monkeypatch):
+    replies = iter([
+        b'{"errors": [{"message": "beginning transaction: database is locked"}], "data": null}',
+        b'{"data": {"ok": true}}',
+    ])
+
+    class Response:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return self.body
+
+    monkeypatch.setattr(stash_sync.urllib.request, "urlopen", lambda *a, **k: Response(next(replies)))
+    monkeypatch.setattr(stash_sync.time, "sleep", lambda s: None)
+    assert stash_sync.StashClient().call("{ ok }") == {"ok": True}
 
 
 def test_graphql_errors_are_raised(monkeypatch):

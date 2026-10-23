@@ -71,6 +71,9 @@ folder as `/data`:
 python -m ofscraper.commands.stash_sync "<profile>/.data" --apply --path-map "D:\OnlyFans=/data"
 ```
 
+The mapping also applies to `--scan`. Without it, Stash can't find any of the
+files: the report then says so in a `hint`, and nothing is created in Stash.
+
 ## Notes
 
 - Only files OF-Scraper marked as downloaded are matched, by their exact path.
