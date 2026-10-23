@@ -83,6 +83,17 @@ def print_start_message():
         log.error(f"{data}")
 
 
+def _release(version):
+    match = re.match(r"\d+(?:\.\d+)*", version)
+    return tuple(int(x) for x in match.group().split(".")) if match else ()
+
+
+def is_newer(new_version, current_version):
+    # compare release numbers only: a build's version can be ahead of PyPI's,
+    # and its local part (+g<hash>) doesn't make it older
+    return _release(new_version) > _release(current_version)
+
+
 def print_latest_version():
     log = logging.getLogger("shared")
     with BareSession.get_bare_session(
@@ -94,13 +105,11 @@ def print_latest_version():
         new_version = data["info"]["version"]
         url = data["info"]["project_url"]
 
-        if re.search(new_version, __version__):
-            log.warning("[bold yellow]OF-Scraper up to date[/bold yellow]")
-        elif __version__ == "0.0.0":
+        if __version__ == "0.0.0":
             log.warning(
                 "[bold yellow]OF-Scraper can't check version (probably from zip)[/bold yellow]"
             )
-        elif ".dev" in __version__:
+        elif ".dev" in __version__ or not is_newer(new_version, __version__):
             log.warning("[bold yellow]OF-Scraper up to date[/bold yellow]")
         else:
             log.warning(
