@@ -6,7 +6,7 @@ Read this before changing anything in this repository. It's written for AI codin
 `cloakedkeys/OF-Scraper-Community` is a **public**, community-maintained fork of `datawhores/OF-Scraper`, a Python CLI that downloads content from OnlyFans accounts the user has access to, including Widevine-protected (DRM) video. The upstream maintainer has abandoned the project, so fixes are collected here.
 
 Remotes:
-- `origin`: this fork. PRs target `main`. CONTRIBUTING.md's advice to target `dev/3.XX` describes upstream, not this fork.
+- `origin`: this fork. PRs target `main`.
 - `contrib`: `cloakedkeys/OF-Scraper-upstream`, a fork used only to open PRs against upstream.
 - `upstream`: `datawhores/OF-Scraper`.
 
@@ -58,7 +58,7 @@ PYTHONIOENCODING=utf-8 PYTHONPATH=. .venv/Scripts/python -c "from ofscraper.__ma
 - **From Git Bash on Windows:** set `MSYS_NO_PATHCONV=1`, or `-e VAR=/path` arguments get rewritten into Windows paths.
 
 ## CI
-- **Tests:** `codecov.yml` runs on pull requests (Python 3.11 and 3.15.1).
+- **Tests:** `codecov.yml` runs on pull requests and on pushes to `main` (Python 3.11 and 3.15.1). It installs with `uv sync --frozen` from `uv.lock`, so CI tests exactly the locked versions; a dependency change must update the lockfile.
 - **Images and releases:** `commit_bundler.yml` and `docker-daily.yml` run on **pushes to `main` only**, building binaries (published as a dev pre-release) and pushing images to the fork's registries. PR branches get only the test workflow, so test a branch's binary or image locally.
 - **If a check fails with no steps run, read its annotation.** A billing or spending-limit refusal isn't a code failure. Report it, and run the test job locally on the PR head instead.
 
