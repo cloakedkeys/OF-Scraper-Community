@@ -83,6 +83,8 @@ This script has been thoughtfully crafted to facilitate seamless transitions fro
 
 [Recover downloads lost to filename collisions](COLLISION_RECOVERY.md)
 
+[Organize downloads in Stash](STASH.md)
+
 ### Trigger a daemon pass early (Docker/Linux)
 
 While OF-Scraper is waiting between daemon passes, send `SIGUSR1` to start
