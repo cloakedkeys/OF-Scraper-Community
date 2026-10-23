@@ -3,8 +3,22 @@ permissions: read-all
 on:
   push:
     branches: main
+    # doc-only changes don't need a build or test run
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'media/**'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
   pull_request:
     branches: main
+    # doc-only changes don't need a build or test run
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'media/**'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
 
 jobs:
   run:
