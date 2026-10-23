@@ -3,18 +3,18 @@
 Read this before changing anything in this repository. It's written for AI coding agents, but it applies to anyone. `CLAUDE.md` imports this file.
 
 ## What this repo is
-`cloakedkeys/OF-Scraper` is a **private** fork of `datawhores/OF-Scraper`, a Python CLI that downloads content from OnlyFans accounts the user has access to, including Widevine-protected (DRM) video.
+`cloakedkeys/OF-Scraper-Community` is a **public**, community-maintained fork of `datawhores/OF-Scraper`, a Python CLI that downloads content from OnlyFans accounts the user has access to, including Widevine-protected (DRM) video. The upstream maintainer has abandoned the project, so fixes are collected here.
 
 Remotes:
-- `origin`: this private fork. PRs target `main`. CONTRIBUTING.md's advice to target `dev/3.XX` describes upstream, not this fork.
-- `contrib`: `cloakedkeys/OF-Scraper-upstream`, a **public** fork used only to open PRs against upstream.
-
-The repo is private for convenience, not secrecy: the upstream maintainer has abandoned the project and fixes are distributed ad hoc.
+- `origin`: this fork. PRs target `main`. CONTRIBUTING.md's advice to target `dev/3.XX` describes upstream, not this fork.
+- `contrib`: `cloakedkeys/OF-Scraper-upstream`, a fork used only to open PRs against upstream.
 - `upstream`: `datawhores/OF-Scraper`.
+
+Community fixes for the GUI patch go to `cjb900/OF-Scraper-GUI`.
 
 ## Hard rules
 1. **Upstream PRs carry only the intended fix.** Upstream is unmaintained, and the community shares fixes, DRM fixes included, so the fork's DRM code (`alt_download.py`, `keyhelpers.py`, `media.py` `license()`) may be made public. Cut each upstream PR from upstream's branch and cherry-pick only that fix, so other fork changes don't ride along.
-2. **No secrets or personal data in the repo, commits or PR text.** That covers `auth.json`, cookies, CDM files (`private_key.pem`, `client_id.bin`), content keys, downloaded or captured media, and logs. Before every push, grep the staged diff and commit messages for usernames, home-directory paths (`C:\Users\...`, `/home/...`) and keys. Write paths relative to the repo or use placeholders like `{home_directory}`.
+2. **No secrets or personal data in the repo, commits, issues or PR text.** Everything here is public. That covers `auth.json`, cookies, CDM files (`private_key.pem`, `client_id.bin`), content keys, downloaded or captured media, logs, and creator usernames (write "a creator"). Before every push or post, grep the staged diff, commit messages and PR text for usernames, home-directory paths (`C:\Users\...`, `/home/...`) and keys. Editing a description afterwards doesn't remove it: GitHub keeps the earlier version in the edit history. Write paths relative to the repo or use placeholders like `{home_directory}`.
 3. **Don't merge.** Open a PR, verify it, state the merge order, and stop. Merge only PRs a maintainer explicitly names in an instruction to you, using a squash merge. Never push code to `main` directly and never force-push it. The exception is `AGENTS.md` (and `CLAUDE.md`): changes to these docs are committed straight to `main` without a PR.
 4. **Commit messages carry no AI attribution** (no `Co-Authored-By` agent lines or "generated with" notes). A PR description may say it was AI-generated.
 5. **Don't change the TLS fingerprint by accident.** `ofscraper/managers/sessionmanager/cert.py` shapes the ClientHello sent to OnlyFans: a cipher order seeded per account, and `context.options` *assigned*, not or-ed, which leaves the TLS 1.3 session ID empty. Treat any change to SSL options, ciphers, curves or the HTTP client stack as fingerprint-affecting, and compare ClientHellos captured before and after **through the transport that actually sends them** (httpx with HTTP/2 adds ALPN; aiohttp differs from a raw socket). A raw-socket capture isn't representative. The `custom` `ssl_verify` mode is the only one that uses `cert.py`. See issue #110.
@@ -59,7 +59,7 @@ PYTHONIOENCODING=utf-8 PYTHONPATH=. .venv/Scripts/python -c "from ofscraper.__ma
 
 ## CI
 - **Tests:** `codecov.yml` runs on pull requests (Python 3.11 and 3.15.1).
-- **Images and releases:** `commit_bundler.yml` and `docker-daily.yml` run on **every branch push**, building binaries and pushing images to the fork's private registries.
+- **Images and releases:** `commit_bundler.yml` and `docker-daily.yml` run on **every branch push**, building binaries and pushing images to the fork's registries.
 - **If a check fails with no steps run, read its annotation.** A billing or spending-limit refusal isn't a code failure. Report it, and run the test job locally on the PR head instead.
 
 ## PRs
