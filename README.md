@@ -1,5 +1,7 @@
 # OF-Scraper-Community
 
+[![codecov](https://codecov.io/gh/cloakedkeys/OF-Scraper-Community/branch/main/graph/badge.svg)](https://codecov.io/gh/cloakedkeys/OF-Scraper-Community)
+
 A community-maintained fork of [datawhores/OF-Scraper](https://github.com/datawhores/OF-Scraper), a command-line tool for downloading media from OnlyFans accounts you are subscribed to.
 
 Upstream hasn't been updated since April 2026. This fork collects the fixes users have reported since then, including DRM video, ffmpeg 8+ and Python 3.15 support.
