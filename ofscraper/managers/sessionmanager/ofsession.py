@@ -174,7 +174,8 @@ class download_session(sessionManager):
             if of_env.getattr("API_FORCE_KEY"):
                 actions.append(FORCED_NEW)
             kwargs["actions"] = actions
-        kwargs["exceptions"] = [TOO_MANY, AUTH]
+        # a caller may pass its own, e.g. [] for a request that isn't to OnlyFans
+        kwargs.setdefault("exceptions", [TOO_MANY, AUTH])
 
         async with super().requests_async(*args, **kwargs) as r:
             yield r

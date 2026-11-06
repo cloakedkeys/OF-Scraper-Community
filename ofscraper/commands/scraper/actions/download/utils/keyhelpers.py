@@ -177,7 +177,9 @@ async def key_helper_cdrm(c, pssh, licence_url, id):
             wait_min=of_env.getattr("OF_MIN_WAIT_API"),
             wait_max=of_env.getattr("OF_MAX_WAIT_API"),
             total_timeout=of_env.getattr("CDM_TIMEOUT"),
-            skip_expection_check=True,
+            # cdrm-project's errors aren't OnlyFans': no auth warning or
+            # rate-limit back-off for the download session
+            exceptions=[],
         ) as r:
             data = await r.json_()
             log.debug(f"cdrm json {data}")
