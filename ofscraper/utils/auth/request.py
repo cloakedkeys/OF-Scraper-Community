@@ -82,6 +82,14 @@ def get_request_auth():
 
 def get_request_auth_dynamic_rule_manual():
     content = of_env.getattr("DYNAMIC_RULE_MANUAL")
+    # OFSC_DYNAMIC_RULE_MANUAL arrives as text: the rule's JSON
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except json.JSONDecodeError as E:
+            raise ValueError(
+                f"OFSC_DYNAMIC_RULE_MANUAL is not valid JSON: {E}"
+            ) from E
     return request_auth_helper_picker(content)
 
 
