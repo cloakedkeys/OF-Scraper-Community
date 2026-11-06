@@ -409,7 +409,9 @@ async def process_all_paid():
 @free.space_checker
 async def process_labels(model_id, username, c):
     try:
-        labelled_posts_ = await labels_api.get_labels(model_id, c=c)
+        labelled_posts_ = await labels_api.get_labels(
+            model_id, c=c, username=username
+        )
 
         labelled_posts_labels = list(
             map(lambda x: labels.Label(x, model_id, username), labelled_posts_)

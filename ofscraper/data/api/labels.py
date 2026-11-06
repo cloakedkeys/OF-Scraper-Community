@@ -14,6 +14,7 @@ r"""
 import asyncio
 import logging
 import traceback
+from types import SimpleNamespace
 
 import ofscraper.data.api.common.logs.strings as common_logs
 import ofscraper.utils.of_env.of_env as of_env
@@ -22,13 +23,15 @@ from ofscraper.data.api.common.check import update_check
 from ofscraper.utils.context.run_async import run
 from ofscraper.data.api.common.logs.logs import trace_log_raw, trace_progress_log
 import ofscraper.utils.settings as settings
+from ofscraper.data.api.common.after import get_after_pre_checks
+from ofscraper.db.operations_.labels import get_all_labels_posts
 
 log = logging.getLogger("shared")
 API = "Labels"
 
 
 @run
-async def get_labels(model_id, c=None):
+async def get_labels(model_id, c=None, username=None):
     labels_ = await get_labels_data(model_id, c=c)
     labels_ = (
         labels_
@@ -40,7 +43,8 @@ async def get_labels(model_id, c=None):
             )
         )
     )
-    data = await get_posts_for_labels(labels_, model_id, c=c)
+    known = await get_known_label_posts(labels_, model_id, username)
+    data = await get_posts_for_labels(labels_, model_id, c=c, known=known)
     update_check(data, model_id, None, API)
 
     return data
@@ -51,10 +55,40 @@ async def get_labels_data(model_id, c=None):
     return await process_tasks_labels(generators)
 
 
-async def get_posts_for_labels(labels, model_id, c=None):
+async def get_known_label_posts(labels, model_id, username):
+    """
+    Post ids already recorded for each label, so a repeat scan can stop at the
+    first page that holds nothing new. Empty (a full scan) when no username is
+    given, or when a full scan is requested the same way as for the timeline:
+    --after, incremental downloads off, a pending full-scan flag, or like/unlike.
+    """
+    if not username:
+        return {}
+    if get_after_pre_checks(model_id, API) is not None:
+        log.debug(f"{API}: full scan requested, scanning every label from the start")
+        return {}
+    known = {}
+    for label in labels:
+        try:
+            ids = await get_all_labels_posts(
+                SimpleNamespace(label_id=label["id"]),
+                model_id=model_id,
+                username=username,
+            )
+        except Exception as E:
+            log.debug(f"{API}: no recorded posts for label {label.get('id')}: {E}")
+            ids = []
+        known[label["id"]] = {str(x) for x in ids or []}
+    return known
+
+
+async def get_posts_for_labels(labels, model_id, c=None, known=None):
+    known = known or {}
     generators = []
     for label in labels:
-        generators.append(scrape_posts_labels(c, label, model_id))
+        generators.append(
+            scrape_posts_labels(c, label, model_id, known=known.get(label["id"]))
+        )
 
     labels_final = await process_tasks_get_posts_for_labels(generators, labels)
     return labels_final
@@ -124,11 +158,14 @@ async def process_tasks_get_posts_for_labels(generators, labels):
         f"Labels Progress: {page_count}", visible=True
     )
     queue = asyncio.Queue()
+    # Paging every label at once is what trips OnlyFans' rate limit (429s)
+    sem = asyncio.Semaphore(max(1, int(of_env.getattr("LABELS_CONCURRENCY"))))
 
     async def producer(gen):
         try:
-            async for label_info, batch in gen:
-                await queue.put((label_info, batch))
+            async with sem:
+                async for label_info, batch in gen:
+                    await queue.put((label_info, batch))
         except Exception as E:
             log.traceback_(E)
             log.traceback_(traceback.format_exc())
@@ -255,8 +292,9 @@ async def scrape_labels(c, model_id, offset=0):
                 progress_utils.api.remove_job_task(task)
 
 
-async def scrape_posts_labels(c, label, model_id, offset=0):
+async def scrape_posts_labels(c, label, model_id, offset=0, known=None):
     current_offset = offset
+    known = known or set()
     while True:
         url = of_env.getattr("labelledPostsEP").format(
             model_id, current_offset, label["id"]
@@ -297,6 +335,14 @@ async def scrape_posts_labels(c, label, model_id, offset=0):
                 yield label, batch
 
                 if not data.get("hasMore"):
+                    break
+
+                # Pages come newest first: once a whole page is already
+                # recorded under this label, the older pages are too.
+                if known and all(str(post.get("id")) in known for post in batch):
+                    log.debug(
+                        f"offset:{current_offset} -> every post already recorded for label {label['id']}, stopping"
+                    )
                     break
 
                 current_offset += len(batch)
