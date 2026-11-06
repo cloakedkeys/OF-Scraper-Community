@@ -29,7 +29,11 @@ from ofscraper.commands.scraper.actions.download.managers.alt_download import (
 from ofscraper.commands.scraper.actions.download.managers.main_download import (
     MainDownloadManager,
 )
+from ofscraper.commands.scraper.actions.download.managers.fansly_stream_download import (
+    FanslyStreamDownloadManager,
+)
 from ofscraper.classes.of.media import Media
+from ofscraper.sites.fansly import video as fansly_video
 
 
 async def consumer(aws, task1, medialist, lock):
@@ -112,7 +116,11 @@ async def consumer(aws, task1, medialist, lock):
 async def download(c, ele, model_id, username):
     try:
         data = None
-        if ele.url:
+        if fansly_video.uses_stream(ele):
+            data = await FanslyStreamDownloadManager().stream_download(
+                c, ele, username, model_id
+            )
+        elif ele.url:
             data = await MainDownloadManager().main_download(
                 c,
                 ele,
