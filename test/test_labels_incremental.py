@@ -1,12 +1,15 @@
 import asyncio
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
+
+import pytest
 
 import ofscraper.data.api.labels as labels
 
 
 class FakeResponse:
-    def __init__(self, data):
-        self.status = 200
+    def __init__(self, data, status=200):
+        self.status = status
         self._data = data
 
     async def json_(self):
@@ -22,20 +25,42 @@ class FakeResponse:
 class FakeClient:
     """Serves a label's posts newest first, page_size at a time, by offset."""
 
-    def __init__(self, ids, page_size=5):
+    def __init__(self, ids, page_size=5, fail_at=None):
         self.posts = [{"id": i} for i in sorted(ids, reverse=True)]
         self.page_size = page_size
+        self.fail_at = fail_at
         self.offsets = []
 
     def requests_async(self, url, **kwargs):
         offset = int(parse_qs(urlsplit(url).query)["offset"][0])
         self.offsets.append(offset)
+        if offset == self.fail_at:
+            return FakeResponse({}, status=429)
         page = self.posts[offset : offset + self.page_size]
         has_more = offset + self.page_size < len(self.posts)
         return FakeResponse({"list": page, "hasMore": has_more})
 
 
+class FakeCache:
+    def __init__(self):
+        self.data = {}
+
+    def get(self, key, default=None, **kwargs):
+        return self.data.get(key, default)
+
+    def set(self, key, value, **kwargs):
+        self.data[key] = value
+
+
+@pytest.fixture(autouse=True)
+def fake_cache(monkeypatch):
+    store = FakeCache()
+    monkeypatch.setattr(labels, "cache", store)
+    return store
+
+
 LABEL = {"id": 7, "name": "favourites"}
+COMPLETE = labels.label_complete_key(1, 7)
 
 
 def collect(client, known=None):
@@ -73,18 +98,31 @@ def test_new_posts_are_still_returned_before_stopping():
     assert client.offsets == [0, 5]
 
 
-def test_known_ids_match_whatever_type_the_database_returns():
-    client = FakeClient(range(1, 11))
-    assert collect(client, known={str(i) for i in range(1, 11)}) == [10, 9, 8, 7, 6]
+def test_finished_scans_are_marked_complete(fake_cache):
+    collect(FakeClient(range(1, 21)))
+    assert fake_cache.data[COMPLETE] is True
+    collect(FakeClient(range(1, 21)), known={str(i) for i in range(1, 21)})
+    assert fake_cache.data[COMPLETE] is True
 
 
-def run_known(monkeypatch, prechecks, db_ids, username="creator"):
+def test_scan_cut_short_by_a_429_is_marked_incomplete(fake_cache):
+    fake_cache.data[COMPLETE] = True
+    client = FakeClient(range(1, 21), fail_at=5)
+    assert collect(client) == [20, 19, 18, 17, 16]
+    assert fake_cache.data[COMPLETE] is False
+
+
+def run_known(monkeypatch, prechecks, db_ids, username="creator", missing=()):
     monkeypatch.setattr(labels, "get_after_pre_checks", lambda *a, **k: prechecks)
 
     async def fake_db(label, model_id=None, username=None, **kwargs):
         return db_ids[label.label_id]
 
+    async def fake_missing(model_id, username):
+        return {str(x) for x in missing}
+
     monkeypatch.setattr(labels, "get_all_labels_posts", fake_db)
+    monkeypatch.setattr(labels, "get_posts_missing_media", fake_missing)
     return asyncio.run(
         labels.get_known_label_posts(
             [{"id": 7}, {"id": 8}], model_id=1, username=username
@@ -92,19 +130,89 @@ def run_known(monkeypatch, prechecks, db_ids, username="creator"):
     )
 
 
-def test_known_posts_are_read_per_label(monkeypatch):
+def mark_complete(fake_cache, *label_ids):
+    for label_id in label_ids:
+        fake_cache.data[labels.label_complete_key(1, label_id)] = True
+
+
+def test_known_posts_are_read_per_label(monkeypatch, fake_cache):
+    mark_complete(fake_cache, 7, 8)
     known = run_known(monkeypatch, None, {7: [1, 2], 8: []})
     assert known == {7: {"1", "2"}, 8: set()}
 
 
-def test_full_scan_requests_ignore_recorded_posts(monkeypatch):
-    # --after, incremental off, a full-scan flag or like/unlike, as for the timeline
+def test_integer_ids_from_the_database_match_the_api(monkeypatch, fake_cache):
+    # the labels table returns ints, the API returns ints; the stop compares strings
+    mark_complete(fake_cache, 7, 8)
+    known = run_known(monkeypatch, None, {7: list(range(1, 21)), 8: []})
+    client = FakeClient(range(1, 21))
+    assert collect(client, known=known[7]) == [20, 19, 18, 17, 16]
+    assert client.offsets == [0]
+
+
+def test_full_scan_requests_ignore_recorded_posts(monkeypatch, fake_cache):
+    # --after, incremental off or like/unlike, as for the timeline
+    mark_complete(fake_cache, 7, 8)
     assert run_known(monkeypatch, 0, {7: [1], 8: [2]}) == {}
 
 
-def test_without_a_username_every_label_is_scanned_fully(monkeypatch):
+def test_without_a_username_every_label_is_scanned_fully(monkeypatch, fake_cache):
     # e.g. check mode, which calls get_labels without a username
+    mark_complete(fake_cache, 7, 8)
     assert run_known(monkeypatch, None, {7: [1], 8: [2]}, username=None) == {}
+
+
+def test_label_whose_last_scan_did_not_finish_is_scanned_fully(
+    monkeypatch, fake_cache
+):
+    mark_complete(fake_cache, 8)
+    assert run_known(monkeypatch, None, {7: [1], 8: [2]}) == {8: {"2"}}
+
+
+def test_label_with_undownloaded_media_is_scanned_fully(monkeypatch, fake_cache):
+    mark_complete(fake_cache, 7, 8)
+    known = run_known(monkeypatch, None, {7: [1, 2], 8: [3]}, missing=[2])
+    assert known == {8: {"3"}}
+
+
+def test_posts_skipped_by_a_429_are_fetched_on_the_next_run(monkeypatch, fake_cache):
+    # run 1: first scan, 429 on page 2; only page 1 gets recorded
+    first = FakeClient(range(1, 21), fail_at=5)
+    recorded = collect(first)
+    # run 2: healthy; must reach posts 1-15 again
+    known = run_known(monkeypatch, None, {7: recorded, 8: []})
+    second = FakeClient(range(1, 21))
+    assert collect(second, known=known.get(7)) == list(range(20, 0, -1))
+
+
+def test_missing_media_filter_matches_the_timeline(monkeypatch):
+    rows = [
+        {"media_id": 1, "post_id": 10, "media_type": "videos", "downloaded": 0, "unlocked": 1},
+        {"media_id": 2, "post_id": 11, "media_type": "videos", "downloaded": 1, "unlocked": 1},
+        {"media_id": 3, "post_id": 12, "media_type": "videos", "downloaded": 0, "unlocked": 1},
+        {"media_id": 4, "post_id": 13, "media_type": "videos", "downloaded": 0, "unlocked": 0},
+        {"media_id": 5, "post_id": 14, "media_type": "videos", "downloaded": 0, "unlocked": 1},
+        {"media_id": 6, "post_id": 15, "media_type": "images", "downloaded": 0, "unlocked": 1},
+    ]
+
+    async def status(**kwargs):
+        return rows
+
+    async def downloaded(**kwargs):
+        return {3}
+
+    async def deleted(**kwargs):
+        return {14}
+
+    monkeypatch.setattr(labels, "get_model_media_status", status)
+    monkeypatch.setattr(labels, "get_media_ids_downloaded_model", downloaded)
+    monkeypatch.setattr(labels, "get_deleted_post_ids", deleted)
+    monkeypatch.setattr(
+        labels.settings,
+        "get_settings",
+        lambda: SimpleNamespace(mediatypes=["Videos"]),
+    )
+    assert asyncio.run(labels.get_posts_missing_media(1, "creator")) == {"10"}
 
 
 def test_labels_are_paged_at_most_two_at_a_time(monkeypatch):

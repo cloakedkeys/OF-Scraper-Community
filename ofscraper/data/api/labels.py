@@ -25,6 +25,13 @@ from ofscraper.data.api.common.logs.logs import trace_log_raw, trace_progress_lo
 import ofscraper.utils.settings as settings
 from ofscraper.data.api.common.after import get_after_pre_checks
 from ofscraper.db.operations_.labels import get_all_labels_posts
+from ofscraper.db.operations_.media import (
+    get_media_ids_downloaded_model,
+    get_model_media_status,
+)
+from ofscraper.db.operations_.posts import get_deleted_post_ids
+import ofscraper.utils.cache.cache as cache
+import ofscraper.utils.const as const
 
 log = logging.getLogger("shared")
 API = "Labels"
@@ -55,20 +62,65 @@ async def get_labels_data(model_id, c=None):
     return await process_tasks_labels(generators)
 
 
+def label_complete_key(model_id, label_id):
+    return f"labels_v2_complete_{model_id}_{label_id}"
+
+
+async def get_posts_missing_media(model_id, username):
+    """
+    Post ids that still have media to download, filtered the same way as the
+    timeline's get_after: not downloaded, not deleted, not locked, and of a
+    media type this run downloads.
+    """
+    rows = await get_model_media_status(model_id=model_id, username=username)
+    if not rows:
+        return set()
+    downloaded = await get_media_ids_downloaded_model(
+        model_id=model_id, username=username
+    )
+    deleted = await get_deleted_post_ids(model_id=model_id, username=username)
+    active_media = settings.get_settings().mediatypes or ["Videos", "Audios", "Images"]
+    active_mapped = {const.MEDIA_ALIASES.get(m.lower(), m.lower()) for m in active_media}
+    return {
+        str(x.get("post_id"))
+        for x in rows
+        if x.get("downloaded") != 1
+        and x.get("media_id") not in downloaded
+        and x.get("post_id") not in deleted
+        and x.get("unlocked") != 0
+        and const.MEDIA_ALIASES.get(
+            str(x.get("media_type", "")).lower(), str(x.get("media_type", "")).lower()
+        )
+        in active_mapped
+    }
+
+
 async def get_known_label_posts(labels, model_id, username):
     """
     Post ids already recorded for each label, so a repeat scan can stop at the
-    first page that holds nothing new. Empty (a full scan) when no username is
-    given, or when a full scan is requested the same way as for the timeline:
-    --after, incremental downloads off, a pending full-scan flag, or like/unlike.
+    first page that holds nothing new. A label is left out (scanned fully) when:
+    - no username is given (check mode),
+    - a full scan is requested as for the timeline (--after, incremental
+      downloads off, like/unlike),
+    - its last scan didn't finish cleanly (an error or 429 cut it short), or
+    - one of its recorded posts still has media to download, so that post is
+      offered for download again as it is today.
     """
     if not username:
         return {}
     if get_after_pre_checks(model_id, API) is not None:
         log.debug(f"{API}: full scan requested, scanning every label from the start")
         return {}
+    try:
+        missing = await get_posts_missing_media(model_id, username)
+    except Exception as E:
+        log.debug(f"{API}: could not read download status, scanning fully: {E}")
+        return {}
     known = {}
     for label in labels:
+        if not cache.get(label_complete_key(model_id, label["id"]), default=False):
+            log.debug(f"{API}: label {label['id']} last scan incomplete, full scan")
+            continue
         try:
             ids = await get_all_labels_posts(
                 SimpleNamespace(label_id=label["id"]),
@@ -77,8 +129,12 @@ async def get_known_label_posts(labels, model_id, username):
             )
         except Exception as E:
             log.debug(f"{API}: no recorded posts for label {label.get('id')}: {E}")
-            ids = []
-        known[label["id"]] = {str(x) for x in ids or []}
+            continue
+        ids = {str(x) for x in ids or []}
+        if ids & missing:
+            log.debug(f"{API}: label {label['id']} has undownloaded media, full scan")
+            continue
+        known[label["id"]] = ids
     return known
 
 
@@ -295,6 +351,11 @@ async def scrape_labels(c, model_id, offset=0):
 async def scrape_posts_labels(c, label, model_id, offset=0, known=None):
     current_offset = offset
     known = known or set()
+    # Marked incomplete until paging reaches its end, so a scan cut short by
+    # an error, a 429 or a killed run gets a full scan next time.
+    complete_key = label_complete_key(model_id, label["id"])
+    cache.set(complete_key, False)
+    finished = False
     while True:
         url = of_env.getattr("labelledPostsEP").format(
             model_id, current_offset, label["id"]
@@ -330,11 +391,13 @@ async def scrape_posts_labels(c, label, model_id, offset=0, known=None):
                 trace_progress_log(f"{API} content requests", data)
 
                 if not batch:
+                    finished = True
                     break
 
                 yield label, batch
 
                 if not data.get("hasMore"):
+                    finished = True
                     break
 
                 # Pages come newest first: once a whole page is already
@@ -343,6 +406,7 @@ async def scrape_posts_labels(c, label, model_id, offset=0, known=None):
                     log.debug(
                         f"offset:{current_offset} -> every post already recorded for label {label['id']}, stopping"
                     )
+                    finished = True
                     break
 
                 current_offset += len(batch)
@@ -353,6 +417,8 @@ async def scrape_posts_labels(c, label, model_id, offset=0, known=None):
         finally:
             if task:
                 progress_utils.api.remove_job_task(task)
+    if finished:
+        cache.set(complete_key, True)
 
 
 def label_dedupe(seen, labelArray):
