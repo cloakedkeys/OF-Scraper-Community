@@ -55,6 +55,9 @@ def read_auth():
     return auth
 
 
+MIN_SECRET_LENGTH = 8
+
+
 def hide_secrets(auth):
     """Mask the session cookie wherever it appears in a log line.
 
@@ -63,7 +66,9 @@ def hide_secrets(auth):
     is logged in (cookie header, dict repr, JSON).
     """
     sess = auth.get("sess") if isinstance(auth, dict) else None
-    if sess:
+    # a real session value is long; a stray short one (e.g. a placeholder)
+    # would mask ordinary words in every log line
+    if sess and len(str(sess)) >= MIN_SECRET_LENGTH:
         sensitive.add_sensitive_pattern(re.compile(re.escape(str(sess))), "{sess}")
 
 

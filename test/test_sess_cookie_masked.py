@@ -59,6 +59,27 @@ def test_reading_auth_again_does_not_add_patterns(fake_auth):
     assert len(sensitive._USER_ADDED_PATTERNS) == 1
 
 
+@pytest.mark.parametrize("home", ["pi", "root"])
+def test_home_folder_name_inside_the_value_doesnt_expose_it(fake_auth, monkeypatch, home):
+    # the home-folder rule used to run first and break the value apart
+    value = f"k3{home}9xq2m7abcdz0r5t8w1y4ue"
+    fake_auth["sess"] = value
+    monkeypatch.setattr(sensitive.paths, "get_username", lambda: home)
+    auth_file.read_auth()
+    out = formatted(LogFileFormatter(), f"requests headers {{'cookie': 'sess={value}; auth_id=1'}}")
+    assert "sess={sess}" in out
+    assert value[len(home) + 2:] not in out
+
+
+def test_a_short_value_masks_nothing(fake_auth):
+    # a stray short value would otherwise mask ordinary words everywhere
+    fake_auth["sess"] = "a"
+    auth_file.read_auth()
+    assert sensitive._USER_ADDED_PATTERNS == {}
+    out = formatted(LogFileFormatter(), "failed: https://onlyfans.com/x")
+    assert out.endswith("failed: https://onlyfans.com/x")
+
+
 def test_empty_sess_registers_nothing(fake_auth):
     fake_auth["sess"] = ""
     auth_file.read_auth()
