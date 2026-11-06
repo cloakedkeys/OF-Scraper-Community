@@ -11,6 +11,7 @@ r"""
 
 """
 
+import json
 import logging
 import traceback
 
@@ -31,15 +32,36 @@ def print_sign_status():
         console.get_shared_console().print("Status - [bold red]🔴 DOWN[/bold red]")
 
 
-def network_error_message(e: httpx.TransportError) -> str:
+def _host(e: httpx.HTTPError) -> str:
     try:
-        host = e.request.url.host
+        return e.request.url.host
     except RuntimeError:
-        host = "the server"
-    reason = (
-        "timed out" if isinstance(e, httpx.TimeoutException) else "connection failed"
-    )
-    return f"Couldn't reach {host} ({reason}). Check your connection or VPN."
+        return "the server"
+
+
+def unavailable_message(e: Exception) -> str | None:
+    """
+    Returns a message for a failure that says nothing about the auth
+    (network errors, server errors, a reply that isn't JSON), else None.
+    """
+    if isinstance(e, httpx.TransportError):
+        reason = (
+            "timed out"
+            if isinstance(e, httpx.TimeoutException)
+            else "connection failed"
+        )
+        return f"Couldn't reach {_host(e)} ({reason}). Check your connection or VPN."
+    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500:
+        return (
+            f"{_host(e)} returned {e.response.status_code}: the server had an "
+            "error. Try again later."
+        )
+    if isinstance(e, json.JSONDecodeError):
+        return (
+            "Got a reply that isn't JSON, maybe a captive portal or a VPN block "
+            "page. Check your connection or VPN."
+        )
+    return None
 
 
 def getstatus():
@@ -48,13 +70,11 @@ def getstatus():
     try:
         me.scrape_user()
         return "UP"
-    except httpx.TransportError as e:
-        # timeouts and connection errors say nothing about the auth
-        log.traceback_(e)
-        log.traceback_(traceback.format_exc())
-        log.error(network_error_message(e))
-        return "NETWORK"
     except Exception as e:
         log.traceback_(e)
         log.traceback_(traceback.format_exc())
+        message = unavailable_message(e)
+        if message:
+            log.error(message)
+            return "UNAVAILABLE"
         return "DOWN"
