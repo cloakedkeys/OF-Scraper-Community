@@ -90,6 +90,10 @@ def get_request_auth_dynamic_rule_manual():
             raise ValueError(
                 f"OFSC_DYNAMIC_RULE_MANUAL is not valid JSON: {E}"
             ) from E
+    if not isinstance(content, dict):
+        raise ValueError(
+            "OFSC_DYNAMIC_RULE_MANUAL must be a JSON object holding the rule"
+        )
     return request_auth_helper_picker(content)
 
 

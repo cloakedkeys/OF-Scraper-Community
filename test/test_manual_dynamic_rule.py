@@ -64,6 +64,13 @@ def test_manual_rule_already_parsed_still_works(monkeypatch):
     assert request.get_request_auth_dynamic_rule_manual()[0] == "abc"
 
 
+@pytest.mark.parametrize("value", ["[]", "null", "42"])
+def test_json_that_is_not_a_rule_says_what_is_wrong(monkeypatch, value):
+    monkeypatch.setenv("DYNAMIC_RULE_MANUAL", value)
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        request.get_request_auth_dynamic_rule_manual()
+
+
 def test_invalid_json_says_what_is_wrong(monkeypatch):
     monkeypatch.setenv("DYNAMIC_RULE_MANUAL", "{not json")
     with pytest.raises(ValueError, match="OFSC_DYNAMIC_RULE_MANUAL is not valid JSON"):
