@@ -72,7 +72,12 @@ def getstatus():
     if settings.get_settings().anon:
         return "UP"
     try:
-        me.scrape_user()
+        data = me.scrape_user()
+        # /me answers isAuth false when no one is logged in. That's a normal
+        # answer for anonymous runs, so it's only treated as bad auth here
+        if not data.get("isAuth"):
+            log.info("OnlyFans says this session isn't logged in")
+            return "DOWN"
         return "UP"
     except Exception as e:
         log.traceback_(e)

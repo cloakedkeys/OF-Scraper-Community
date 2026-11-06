@@ -6,6 +6,8 @@ import pytest
 import ofscraper.data.api.init as init
 import ofscraper.data.api.me as me
 import ofscraper.utils.auth.request as auth_requests
+import ofscraper.utils.me as me_util
+import ofscraper.utils.profiles.data as profile_data
 
 
 @pytest.fixture
@@ -44,3 +46,21 @@ def test_logged_out_session_is_reported_as_bad_auth(me_replies):
 def test_logged_in_session_passes(me_replies):
     me_replies({"isAuth": True, "id": 1, "username": "u1", "name": "n1"})
     assert init.getstatus() == "UP"
+
+
+def test_anon_run_still_gets_unknown_id(me_replies, monkeypatch):
+    # --anon metadata runs ask /me for the user id (self-media filter), and
+    # /me answers isAuth false because no one is logged in
+    run_settings = SimpleNamespace(anon=True)
+    monkeypatch.setattr(init.settings, "get_settings", lambda: run_settings)
+    monkeypatch.setattr(profile_data, "get_active_profile", lambda: "a_profile")
+    monkeypatch.setattr(profile_data, "currentProfile", None)
+    monkeypatch.setattr(profile_data, "currentData", None)
+    me_replies({"isAuth": False})
+
+    assert me_util.get_id() == "id_unknown"
+    assert me_util.get_id() == "id_unknown"
+
+    # the same reply still fails the auth check of a logged-in run
+    run_settings.anon = False
+    assert init.getstatus() == "DOWN"

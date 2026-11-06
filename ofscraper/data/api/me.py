@@ -30,8 +30,6 @@ def _scraper_user_helper(c):
     try:
         with c.requests(of_env.getattr("meEP")) as r:
             data = r.json_()
-            if not data["isAuth"]:
-                raise NotLoggedIn("OnlyFans says this session isn't logged in")
             if data["isAuth"]:
                 sensitive.add_sensitive_pattern(data["id"], "userid")
                 sensitive.add_sensitive_pattern(
@@ -64,7 +62,3 @@ def parse_subscriber_count():
             log.traceback_(E)
             log.traceback_(traceback.format_exc())
             raise E
-
-
-class NotLoggedIn(Exception):
-    """/me answered, but with isAuth false."""
