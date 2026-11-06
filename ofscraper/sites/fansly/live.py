@@ -26,7 +26,7 @@ import pathlib
 import random
 import re
 import threading
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urljoin, urlparse
 
 from ofscraper.sites.fansly import constants
 
@@ -36,10 +36,67 @@ DEFAULT_INTERVAL = 60
 DEFAULT_JITTER = 10
 DEFAULT_MAX_CONCURRENT = 2
 DEFAULT_MAX_FAILURES = 3
+# only these URL schemes are handed to ffmpeg (a playlist entry such as
+# ``file:`` would otherwise make it read a local file)
+FFMPEG_SCHEMES = ("https",)
 
 
 class PlaylistError(Exception):
     pass
+
+
+# ------------------------------------------------------------------ who is being recorded
+
+# One set for the whole process: the one-shot --live run and the daemon's
+# watch thread each have their own LiveWatcher and event loop, and must never
+# record the same creator at the same time.
+_recording_lock = threading.Lock()
+_recording = set()
+
+
+def claim(account_id) -> bool:
+    """Mark a creator as being recorded; False if someone already is."""
+    with _recording_lock:
+        if account_id in _recording:
+            return False
+        _recording.add(account_id)
+        return True
+
+
+def release(account_id):
+    with _recording_lock:
+        _recording.discard(account_id)
+
+
+# ------------------------------------------------------------------ log masking
+
+def mask_url_secrets(url):
+    """Hide a playback or variant URL's query values (tokens) in the logs.
+
+    Failed requests log their URL, and the tokens in these query strings
+    grant access to the stream for a short while.
+    """
+    if not url:
+        return
+    import ofscraper.utils.logs.utils.sensitive as sensitive
+
+    query = urlparse(url).query
+    # the raw values are what a logged URL shows; the decoded ones too, in
+    # case something logs them unquoted ("+" and "%2F" in a token)
+    values = {piece.partition("=")[2] for piece in query.split("&")}
+    values |= {value for _, value in parse_qsl(query)}
+    for value in values:
+        if len(value) >= 8:
+            # the patterns are regexes and a token can hold "+" or "/"
+            sensitive.add_sensitive_pattern(re.compile(re.escape(value)), "{hidden}")
+
+
+_QUERY_IN_TEXT = re.compile(r"(\w+://[^\s?'\"]+)\?[^\s'\"]*")
+
+
+def strip_queries(text: str) -> str:
+    """Drop query strings from URLs in free text such as ffmpeg's errors."""
+    return _QUERY_IN_TEXT.sub(r"\1?{hidden}", text or "")
 
 
 # ------------------------------------------------------------------ playlists
@@ -97,9 +154,19 @@ def utc_start(started_at) -> datetime.datetime:
     return datetime.datetime.now(tz=datetime.timezone.utc)
 
 
+def folder_name(username) -> str:
+    """The API username, safe as one folder or file name component."""
+    from ofscraper.classes.of.base import base
+
+    # the app's own filename cleanup; it leaves backslashes and dots alone
+    name = base().file_cleanup(username).replace("\\", "").strip(" .")
+    return name or "unknown"
+
+
 def recording_base(save_location, username, started_at) -> pathlib.Path:
     """``{save_location}/Fansly/{username}/Livestreams/{username}_{YYYYMMDD_HHMMSS}_live``"""
     stamp = utc_start(started_at).strftime("%Y%m%d_%H%M%S")
+    username = folder_name(username)
     folder = pathlib.Path(save_location) / "Fansly" / username / "Livestreams"
     return folder / f"{username}_{stamp}_live"
 
@@ -127,7 +194,9 @@ def chat_path(base: pathlib.Path) -> pathlib.Path:
 
 def ffmpeg_command(ffmpeg: str, url: str, out: pathlib.Path, user_agent: str = "") -> list:
     headers = f"Origin: {constants.ORIGIN}\r\nReferer: {constants.REFERER}\r\n"
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
+    # -n: never overwrite. If something else took the file name between the
+    # free-name check and ffmpeg's start, ffmpeg exits and leaves it alone.
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-n"]
     if user_agent:
         cmd += ["-user_agent", user_agent]
     cmd += [
@@ -164,7 +233,7 @@ async def run_ffmpeg(cmd: list, stop: asyncio.Event = None) -> int:
             await asyncio.wait_for(asyncio.shield(waiter), timeout=15)
         _, err = waiter.result()
         if proc.returncode and err:
-            log.debug(f"ffmpeg live: {err.decode(errors='replace')[-500:]}")
+            log.debug(f"ffmpeg live: {strip_queries(err.decode(errors='replace'))[-500:]}")
         return proc.returncode
     finally:
         if stopper:
@@ -187,7 +256,8 @@ class LiveRecorder:
 
     def __init__(self, stream: dict, save_location, fetch_channel, fetch_text,
                  ffmpeg="ffmpeg", user_agent="", ffmpeg_runner=None,
-                 max_failures=DEFAULT_MAX_FAILURES, backoff=(2, 30), chat=None):
+                 max_failures=DEFAULT_MAX_FAILURES, backoff=(2, 30), chat=None,
+                 schemes=FFMPEG_SCHEMES):
         self.stream = dict(stream)
         self.username = stream["username"]
         self.save_location = save_location
@@ -199,7 +269,10 @@ class LiveRecorder:
         self.max_failures = max_failures
         self.backoff = backoff
         self.chat = chat
+        self.schemes = tuple(schemes)
         self.parts = []
+        # parts and chat file listed by an earlier run of the same stream
+        self.earlier = {"parts": [], "chat": None}
         self.base = None
         self.end_reason = None
         self.sidecar = {}
@@ -217,8 +290,29 @@ class LiveRecorder:
             raise PlaylistError("the master playlist lists no variants")
         return variant["uri"]
 
+    def _read_earlier_sidecar(self):
+        """A restart while the same stream is live continues its recording:
+        keep the parts the earlier run listed."""
+        path = sidecar_path(self.base)
+        if not path.exists():
+            return
+        try:
+            old = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            log.debug(f"{self.username}: could not read the earlier sidecar: {e}")
+            return
+        if not isinstance(old, dict):
+            return
+        parts = old.get("parts")
+        if isinstance(parts, list):
+            self.earlier["parts"] = [p for p in parts if isinstance(p, str)]
+        if isinstance(old.get("chat"), str):
+            self.earlier["chat"] = old["chat"]
+
     def _write_sidecar(self):
         stream = self.stream
+        parts = list(self.earlier["parts"])
+        parts += [p.name for p in self.parts if p.name not in parts]
         self.sidecar = {
             "site": "fansly",
             "accountId": stream.get("accountId"),
@@ -227,8 +321,8 @@ class LiveRecorder:
             "channelId": stream.get("channelId"),
             "title": stream.get("title"),
             "startedAt": utc_start(stream.get("startedAt")).isoformat(),
-            "parts": [p.name for p in self.parts],
-            "chat": chat_path(self.base).name if self.chat else None,
+            "parts": parts,
+            "chat": chat_path(self.base).name if self.chat else self.earlier["chat"],
             "endReason": self.end_reason,
         }
         path = sidecar_path(self.base)
@@ -258,13 +352,17 @@ class LiveRecorder:
                     break
                 if channel is not None:
                     self._update_stream(channel)
+                    mask_url_secrets(channel.get("playbackUrl"))
                 if self.base is None:
                     self.base = recording_base(self.save_location, self.username,
                                                self.stream.get("startedAt"))
                     self.base.parent.mkdir(parents=True, exist_ok=True)
-                    if self.chat and channel:
-                        chat_task = asyncio.ensure_future(
-                            self.chat.run(channel, chat_path(self.base), stop))
+                    self._read_earlier_sidecar()
+                # chat starts with the first channel that came back, so a
+                # failed first fetch only delays it to the next refresh
+                if self.chat and channel and chat_task is None:
+                    chat_task = asyncio.ensure_future(
+                        self.chat.run(channel, chat_path(self.base), stop))
                 ended, produced = await self._record_part(channel, stop)
                 if ended:
                     self.end_reason = "stream ended"
@@ -297,6 +395,11 @@ class LiveRecorder:
             variant = await self._resolve_variant(channel["playbackUrl"])
         except Exception as e:
             log.debug(f"{self.username}: playlist failed: {e}")
+            return False, False
+        mask_url_secrets(variant)
+        scheme = urlparse(variant).scheme.lower()
+        if scheme not in self.schemes:
+            log.info(f"{self.username}: skipping a variant URL with scheme {scheme or 'none'!r}")
             return False, False
         out = part_path(self.base, next_part_number(self.base))
         log.info(f"{self.username}: recording livestream to {out.name}")
@@ -349,8 +452,13 @@ class LiveWatcher:
         self.active = {}
         self.max_seen = 0
 
-    def _start(self, stream, stop, wake):
+    def _start(self, stream, stop, wake) -> bool:
         key = stream["accountId"]
+        if not claim(key):
+            # recorded by another watcher in this process (the one-shot
+            # --live run or the daemon's watch thread); the next poll retries
+            log.debug(f"{stream.get('username')}: already being recorded")
+            return False
 
         async def runner():
             try:
@@ -359,10 +467,15 @@ class LiveWatcher:
                 log.info(f"{stream.get('username')}: livestream recording failed: {e}")
             finally:
                 self.active.pop(key, None)
+                release(key)
                 wake.set()
 
-        self.active[key] = asyncio.ensure_future(runner())
+        task = asyncio.ensure_future(runner())
+        # also when the task is cancelled before it ever ran
+        task.add_done_callback(lambda _: release(key))
+        self.active[key] = task
         self.max_seen = max(self.max_seen, len(self.active))
+        return True
 
     async def run(self, stop: asyncio.Event = None):
         """Watch until ``stop``; with ``once`` only who is live now, then return."""

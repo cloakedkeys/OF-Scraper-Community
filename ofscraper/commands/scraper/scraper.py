@@ -307,7 +307,7 @@ def process_live_only():
 def scrapper():
     args = settings.get_args()
     if args.daemon:
-        if len(args.actions) == 0 and not args.scrape_paid and not live.watch_enabled():
+        if len(args.actions) == 0 and not args.scrape_paid and not live.enabled():
             prompts.action_prompt()
         daemon_process()
     elif len(args.actions) > 0 or args.scrape_paid:
