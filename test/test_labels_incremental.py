@@ -63,10 +63,19 @@ LABEL = {"id": 7, "name": "favourites"}
 COMPLETE = labels.label_complete_key(1, 7)
 
 
-def collect(client, known=None):
+@pytest.fixture(autouse=True)
+def no_pending_marks():
+    labels._finished_labels.clear()
+    yield
+    labels._finished_labels.clear()
+
+
+def collect(client, known=None, track=False):
     async def run():
         out = []
         extra = {} if known is None else {"known": known}
+        if track:
+            extra["track"] = True
         async for _, batch in labels.scrape_posts_labels(client, LABEL, 1, **extra):
             out.extend(p["id"] for p in batch)
         return out
@@ -98,18 +107,38 @@ def test_new_posts_are_still_returned_before_stopping():
     assert client.offsets == [0, 5]
 
 
-def test_finished_scans_are_marked_complete(fake_cache):
-    collect(FakeClient(range(1, 21)))
+def test_finished_scans_are_marked_complete_once_saved(fake_cache):
+    collect(FakeClient(range(1, 21)), track=True)
+    # not trusted until the run has saved label and media rows
+    assert fake_cache.data[COMPLETE] is False
+    labels.commit_finished_labels(1)
     assert fake_cache.data[COMPLETE] is True
-    collect(FakeClient(range(1, 21)), known={str(i) for i in range(1, 21)})
+    collect(FakeClient(range(1, 21)), known={str(i) for i in range(1, 21)}, track=True)
+    labels.commit_finished_labels(1)
     assert fake_cache.data[COMPLETE] is True
+
+
+def test_finished_scan_is_not_trusted_if_saving_fails(fake_cache):
+    # e.g. the run is killed, or the label/media insert fails, after paging ends
+    collect(FakeClient(range(1, 21)), track=True)
+    labels.discard_finished_labels(1)
+    labels.commit_finished_labels(1)
+    assert fake_cache.data[COMPLETE] is False
 
 
 def test_scan_cut_short_by_a_429_is_marked_incomplete(fake_cache):
     fake_cache.data[COMPLETE] = True
     client = FakeClient(range(1, 21), fail_at=5)
-    assert collect(client) == [20, 19, 18, 17, 16]
+    assert collect(client, track=True) == [20, 19, 18, 17, 16]
+    labels.commit_finished_labels(1)
     assert fake_cache.data[COMPLETE] is False
+
+
+def test_check_mode_leaves_the_marks_alone(fake_cache):
+    fake_cache.data[COMPLETE] = True
+    collect(FakeClient(range(1, 21), fail_at=5))
+    labels.commit_finished_labels(1)
+    assert fake_cache.data[COMPLETE] is True
 
 
 def run_known(monkeypatch, prechecks, db_ids, username="creator", missing=()):
@@ -178,11 +207,48 @@ def test_label_with_undownloaded_media_is_scanned_fully(monkeypatch, fake_cache)
 def test_posts_skipped_by_a_429_are_fetched_on_the_next_run(monkeypatch, fake_cache):
     # run 1: first scan, 429 on page 2; only page 1 gets recorded
     first = FakeClient(range(1, 21), fail_at=5)
-    recorded = collect(first)
+    recorded = collect(first, track=True)
+    labels.commit_finished_labels(1)
     # run 2: healthy; must reach posts 1-15 again
     known = run_known(monkeypatch, None, {7: recorded, 8: []})
     second = FakeClient(range(1, 21))
     assert collect(second, known=known.get(7)) == list(range(20, 0, -1))
+
+
+def run_process_areas(monkeypatch, insert_fails):
+    import ofscraper.data.posts.post as post
+
+    async def fake_tasks(model_id, username, ele, c=None):
+        # the Labels area finished paging label 7 during this run
+        labels.mark_label_finished(model_id, 7)
+        return SimpleNamespace(all_unique_media=[])
+
+    async def fake_insert(*args, **kwargs):
+        if insert_fails:
+            raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(post, "process_tasks", fake_tasks)
+    monkeypatch.setattr(post, "batch_mediainsert", fake_insert)
+    # traceback_ is added by the app's logging setup, which tests don't run
+    monkeypatch.setattr(
+        post, "log", SimpleNamespace(traceback_=lambda *a, **k: None, debug=print)
+    )
+
+    async def run():
+        return await post.process_areas(SimpleNamespace(name="creator"), 1, "creator")
+
+    asyncio.run(run())
+
+
+def test_marks_are_written_after_the_media_rows_are_saved(monkeypatch, fake_cache):
+    run_process_areas(monkeypatch, insert_fails=False)
+    assert fake_cache.data.get(COMPLETE) is True
+
+
+def test_marks_are_dropped_when_saving_media_rows_fails(monkeypatch, fake_cache):
+    run_process_areas(monkeypatch, insert_fails=True)
+    assert fake_cache.data.get(COMPLETE) is None
+    assert 1 not in labels._finished_labels
 
 
 def test_missing_media_filter_matches_the_timeline(monkeypatch):

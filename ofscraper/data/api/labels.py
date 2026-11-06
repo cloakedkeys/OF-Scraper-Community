@@ -51,10 +51,32 @@ async def get_labels(model_id, c=None, username=None):
         )
     )
     known = await get_known_label_posts(labels_, model_id, username)
-    data = await get_posts_for_labels(labels_, model_id, c=c, known=known)
+    # Check mode (no username) always scans fully and leaves the marks alone.
+    data = await get_posts_for_labels(
+        labels_, model_id, c=c, known=known, track=bool(username)
+    )
     update_check(data, model_id, None, API)
 
     return data
+
+
+# Labels whose scan reached the end in this run, per model. Their "finished"
+# mark is written only once the run has saved what the next run relies on
+# (label rows and media rows), by commit_finished_labels.
+_finished_labels = {}
+
+
+def mark_label_finished(model_id, label_id):
+    _finished_labels.setdefault(model_id, set()).add(label_id)
+
+
+def commit_finished_labels(model_id):
+    for label_id in _finished_labels.pop(model_id, set()):
+        cache.set(label_complete_key(model_id, label_id), True)
+
+
+def discard_finished_labels(model_id):
+    _finished_labels.pop(model_id, None)
 
 
 async def get_labels_data(model_id, c=None):
@@ -138,12 +160,14 @@ async def get_known_label_posts(labels, model_id, username):
     return known
 
 
-async def get_posts_for_labels(labels, model_id, c=None, known=None):
+async def get_posts_for_labels(labels, model_id, c=None, known=None, track=False):
     known = known or {}
     generators = []
     for label in labels:
         generators.append(
-            scrape_posts_labels(c, label, model_id, known=known.get(label["id"]))
+            scrape_posts_labels(
+                c, label, model_id, known=known.get(label["id"]), track=track
+            )
         )
 
     labels_final = await process_tasks_get_posts_for_labels(generators, labels)
@@ -348,13 +372,14 @@ async def scrape_labels(c, model_id, offset=0):
                 progress_utils.api.remove_job_task(task)
 
 
-async def scrape_posts_labels(c, label, model_id, offset=0, known=None):
+async def scrape_posts_labels(c, label, model_id, offset=0, known=None, track=False):
     current_offset = offset
     known = known or set()
-    # Marked incomplete until paging reaches its end, so a scan cut short by
-    # an error, a 429 or a killed run gets a full scan next time.
-    complete_key = label_complete_key(model_id, label["id"])
-    cache.set(complete_key, False)
+    # Marked incomplete until paging reaches its end and the run has saved
+    # the results, so a scan cut short by an error, a 429 or a killed run
+    # gets a full scan next time.
+    if track:
+        cache.set(label_complete_key(model_id, label["id"]), False)
     finished = False
     while True:
         url = of_env.getattr("labelledPostsEP").format(
@@ -417,8 +442,8 @@ async def scrape_posts_labels(c, label, model_id, offset=0, known=None):
         finally:
             if task:
                 progress_utils.api.remove_job_task(task)
-    if finished:
-        cache.set(complete_key, True)
+    if finished and track:
+        mark_label_finished(model_id, label["id"])
 
 
 def label_dedupe(seen, labelArray):

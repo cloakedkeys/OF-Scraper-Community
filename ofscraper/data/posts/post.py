@@ -449,6 +449,8 @@ async def process_labels(model_id, username, c):
             labels_api.API,
         )
     except Exception as E:
+        # label rows weren't saved, so no label may be marked finished
+        labels_api.discard_finished_labels(model_id)
         log.traceback_(E)
         log.traceback_(traceback.format_exc())
 
@@ -464,8 +466,11 @@ async def process_areas(ele, model_id, username, c=None):
             username=username,
             downloaded=False,
         )
+        # label and media rows are saved: finished label scans can be trusted
+        labels_api.commit_finished_labels(model_id)
         return postcollection
     except Exception as E:
+        labels_api.discard_finished_labels(model_id)
         log.traceback_(E)
         log.traceback_(traceback.format_exc())
 
