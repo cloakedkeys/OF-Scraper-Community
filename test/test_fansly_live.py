@@ -864,6 +864,39 @@ def test_reserved_part_is_removed_when_nothing_was_recorded(tmp_path, how):
     assert list(folder.glob("*.mp4")) == []
 
 
+@pytest.mark.parametrize("how", ["raises", "cancelled"])
+def test_a_part_with_data_is_kept_when_the_runner_fails_afterwards(tmp_path, how):
+    # e.g. ffmpeg is slow to exit after a stop, the wait times out and it is
+    # killed: what it already wrote must be kept and listed
+    folder = tmp_path / "Fansly" / "creator_a" / "Livestreams"
+    rec, _ = one_part_recorder(tmp_path)
+    wrote = []
+
+    async def ffmpeg_then_fail(cmd, stop=None):
+        with open(cmd[-1], "wb") as f:
+            f.write(b"video")
+        wrote.append(cmd[-1])
+        if how == "raises":
+            raise TimeoutError("ffmpeg did not exit")
+        await asyncio.Event().wait()
+
+    rec.ffmpeg_runner = ffmpeg_then_fail
+
+    async def main():
+        task = asyncio.ensure_future(rec.run())
+        if how == "cancelled":
+            while not wrote:
+                await asyncio.sleep(0.01)
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(main(), timeout=30))
+    part = folder / f"creator_a_{STAMP}_live.mp4"
+    assert part.read_bytes() == b"video"
+    sidecar = json.loads((folder / f"creator_a_{STAMP}_live.json").read_text(encoding="utf-8"))
+    assert part.name in sidecar["parts"]
+
+
 def test_claim_is_released_only_once():
     # a second release would drop a claim another thread made in between
     released = []
