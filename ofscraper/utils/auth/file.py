@@ -13,6 +13,7 @@ r"""
 
 import json
 import logging
+import re
 
 from rich.console import Console
 
@@ -21,6 +22,7 @@ import ofscraper.utils.auth.schema as auth_schema
 import ofscraper.utils.auth.utils.error as auth_error
 import ofscraper.utils.auth.utils.dict as auth_dict
 import ofscraper.utils.paths.common as common_paths
+import ofscraper.utils.logs.utils.sensitive as sensitive
 console = Console()
 
 
@@ -49,7 +51,20 @@ def read_auth():
             if result =="quit":
                 logging.getLogger("shared").info("unable to read auth file")
                 quit()
+    hide_secrets(auth)
     return auth
+
+
+def hide_secrets(auth):
+    """Mask the session cookie wherever it appears in a log line.
+
+    Request headers are logged when a request fails, and the cookie header
+    holds ``sess=<value>``. Registering the value itself covers every form it
+    is logged in (cookie header, dict repr, JSON).
+    """
+    sess = auth.get("sess") if isinstance(auth, dict) else None
+    if sess:
+        sensitive.add_sensitive_pattern(re.compile(re.escape(str(sess))), "{sess}")
 
 
 def edit_auth():
