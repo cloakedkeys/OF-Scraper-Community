@@ -88,8 +88,19 @@ def read_auth(path=None) -> dict:
         return dict(_cache["auth"])
     with open(path, encoding="utf-8") as f:
         auth = normalize(json.load(f))
+    hide_token(auth.get("authorization_token"))
     _cache.update(path=path, mtime=mtime, auth=dict(auth))
     return auth
+
+
+def hide_token(token):
+    """Mask the token in logs: failed requests log their headers, token included."""
+    if not token or token == PLACEHOLDER:
+        return
+    import ofscraper.utils.logs.utils.sensitive as sensitive
+
+    # the patterns are regexes and a token can hold "+" or "/"
+    sensitive.add_sensitive_pattern(re.compile(re.escape(token)), "{fansly_token}")
 
 
 def write_auth(auth: dict, path=None) -> pathlib.Path:
@@ -158,6 +169,7 @@ def make_auth(auth=None) -> dict:
             break
         console.print("; ".join(issues), style="red")
     write_auth(auth)
+    hide_token(auth.get("authorization_token"))
     return auth
 
 

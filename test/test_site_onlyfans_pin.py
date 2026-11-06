@@ -41,7 +41,10 @@ EXPECTED_COOKIES = {"sess": "sess-value-0001", "auth_id": "424242", "auth_uid_":
 @pytest.fixture
 def onlyfans_profile(monkeypatch):
     real = settings.get_settings()
-    stub = SimpleNamespace(**{**dict(real), "anon": False, "dynamic_rules": "datawhores"})
+    # site set explicitly: the developer's own profile may be a Fansly one
+    stub = SimpleNamespace(
+        **{**dict(real), "anon": False, "dynamic_rules": "datawhores", "site": "onlyfans"}
+    )
     monkeypatch.setattr(settings, "get_settings", lambda: stub)
     monkeypatch.setattr(auth_requests.auth_file, "read_auth", lambda: dict(FAKE_AUTH))
     monkeypatch.setattr(auth_requests, "get_request_auth", lambda: FAKE_RULES)
