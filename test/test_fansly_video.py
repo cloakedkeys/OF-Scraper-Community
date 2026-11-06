@@ -13,6 +13,7 @@ import pathlib
 import shutil
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
@@ -194,19 +195,24 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(dm, "after_download_script", noop)
     monkeypatch.setattr(dm, "skip_download_script", no_skip)
     monkeypatch.setattr(dm.system, "check_free_size", lambda: True)
-    ffmpeg_runs = []
+    ffmpeg_runs, ffmpeg_procs = [], []
     if FFMPEG:
         monkeypatch.setattr(stream_mod, "get_ffmpeg", lambda: FFMPEG)
     else:
         monkeypatch.setattr(stream_mod, "get_ffmpeg", lambda: "ffmpeg")
-    real_run = subprocess.run
+    real_run_process = getattr(stream_mod, "_run_process", None)
 
-    def counting_run(cmd, *a, **k):
+    def counting_run(proc, cmd, timeout):
         ffmpeg_runs.append(cmd)
-        return real_run(cmd, *a, **k)
+        ffmpeg_procs.append(proc)
+        return real_run_process(proc, cmd, timeout)
 
-    monkeypatch.setattr(stream_mod.subprocess, "run", counting_run)
-    yield SimpleNamespace(out=out_dir, temp=temp_dir, marks=marks, stub=stub, ffmpeg_runs=ffmpeg_runs)
+    # raising=False: the tests can also be run against code without these
+    monkeypatch.setattr(stream_mod, "_run_process", counting_run, raising=False)
+    # the test hook for the local http server; real runs allow https only
+    monkeypatch.setattr(video, "ALLOWED_SCHEMES", ("https", "http"), raising=False)
+    yield SimpleNamespace(out=out_dir, temp=temp_dir, marks=marks, stub=stub,
+                          ffmpeg_runs=ffmpeg_runs, ffmpeg_procs=ffmpeg_procs)
     pool.shutdown(wait=True)
 
 
@@ -215,17 +221,43 @@ def files_in(*dirs):
 
 
 class Server:
-    """Serves files from a dict and records every request's path and headers."""
+    """Serves files from a dict and records every request's path and headers.
 
-    def __init__(self, files):
+    A path in ``slow`` misbehaves: "stall" sends the headers and 188 bytes,
+    then nothing; "trickle" sends one byte every 0.2 s. Either stops when the
+    server shuts down, or after ``slow_limit`` seconds, so an unfixed
+    downloader fails a test instead of hanging it.
+    """
+
+    def __init__(self, files, slow=None, slow_limit=30):
         self.files = files
+        self.slow = slow or {}
         self.seen = []
+        self.release = threading.Event()
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 path = urlparse(self.path).path
                 outer.seen.append((path, {k.lower(): v for k, v in self.headers.items()}))
+                mode = outer.slow.get(path)
+                if mode:
+                    self.send_response(200)
+                    self.send_header("Content-Length", "5000000")
+                    self.end_headers()
+                    self.wfile.write(b"\x47" + b"\xff" * 187)
+                    self.wfile.flush()
+                    deadline = time.monotonic() + slow_limit
+                    while mode == "trickle" and time.monotonic() < deadline:
+                        if outer.release.wait(0.2):
+                            return
+                        try:
+                            self.wfile.write(b"\xff")
+                            self.wfile.flush()
+                        except OSError:
+                            return
+                    outer.release.wait(max(0, deadline - time.monotonic()))
+                    return
                 body = outer.files.get(path)
                 if body is None:
                     self.send_error(404)
@@ -250,6 +282,7 @@ class Server:
         return self
 
     def __exit__(self, *exc):
+        self.release.set()
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join()
@@ -380,7 +413,7 @@ def test_a_media_playlist_is_used_as_it_is():
 def test_empty_master_fails_clearly_and_saves_nothing(env, caplog):
     raw = raw_media()
     hls_url = variant(raw["media"], video.HLS_MIME)["locations"][0]["location"]
-    ele = make_ele(raw)
+    ele = make_ele(raw, direct=False)
     session = FakeSession({hls_url: EMPTY_MASTER})
     with pytest.raises(video.EmptyMasterPlaylist):
         video.best_rendition_url(EMPTY_MASTER, hls_url)
@@ -458,7 +491,7 @@ def test_dash_is_used_when_there_is_no_hls():
 def test_protected_dash_is_reported_and_writes_no_file(env, caplog):
     raw = drop_variant(raw_media(), video.HLS_MIME)
     dash_url = variant(raw["media"], video.DASH_MIME)["locations"][0]["location"]
-    ele = make_ele(raw)
+    ele = make_ele(raw, direct=False)
     session = FakeSession({dash_url: PROTECTED_MPD})
     with caplog.at_level("INFO"):
         result = asyncio.run(run_download(session, ele))
@@ -505,7 +538,7 @@ def test_rerun_downloads_nothing(env, monkeypatch):
     session = FakeSession({hls_url: (FIXTURES / "media_playlist.m3u8").read_text(encoding="utf-8")})
     stream_runs = []
 
-    async def fake_ffmpeg(self, url, temp, cookies):
+    async def fake_ffmpeg(self, url, temp, cookies, audio_url=None, timeout=None):
         stream_runs.append(url)
         temp.write_bytes(b"\0" * 2048)
 
@@ -530,3 +563,227 @@ def test_rerun_downloads_nothing(env, monkeypatch):
     assert one_run() == []
     assert len(stream_runs) == 1 and len(session.calls) == 1
     assert files_in(env.out) == [f"{make_ele(raw).filename}.mp4"]
+
+
+# ------------------------------------------------------------------ review fixes
+
+def media_playlist(names):
+    body = "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-TARGETDURATION:1\n"
+    body += "".join(f"#EXTINF:1.000000,\n{n}\n" for n in names)
+    return (body + "#EXT-X-ENDLIST\n").encode()
+
+
+def make_segments(tmp_path, name, *args):
+    """{file name: bytes} of 1-second MPEG-TS segments made by ffmpeg."""
+    seg_dir = tmp_path / name
+    seg_dir.mkdir()
+    ffmpeg_make([*args, "-f", "segment", "-segment_time", "1", "-segment_format", "mpegts",
+                 f"{name}-%d.ts"], seg_dir)
+    return {p.name: p.read_bytes() for p in sorted(seg_dir.glob(f"{name}-*.ts"))}
+
+
+def serve_hls(srv, raw, master, playlists):
+    """Point the HLS variant at ``srv``; ``playlists`` maps a folder under the
+    master to its segments. Returns the folder of the master."""
+    url = point_at(raw["media"], video.HLS_MIME, srv.base)
+    root = urlparse(url).path.rsplit("/", 1)[0]
+    srv.files[urlparse(url).path] = master.encode()
+    for folder, segments in playlists.items():
+        srv.files[f"{root}/{folder}/media.m3u8"] = media_playlist(list(segments))
+        srv.files.update({f"{root}/{folder}/{n}": b for n, b in segments.items()})
+    return root
+
+
+def download_locally(ele):
+    async def go():
+        async with ofsession.download_session() as c:
+            return await run_download(c, ele)
+
+    return asyncio.run(go())
+
+
+VIDEO_ONLY_MASTER = (
+    "#EXTM3U\n#EXT-X-VERSION:4\n"
+    '#EXT-X-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=3840x2160,CODECS="avc1.640033"\n'
+    "r2160/media.m3u8\n"
+)
+SPLIT_AUDIO_MASTER = (
+    "#EXTM3U\n#EXT-X-VERSION:4\n"
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Main",DEFAULT=YES,AUTOSELECT=YES,URI="audio/media.m3u8"\n'
+    '#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=640x360,CODECS="avc1.64001e,mp4a.40.2",AUDIO="aud"\n'
+    "r360/media.m3u8\n"
+    '#EXT-X-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=3840x2160,CODECS="avc1.640033,mp4a.40.2",AUDIO="aud"\n'
+    "r2160/media.m3u8\n"
+)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("mode", ["stall", "trickle"])
+def test_stalled_stream_fails_in_bounded_time_and_leaves_no_part(env, tmp_path, monkeypatch, mode):
+    # "stall": the media playlist goes silent and ffmpeg's read timeout ends
+    # the run. "trickle": a segment never goes quite silent and the overall
+    # time limit ends it. (A segment that goes silent part-way is skipped by
+    # ffmpeg's HLS reader without an error; see the PR's known gaps.)
+    monkeypatch.setattr(stream_mod, "get_chunk_timeout", lambda: 2)
+    # each case passes only through its own limit: the other is set too long
+    monkeypatch.setattr(stream_mod, "STREAM_TIMEOUT_FLOOR", 60 if mode == "stall" else 6)
+    if mode == "trickle":
+        monkeypatch.setattr(stream_mod, "get_chunk_timeout", lambda: 30)
+    segments = make_segments(tmp_path, "segment", "-bsf:v", "dump_extra=freq=keyframe")
+    raw = raw_media()
+    with Server({}, slow_limit=40) as srv:
+        root = serve_hls(srv, raw, VIDEO_ONLY_MASTER, {"r2160": segments})
+        slow_path = "media.m3u8" if mode == "stall" else "segment-1.ts"
+        srv.slow[f"{root}/r2160/{slow_path}"] = mode
+        ele = make_ele(raw)
+        started = time.monotonic()
+        result = download_locally(ele)
+        elapsed = time.monotonic() - started
+    assert elapsed < 25
+    assert result == ("skipped", 0)
+    assert files_in(env.out, env.temp) == []
+    assert env.marks == [] and len(env.ffmpeg_runs) == 1
+    assert env.ffmpeg_procs[0].proc.poll() is not None
+
+
+@needs_ffmpeg
+def test_cancelled_download_stops_ffmpeg_and_removes_the_part(env, tmp_path):
+    segments = make_segments(tmp_path, "segment", "-bsf:v", "dump_extra=freq=keyframe")
+    raw = raw_media()
+    with Server({}, slow_limit=40) as srv:
+        root = serve_hls(srv, raw, VIDEO_ONLY_MASTER, {"r2160": segments})
+        srv.slow[f"{root}/r2160/segment-2.ts"] = "trickle"
+        ele = make_ele(raw)
+
+        async def go():
+            async with ofsession.download_session() as c:
+                task = asyncio.ensure_future(run_download(c, ele))
+                deadline = time.monotonic() + 20
+                while not any(env.temp.glob("*.part")) and time.monotonic() < deadline:
+                    await asyncio.sleep(0.1)
+                assert any(env.temp.glob("*.part")), "ffmpeg never started writing"
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+        asyncio.run(go())
+    assert files_in(env.out, env.temp) == []
+    assert env.marks == []
+    assert env.ffmpeg_procs[0].proc.poll() is not None
+
+
+@needs_ffmpeg
+def test_separate_audio_rendition_is_downloaded_with_the_video(env, tmp_path):
+    video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    audio_segments = make_segments(tmp_path, "a", "-vn")
+    raw = raw_media()
+    with Server({}) as srv:
+        root = serve_hls(srv, raw, SPLIT_AUDIO_MASTER,
+                         {"r2160": video_segments, "audio": audio_segments})
+        ele = make_ele(raw)
+        result = download_locally(ele)
+
+    assert result[0] == "Videos" and result[1] > 0
+    out = env.out / f"{ele.filename}.mp4"
+    assert files_in(env.out, env.temp) == [out.name]
+    assert sorted(s["codec_type"] for s in probe(out)["streams"]) == ["audio", "video"]
+    requested = [p for p, _ in srv.seen]
+    assert f"{root}/audio/media.m3u8" in requested
+    assert all(f"{root}/audio/{n}" in requested for n in audio_segments)
+    assert not any("/r360/" in p for p in requested)
+    for _, headers in srv.seen:
+        assert_cdn_request(headers)
+
+
+def test_audio_group_is_resolved_from_the_master():
+    base = "https://cdn3.fansly.com/new/1/2/2.m3u8"
+    assert video.best_rendition(SPLIT_AUDIO_MASTER, base) == (
+        "https://cdn3.fansly.com/new/1/2/r2160/media.m3u8",
+        "https://cdn3.fansly.com/new/1/2/audio/media.m3u8",
+    )
+    # no URI: the audio is inside the rendition (RFC 8216 4.3.4.2.1)
+    in_band = SPLIT_AUDIO_MASTER.replace(',URI="audio/media.m3u8"', "")
+    assert video.best_rendition(in_band, base)[1] is None
+    # the DEFAULT rendition of the group wins
+    two = SPLIT_AUDIO_MASTER.replace(
+        "#EXT-X-MEDIA:", '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Alt",DEFAULT=NO,URI="alt.m3u8"\n#EXT-X-MEDIA:', 1)
+    assert video.best_rendition(two, base)[1].endswith("/audio/media.m3u8")
+    cmd = video.ffmpeg_command("ffmpeg", "https://x/v.m3u8", "out.part", {}, {},
+                               audio_url="https://x/a.m3u8")
+    assert cmd[cmd.index("-map"):cmd.index("-c")] == ["-map", "0:v", "-map", "1:a"]
+    assert cmd.count("-i") == 2
+
+
+def test_unlisted_audio_group_fails_instead_of_saving_a_silent_video(env):
+    raw = raw_media()
+    hls_url = variant(raw["media"], video.HLS_MIME)["locations"][0]["location"]
+    master = SPLIT_AUDIO_MASTER.replace('GROUP-ID="aud"', 'GROUP-ID="other"')
+    session = FakeSession({hls_url: master})
+    with pytest.raises(video.MissingAudio):
+        asyncio.run(stream_mod.FanslyStreamDownloadManager().stream_download(
+            session, make_ele(raw, direct=False), "a-creator", 100000000000000002))
+    assert files_in(env.out, env.temp) == []
+    assert env.ffmpeg_runs == [] and env.marks == []
+
+
+def test_ffmpeg_gets_a_read_timeout_and_a_protocol_whitelist(monkeypatch):
+    cmd = video.ffmpeg_command("ffmpeg", "https://x/v.m3u8", "out.part", {"User-Agent": UA}, {},
+                               audio_url="https://x/a.m3u8", rw_timeout=30)
+    first, second = [i for i, a in enumerate(cmd) if a == "-i"]
+    for start, end in ((0, first), (first + 2, second)):
+        opts = cmd[start:end]
+        assert opts[opts.index("-rw_timeout") + 1] == "30000000"
+        assert opts[opts.index("-protocol_whitelist") + 1] == "https,tls,tcp,crypto"
+    assert stream_mod.stream_timeout(None) == stream_mod.STREAM_TIMEOUT_FLOOR
+    assert stream_mod.stream_timeout(7200) == 7200 * stream_mod.STREAM_TIMEOUT_PER_SECOND
+
+
+def test_non_https_stream_urls_are_refused(env, monkeypatch):
+    monkeypatch.setattr(video, "ALLOWED_SCHEMES", ("https",))
+    for url in ("http://cdn.example/a.m3u8", "file:///etc/passwd", "ftp://x/a.m3u8", ""):
+        with pytest.raises(video.StreamError):
+            video.check_url(url)
+    assert video.check_url("https://cdn.example/a.m3u8")
+    raw = raw_media()
+    hls_url = variant(raw["media"], video.HLS_MIME)["locations"][0]["location"]
+    for master in (MASTER.replace("r2160/media.m3u8", "file:///etc/passwd"),
+                   SPLIT_AUDIO_MASTER.replace('URI="audio/media.m3u8"', 'URI="http://cdn.example/a.m3u8"')):
+        session = FakeSession({hls_url: master})
+        assert asyncio.run(run_download(session, make_ele(raw, direct=False))) == ("skipped", 0)
+    assert env.ffmpeg_runs == [] and files_in(env.out, env.temp) == []
+
+
+def test_line_breaks_are_removed_from_header_and_cookie_values():
+    cmd = video.ffmpeg_command(
+        "ffmpeg", "https://x/v.m3u8", "out.part",
+        {"User-Agent": "UA\r\nX-Injected: 1", "Referer": "https://fansly.com/\nX-Other: 2"},
+        {"CloudFront-Policy": "P\r\nX-Cookie: 3"},
+    )
+    ua = cmd[cmd.index("-user_agent") + 1]
+    headers = cmd[cmd.index("-headers") + 1]
+    assert "\r" not in ua and "\n" not in ua
+    assert headers.count("\r\n") == 2  # Referer and Cookie, nothing else
+    assert all(not line.startswith("X-") for line in headers.split("\r\n"))
+
+
+@pytest.mark.parametrize("case", ["protected_dash", "empty_master", "manifest_404"])
+def test_unusable_stream_falls_back_to_the_direct_file(env, monkeypatch, case):
+    raw = raw_media()
+    if case == "protected_dash":
+        raw = drop_variant(raw, video.HLS_MIME)
+        url = variant(raw["media"], video.DASH_MIME)["locations"][0]["location"]
+        bodies = {url: PROTECTED_MPD}
+    else:
+        url = variant(raw["media"], video.HLS_MIME)["locations"][0]["location"]
+        bodies = {url: EMPTY_MASTER} if case == "empty_master" else {}
+    calls = []
+
+    async def main_download(self, c, ele, username, model_id):
+        calls.append(ele.url)
+        return "Videos", 10
+
+    monkeypatch.setattr(run_mod.MainDownloadManager, "main_download", main_download)
+    ele = make_ele(raw)
+    assert asyncio.run(run_download(FakeSession(bodies), ele)) == ("Videos", 10)
+    assert calls == [ele.url] and ele.url
+    assert env.ffmpeg_runs == [] and files_in(env.out, env.temp) == []

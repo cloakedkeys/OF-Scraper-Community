@@ -8,8 +8,10 @@ database, hash, after-download script) are the same as the normal downloader's.
 """
 
 import asyncio
+import contextlib
 import pathlib
 import subprocess
+import threading
 from functools import partial
 
 import ofscraper.classes.placeholder as placeholder
@@ -30,6 +32,64 @@ from ofscraper.sites.fansly import video as fansly_video
 from ofscraper.utils.cache.profile import set_profile_cache
 from ofscraper.utils.system.ffmpeg import get_ffmpeg
 from ofscraper.utils.system.ffprobe import get_media_duration, verify_media_integrity
+from ofscraper.commands.scraper.actions.download.utils.chunk import get_chunk_timeout
+
+# Backstop for the whole ffmpeg run, in seconds: at least the floor, or this
+# many seconds per second of video. A connection that stops sending is caught
+# sooner by ffmpeg's -rw_timeout (the chunk timeout).
+STREAM_TIMEOUT_FLOOR = 3600
+STREAM_TIMEOUT_PER_SECOND = 10
+
+
+def stream_timeout(duration) -> float:
+    try:
+        duration = float(duration or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    return max(STREAM_TIMEOUT_FLOOR, duration * STREAM_TIMEOUT_PER_SECOND)
+
+
+class StreamTimeout(Exception):
+    pass
+
+
+class _Ffmpeg:
+    """The ffmpeg process of one download, so a cancelled download can stop it."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.proc = None
+        self.stopped = False
+
+    def start(self, cmd):
+        with self.lock:
+            if self.stopped:
+                raise StreamTimeout("download cancelled before ffmpeg started")
+            self.proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            return self.proc
+
+    def stop(self):
+        with self.lock:
+            self.stopped = True
+            if self.proc and self.proc.poll() is None:
+                self.proc.kill()
+
+
+def _run_process(proc, cmd, timeout):
+    """Run ffmpeg to the end, or kill it after ``timeout`` seconds."""
+    p = proc.start(cmd)
+    try:
+        _, stderr = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.communicate()
+        raise StreamTimeout(f"ffmpeg ran longer than {timeout:.0f}s and was stopped")
+    return p.returncode, stderr
 
 
 class FanslyStreamDownloadManager(DownloadManager):
@@ -52,15 +112,18 @@ class FanslyStreamDownloadManager(DownloadManager):
         self._downloadspace()
 
         try:
-            manifest = await self._fetch_text(c, best.url, best.cookies)
-            if best.kind == fansly_video.HLS:
-                url = fansly_video.best_rendition_url(manifest, best.url)
-            else:
-                if fansly_video.dash_is_protected(manifest):
-                    common_globals.log.info(f"{medialog} protected, not downloaded")
-                    return "forced_skipped", 0
-                url = best.url
+            url, audio_url = await self._stream_urls(c, best)
         except fansly_video.StreamError as e:
+            if ele.url:
+                # None: run.py downloads the direct file instead
+                common_globals.log.info(f"{medialog} {e}; downloading the direct file instead")
+                return None
+            if isinstance(e, fansly_video.ProtectedStream):
+                common_globals.log.info(f"{medialog} protected, not downloaded")
+                return "forced_skipped", 0
+            if isinstance(e, fansly_video.MissingAudio):
+                # fail rather than save a silent video that is never fetched again
+                raise
             common_globals.log.warning(f"{medialog} {e}")
             return "skipped", 0
 
@@ -72,22 +135,36 @@ class FanslyStreamDownloadManager(DownloadManager):
         temp = pathlib.Path(tempholderObj.tempfilepath)
         temp.unlink(missing_ok=True)
 
+        # BaseException: a cancelled run (Ctrl+C) also removes the .part
         try:
-            await self._run_ffmpeg(url, temp, best.cookies)
-        except Exception:
+            await self._run_ffmpeg(
+                url, temp, best.cookies, audio_url, stream_timeout(ele.duration)
+            )
+            total = temp.stat().st_size
+
+            if await self._check_forced_skip(ele, total) == 0:
+                temp.unlink(missing_ok=True)
+                if ele.mediatype.capitalize() != "Forced_skipped":
+                    await self._force_download(ele, username, model_id)
+                return ele.mediatype.capitalize(), 0
+
+            await self._total_change_helper(total)
+            await self._integrity_check(temp, ele)
+            return await self._finish(temp, placeholderObj, ele, username, model_id, total)
+        except BaseException:
             temp.unlink(missing_ok=True)
             raise
-        total = temp.stat().st_size
 
-        if await self._check_forced_skip(ele, total) == 0:
-            temp.unlink(missing_ok=True)
-            if ele.mediatype.capitalize() != "Forced_skipped":
-                await self._force_download(ele, username, model_id)
-            return ele.mediatype.capitalize(), 0
-
-        await self._total_change_helper(total)
-        await self._integrity_check(temp, ele)
-        return await self._finish(temp, placeholderObj, ele, username, model_id, total)
+    async def _stream_urls(self, c, best):
+        """(video url, separate audio url or None) to give ffmpeg."""
+        manifest = await self._fetch_text(c, fansly_video.check_url(best.url), best.cookies)
+        if best.kind == fansly_video.HLS:
+            url, audio_url = fansly_video.best_rendition(manifest, best.url)
+            return (fansly_video.check_url(url),
+                    fansly_video.check_url(audio_url) if audio_url else None)
+        if fansly_video.dash_is_protected(manifest):
+            raise fansly_video.ProtectedStream("DASH stream is protected (DRM)")
+        return best.url, None
 
     async def _fetch_text(self, c, url, cookies):
         # HEADERS only: the CloudFront cookies must not be replaced by the
@@ -101,22 +178,30 @@ class FanslyStreamDownloadManager(DownloadManager):
                 )
             return await r.text_()
 
-    async def _run_ffmpeg(self, url, temp, cookies):
+    async def _run_ffmpeg(self, url, temp, cookies, audio_url=None, timeout=None):
         cmd = fansly_video.ffmpeg_command(
             get_ffmpeg(),
             url,
             temp,
             fansly_headers.cdn_headers(fansly_auth.read_auth()),
             cookies,
+            audio_url=audio_url,
+            rw_timeout=get_chunk_timeout(),
         )
         # subprocess in a worker thread: the app may run a selector event
         # loop on Windows, which can't start asyncio subprocesses
-        result = await asyncio.get_event_loop().run_in_executor(
-            common_globals.thread,
-            partial(subprocess.run, cmd, capture_output=True),
-        )
-        if result.returncode != 0 or not temp.exists() or not temp.stat().st_size:
-            err = (result.stderr or b"").decode("utf-8", "replace").strip()[-500:]
+        proc = _Ffmpeg()
+        job = common_globals.thread.submit(_run_process, proc, cmd, timeout)
+        try:
+            returncode, stderr = await asyncio.wrap_future(job)
+        except BaseException:
+            # cancelled (Ctrl+C): stop ffmpeg and wait for it to let go of the .part
+            proc.stop()
+            with contextlib.suppress(BaseException):
+                job.result(timeout=30)
+            raise
+        if returncode != 0 or not temp.exists() or not temp.stat().st_size:
+            err = (stderr or b"").decode("utf-8", "replace").strip()[-500:]
             raise Exception(f"ffmpeg could not copy the stream: {err or 'no output'}")
 
     async def _integrity_check(self, temp, ele):

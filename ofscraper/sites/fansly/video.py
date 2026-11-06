@@ -151,12 +151,50 @@ def uses_stream(ele) -> bool:
     return bool(best and best.is_stream)
 
 
-_RES = re.compile(r"RESOLUTION=(\d+)x(\d+)", re.I)
-_BW = re.compile(r"(?<![-A-Z])BANDWIDTH=(\d+)", re.I)
+# URL schemes a stream, rendition or audio playlist may use. Tests add "http"
+# for their local server; nothing else should change this.
+ALLOWED_SCHEMES = ("https",)
+
+
+def check_url(url: str) -> str:
+    """``url`` if its scheme is allowed, else StreamError."""
+    scheme = urlparse(url or "").scheme.lower()
+    if scheme not in ALLOWED_SCHEMES:
+        raise StreamError(f"stream URL scheme {scheme or 'none'!r} is not allowed")
+    return url
+
+
+def protocol_whitelist() -> str:
+    """ffmpeg protocols for the allowed schemes: no file, pipe or other local reads."""
+    protocols = list(ALLOWED_SCHEMES)
+    if "https" in protocols:
+        protocols.append("tls")
+    return ",".join(protocols + ["tcp", "crypto"])
+
+
+class MissingAudio(StreamError):
+    pass
+
+
+_ATTR = re.compile(r'([A-Z0-9-]+)=("[^"]*"|[^,]*)', re.I)
+_RES = re.compile(r"(\d+)x(\d+)", re.I)
+
+
+def _attrs(line: str) -> dict:
+    body = line.split(":", 1)[1] if ":" in line else ""
+    return {k.upper(): v.strip('"') for k, v in _ATTR.findall(body)}
+
+
+def _int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def master_renditions(text: str, base_url: str) -> list:
-    """(width, height, bandwidth, absolute url) for each rendition in a master playlist."""
+    """(width, height, bandwidth, absolute url, audio group or None) for each
+    rendition in a master playlist."""
     out = []
     lines = [line.strip() for line in (text or "").splitlines()]
     for i, line in enumerate(lines):
@@ -165,21 +203,48 @@ def master_renditions(text: str, base_url: str) -> list:
         uri = next((x for x in lines[i + 1:] if x and not x.startswith("#")), None)
         if not uri:
             continue
-        res = _RES.search(line)
-        bw = _BW.search(line)
+        attrs = _attrs(line)
+        res = _RES.fullmatch(attrs.get("RESOLUTION", ""))
         w, h = (int(res.group(1)), int(res.group(2))) if res else (0, 0)
-        out.append((w, h, int(bw.group(1)) if bw else 0, urljoin(base_url, uri)))
+        out.append((w, h, _int(attrs.get("BANDWIDTH")), urljoin(base_url, uri),
+                    attrs.get("AUDIO") or None))
     return out
+
+
+def _audio_url(text: str, base_url: str, group: str):
+    """Audio playlist URL for an ``AUDIO`` group, or None when the audio is in
+    the rendition itself (an ``#EXT-X-MEDIA`` without ``URI``, RFC 8216
+    4.3.4.2.1). A group the playlist doesn't list is MissingAudio."""
+    if not group:
+        return None
+    media = [
+        a for a in (_attrs(line) for line in (text or "").splitlines()
+                    if line.strip().upper().startswith("#EXT-X-MEDIA:"))
+        if a.get("TYPE", "").upper() == "AUDIO" and a.get("GROUP-ID") == group
+    ]
+    if not media:
+        raise MissingAudio(
+            f"the chosen rendition names audio group {group!r}, which the playlist doesn't list"
+        )
+    pick = next((a for a in media if a.get("DEFAULT", "").upper() == "YES"), media[0])
+    return urljoin(base_url, pick["URI"]) if pick.get("URI") else None
+
+
+def best_rendition(text: str, base_url: str) -> tuple:
+    """(video url, audio url or None) of the largest rendition. A plain media
+    playlist is used as it is."""
+    renditions = master_renditions(text, base_url)
+    if renditions:
+        w, h, bw, url, group = max(renditions, key=lambda r: (r[0] * r[1], r[2]))
+        return url, _audio_url(text, base_url, group)
+    if "#EXTINF" in (text or ""):
+        return base_url, None
+    raise EmptyMasterPlaylist("HLS master playlist lists no renditions; nothing to download")
 
 
 def best_rendition_url(text: str, base_url: str) -> str:
     """URL of the largest rendition. A plain media playlist is used as it is."""
-    renditions = master_renditions(text, base_url)
-    if renditions:
-        return max(renditions, key=lambda r: (r[0] * r[1], r[2]))[3]
-    if "#EXTINF" in (text or ""):
-        return base_url
-    raise EmptyMasterPlaylist("HLS master playlist lists no renditions; nothing to download")
+    return best_rendition(text, base_url)[0]
 
 
 _PROTECTION = re.compile(r"<\s*(?:[\w-]+:)?ContentProtection\b")
@@ -189,21 +254,38 @@ def dash_is_protected(mpd_text: str) -> bool:
     return bool(_PROTECTION.search(mpd_text or ""))
 
 
-def ffmpeg_command(ffmpeg, url, out_path, headers: dict, cookies: dict) -> list:
+def _one_line(value) -> str:
+    # a line break in a value would start a new header in ffmpeg's requests
+    return re.sub(r"[\r\n]", "", str(value))
+
+
+def ffmpeg_command(ffmpeg, url, out_path, headers: dict, cookies: dict,
+                   audio_url=None, rw_timeout=None) -> list:
     """ffmpeg stream copy of an HLS/DASH URL into one MP4.
 
     ``headers`` and ``cookies`` go on every HTTP request ffmpeg makes,
-    playlist/manifest and segments alike.
+    playlist/manifest and segments alike. ``audio_url`` is a separate audio
+    playlist, added as a second input and mapped next to the video.
+    ``rw_timeout`` (seconds) ends the run when a connection stops sending.
     """
-    headers = dict(headers or {})
+    headers = {_one_line(k): _one_line(v) for k, v in (headers or {}).items()}
     user_agent = headers.pop("User-Agent", None) or headers.pop("user-agent", None)
     lines = "".join(f"{k}: {v}\r\n" for k, v in headers.items())
     if cookies:
-        lines += "Cookie: " + "; ".join(f"{k}={v}" for k, v in cookies.items()) + "\r\n"
-    cmd = [str(ffmpeg), "-hide_banner", "-nostdin", "-loglevel", "error", "-y"]
+        lines += "Cookie: " + "; ".join(
+            f"{_one_line(k)}={_one_line(v)}" for k, v in cookies.items()
+        ) + "\r\n"
+    # input options apply to the next -i only, so each input gets them all
+    opts = ["-protocol_whitelist", protocol_whitelist()]
+    if rw_timeout:
+        opts += ["-rw_timeout", str(int(float(rw_timeout) * 1_000_000))]
     if user_agent:
-        cmd += ["-user_agent", user_agent]
+        opts += ["-user_agent", user_agent]
     if lines:
-        cmd += ["-headers", lines]
-    cmd += ["-i", url, "-c", "copy", "-f", "mp4", str(out_path)]
+        opts += ["-headers", lines]
+    cmd = [str(ffmpeg), "-hide_banner", "-nostdin", "-loglevel", "error", "-y"]
+    cmd += opts + ["-i", url]
+    if audio_url:
+        cmd += opts + ["-i", audio_url, "-map", "0:v", "-map", "1:a"]
+    cmd += ["-c", "copy", "-f", "mp4", str(out_path)]
     return cmd

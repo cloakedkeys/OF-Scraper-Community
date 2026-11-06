@@ -117,9 +117,12 @@ async def download(c, ele, model_id, username):
     try:
         data = None
         if fansly_video.uses_stream(ele):
+            # None: the stream can't be used and the item has a direct file
             data = await FanslyStreamDownloadManager().stream_download(
                 c, ele, username, model_id
             )
+        if data is not None:
+            pass
         elif ele.url:
             data = await MainDownloadManager().main_download(
                 c,
