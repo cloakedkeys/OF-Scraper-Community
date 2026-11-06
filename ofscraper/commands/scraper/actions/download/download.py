@@ -11,6 +11,7 @@ import ofscraper.utils.live.updater as progress_updater
 import ofscraper.utils.config.data as config_data
 import ofscraper.utils.paths.common as common_paths
 from ofscraper.utils.string import format_safe
+from ofscraper.utils.markup import escape_text
 
 import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.utils.cache.cache as cache
@@ -32,7 +33,7 @@ import ofscraper.managers.manager as manager
 async def downloader(username=None, model_id=None, posts=None, media=None, **kwargs):
     download_str = download_activity_str.format(username=username)
     path_str = format_safe(
-        f"\nSaving files to [deep_sky_blue2]{str(pathlib.Path(common_paths.get_save_location(),config_data.get_dirformat(),config_data.get_fileformat()))}[/deep_sky_blue2]",
+        f"\nSaving files to [deep_sky_blue2]{escape_text(pathlib.Path(common_paths.get_save_location(),config_data.get_dirformat(),config_data.get_fileformat()))}[/deep_sky_blue2]",
         username=username,
         model_id=model_id,
         model_username=username,

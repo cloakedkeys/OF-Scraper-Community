@@ -1,4 +1,4 @@
-from rich.markup import escape
+from ofscraper.utils.markup import escape_text
 
 import ofscraper.utils.console as console
 import ofscraper.utils.encoding as encoding
@@ -22,4 +22,4 @@ def get_id():
 
 
 def print_user(name, username):
-    console.get_shared_console().print(f"Welcome, {escape(str(name))} | {escape(str(username))}")
+    console.get_shared_console().print(f"Welcome, {escape_text(name)} | {escape_text(username)}")
