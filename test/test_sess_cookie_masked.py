@@ -155,6 +155,14 @@ def test_username_still_masked_only_as_a_whole_word():
     assert not out.endswith("ann is here; channel stays")
 
 
+def test_an_empty_display_name_masks_nothing():
+    import ofscraper.data.api.me as me
+
+    me._scraper_user_helper(me_response("plainuser1", ""))
+    out = formatted(LogFileFormatter(), "a line with spaces")
+    assert out.endswith("a line with spaces")
+
+
 def test_empty_sess_registers_nothing(fake_auth):
     fake_auth["sess"] = ""
     auth_file.read_auth()

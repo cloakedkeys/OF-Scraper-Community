@@ -45,10 +45,15 @@ def _scraper_user_helper(c):
             data = r.json_()
             if data["isAuth"]:
                 sensitive.add_sensitive_pattern(data["id"], "userid")
-                sensitive.add_sensitive_pattern(
-                    _name_pattern(data["username"]), "username"
-                )
-                sensitive.add_sensitive_pattern(_name_pattern(data["name"]), "name")
+                # an empty value would match every space or word edge
+                if data.get("username"):
+                    sensitive.add_sensitive_pattern(
+                        _name_pattern(data["username"]), "username"
+                    )
+                if data.get("name"):
+                    sensitive.add_sensitive_pattern(
+                        _name_pattern(data["name"]), "name"
+                    )
 
     except Exception as E:
         log.traceback_(E)
