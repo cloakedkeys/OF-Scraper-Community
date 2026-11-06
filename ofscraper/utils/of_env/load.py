@@ -7,7 +7,7 @@ import yaml
 log = logging.getLogger("shared")
 
 
-def _env_text(value):
+def _env_text(key, value):
     """
     Objects and lists are stored as JSON so settings that expect JSON can
     parse them; str() would give Python syntax. YAML-only types inside them
@@ -17,8 +17,11 @@ def _env_text(value):
     if isinstance(value, (dict, list)):
         try:
             return json.dumps(value, default=str)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            log.warning(
+                f"{key}: couldn't store the value as JSON ({e}), "
+                "stored as Python text instead"
+            )
     return str(value)
 
 
@@ -71,7 +74,7 @@ def load_env_files(values: list[str] | None):
 
             if data:
                 # Update os.environ, ensuring all keys and values are strings
-                os.environ.update({str(k): _env_text(v) for k, v in data.items()})
+                os.environ.update({str(k): _env_text(k, v) for k, v in data.items()})
                 log.info(
                     f"Successfully loaded environment variables from '{file_path}'"
                 )

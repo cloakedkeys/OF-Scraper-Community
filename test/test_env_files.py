@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 
 import pytest
@@ -18,6 +19,7 @@ KEYS = (
     "OFSC_TEST_SET_MAP",
     "OFSC_TEST_BINARY_LIST",
     "OFSC_TEST_SELF_LIST",
+    "OFSC_TEST_DATE_KEY",
 )
 
 
@@ -127,3 +129,27 @@ def test_yaml_only_types_inside_objects_still_load(clean_env, key, yaml_value, c
 
     check(os.environ[key])
     assert os.environ["OFSC_TEST_STRING"] == "plain"
+
+
+@pytest.mark.parametrize(
+    "key,yaml_value,stored",
+    [
+        ("OFSC_TEST_SELF_LIST", "&r [1, *r]", "[1, [...]]"),
+        # JSON keys must be text, and default=str doesn't apply to keys
+        ("OFSC_TEST_DATE_KEY", "{2024-01-02: a}", "{datetime.date(2024, 1, 2): 'a'}"),
+    ],
+    ids=["circular-anchor", "date-key"],
+)
+def test_python_text_fallback_warns_with_the_key(
+    clean_env, caplog, key, yaml_value, stored
+):
+    path = clean_env / "env.yaml"
+    path.write_text(f"{key}: {yaml_value}\nOFSC_TEST_STRING: plain\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="shared"):
+        load_env_files([str(path)])
+
+    assert os.environ[key] == stored
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].startswith(f"{key}: couldn't store the value as JSON")
