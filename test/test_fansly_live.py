@@ -837,6 +837,33 @@ def test_the_part_file_exists_before_ffmpeg_starts(tmp_path):
     assert seen == [True]
 
 
+@pytest.mark.parametrize("how", ["ffmpeg_missing", "cancelled"])
+def test_reserved_part_is_removed_when_nothing_was_recorded(tmp_path, how):
+    folder = tmp_path / "Fansly" / "creator_a" / "Livestreams"
+    rec, _ = one_part_recorder(tmp_path)
+    started = []
+
+    async def broken_ffmpeg(cmd, stop=None):
+        started.append(live.pathlib.Path(cmd[-1]).exists())
+        if how == "ffmpeg_missing":
+            raise FileNotFoundError("ffmpeg")
+        await asyncio.Event().wait()
+
+    rec.ffmpeg_runner = broken_ffmpeg
+
+    async def main():
+        task = asyncio.ensure_future(rec.run())
+        if how == "cancelled":
+            while not started:
+                await asyncio.sleep(0.01)
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(asyncio.wait_for(main(), timeout=30))
+    assert started and started[0]  # a part file was reserved
+    assert list(folder.glob("*.mp4")) == []
+
+
 def test_claim_is_released_only_once():
     # a second release would drop a claim another thread made in between
     released = []

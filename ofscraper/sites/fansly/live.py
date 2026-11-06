@@ -419,14 +419,19 @@ class LiveRecorder:
             return False, False
         out = reserve_part(self.base)
         log.info(f"{self.username}: recording livestream to {out.name}")
-        await self.ffmpeg_runner(
-            ffmpeg_command(self.ffmpeg, variant, out, self.user_agent), stop)
-        produced = out.exists() and out.stat().st_size > 0
+        produced = False
+        try:
+            await self.ffmpeg_runner(
+                ffmpeg_command(self.ffmpeg, variant, out, self.user_agent), stop)
+            produced = out.exists() and out.stat().st_size > 0
+        finally:
+            # the reserved file is ours; don't leave it empty when ffmpeg
+            # wrote nothing, failed to start or the task was cancelled
+            if not produced:
+                out.unlink(missing_ok=True)
         if produced:
             self.parts.append(out)
             self._write_sidecar()
-        elif out.exists():
-            out.unlink()
         if stop.is_set():
             return False, produced
         try:
