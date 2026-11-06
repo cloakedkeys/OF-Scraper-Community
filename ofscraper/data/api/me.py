@@ -21,6 +21,10 @@ import ofscraper.utils.logs.utils.sensitive as sensitive
 log = logging.getLogger("shared")
 
 
+class NotLoggedIn(Exception):
+    """/me answered, but with isAuth false."""
+
+
 def scrape_user():
     with manager.Manager.session.get_ofsession() as c:
         return _scraper_user_helper(c)
@@ -40,6 +44,8 @@ def _scraper_user_helper(c):
                     f"{data['name']} | {data['name']}|\\b{data['name']}\\b",
                     "name",
                 )
+            else:
+                raise NotLoggedIn("OnlyFans says this session isn't logged in")
 
     except Exception as E:
         log.traceback_(E)
