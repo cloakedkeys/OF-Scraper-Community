@@ -9,6 +9,7 @@ import contextlib
 import copy
 import json
 import logging
+import math
 import pathlib
 import shutil
 import subprocess
@@ -109,7 +110,19 @@ def point_at(raw, mime, base):
     loc = variant(raw, mime)["locations"][0]
     loc["location"] = base + urlparse(loc["location"]).path
     loc["metadata"] = dict(TEST_SIGNED)
+    set_duration(raw, 3.0)  # what the tests generate with ffmpeg is 3 s long
     return loc["location"]
+
+
+def set_duration(raw, seconds):
+    """Set the metadata ``duration`` of the media and its variants (None removes it)."""
+    for obj in [raw] + list(raw.get("variants") or []):
+        meta = json.loads(obj.get("metadata") or "{}")
+        if "duration" in meta or obj is raw:
+            meta.pop("duration", None)
+            if seconds is not None:
+                meta["duration"] = seconds
+            obj["metadata"] = json.dumps(meta)
 
 
 class FakeResponse:
@@ -130,6 +143,8 @@ class FakeSession:
     @contextlib.asynccontextmanager
     async def requests_async(self, url=None, **kwargs):
         self.calls.append((url, kwargs))
+        if isinstance(self.bodies.get(url), Exception):
+            raise self.bodies[url]  # as the session does for a status other than 404
         yield FakeResponse(self.bodies.get(url, ""), 200 if url in self.bodies else 404)
 
 
@@ -224,7 +239,8 @@ class Server:
     """Serves files from a dict and records every request's path and headers.
 
     A path in ``slow`` misbehaves: "stall" sends the headers and 188 bytes,
-    then nothing; "trickle" sends one byte every 0.2 s. Either stops when the
+    then nothing; "half" sends the file's real length and half its bytes, then
+    nothing; "trickle" sends one byte every 0.2 s. Each stops when the
     server shuts down, or after ``slow_limit`` seconds, so an unfixed
     downloader fails a test instead of hanging it.
     """
@@ -242,10 +258,16 @@ class Server:
                 outer.seen.append((path, {k.lower(): v for k, v in self.headers.items()}))
                 mode = outer.slow.get(path)
                 if mode:
+                    real = outer.files.get(path) or b""
                     self.send_response(200)
-                    self.send_header("Content-Length", "5000000")
-                    self.end_headers()
-                    self.wfile.write(b"\x47" + b"\xff" * 187)
+                    if mode == "half":  # the real length, then half of the real bytes
+                        self.send_header("Content-Length", str(len(real)))
+                        self.end_headers()
+                        self.wfile.write(real[: len(real) // 2 // 188 * 188])
+                    else:
+                        self.send_header("Content-Length", "5000000")
+                        self.end_headers()
+                        self.wfile.write(b"\x47" + b"\xff" * 187)
                     self.wfile.flush()
                     deadline = time.monotonic() + slow_limit
                     while mode == "trickle" and time.monotonic() < deadline:
@@ -547,6 +569,7 @@ def test_rerun_downloads_nothing(env, monkeypatch):
 
     monkeypatch.setattr(stream_mod.FanslyStreamDownloadManager, "_run_ffmpeg", fake_ffmpeg)
     monkeypatch.setattr(stream_mod.FanslyStreamDownloadManager, "_integrity_check", ok)
+    monkeypatch.setattr(stream_mod.FanslyStreamDownloadManager, "_check_complete", ok, raising=False)
     downloaded = set()
     monkeypatch.setattr(filters, "get_media_ids_downloaded", lambda **kw: list(downloaded))
     monkeypatch.setattr(filters.separate, "seperate_avatars", lambda m: m)
@@ -766,7 +789,7 @@ def test_line_breaks_are_removed_from_header_and_cookie_values():
     assert all(not line.startswith("X-") for line in headers.split("\r\n"))
 
 
-@pytest.mark.parametrize("case", ["protected_dash", "empty_master", "manifest_404"])
+@pytest.mark.parametrize("case", ["protected_dash", "empty_master", "manifest_404", "manifest_403"])
 def test_unusable_stream_falls_back_to_the_direct_file(env, monkeypatch, case):
     raw = raw_media()
     if case == "protected_dash":
@@ -775,7 +798,8 @@ def test_unusable_stream_falls_back_to_the_direct_file(env, monkeypatch, case):
         bodies = {url: PROTECTED_MPD}
     else:
         url = variant(raw["media"], video.HLS_MIME)["locations"][0]["location"]
-        bodies = {url: EMPTY_MASTER} if case == "empty_master" else {}
+        bodies = {"empty_master": {url: EMPTY_MASTER}, "manifest_404": {},
+                  "manifest_403": {url: RuntimeError("403, message=Forbidden")}}[case]
     calls = []
 
     async def main_download(self, c, ele, username, model_id):
@@ -787,3 +811,96 @@ def test_unusable_stream_falls_back_to_the_direct_file(env, monkeypatch, case):
     assert asyncio.run(run_download(FakeSession(bodies), ele)) == ("Videos", 10)
     assert calls == [ele.url] and ele.url
     assert env.ffmpeg_runs == [] and files_in(env.out, env.temp) == []
+
+
+# ------------------------------------------------------------------ skipped segments (re-review)
+
+def make_clip_segments(tmp_path, name, rate, vf=None):
+    """1-second MPEG-TS segments of a 3-second clip at ``rate``, optionally filtered."""
+    seg_dir = tmp_path / name
+    seg_dir.mkdir()
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+           "-f", "lavfi", "-i", f"testsrc=size=160x120:rate={rate}:duration=3",
+           "-f", "lavfi", "-i", "sine=frequency=440:duration=3"]
+    if vf:
+        # keep the filter's timestamps: the encoder would round them to the rate
+        cmd += ["-vf", vf, "-fps_mode", "passthrough", "-enc_time_base:v", "filter"]
+    cmd += ["-c:v", "mpeg4", "-g", "10", "-c:a", "aac", "-shortest",
+            "-bsf:v", "dump_extra=freq=keyframe", "-f", "segment", "-segment_time", "1",
+            "-segment_format", "mpegts", f"{name}-%d.ts"]
+    subprocess.run(cmd, cwd=seg_dir, check=True, capture_output=True)
+    return {p.name: p.read_bytes() for p in sorted(seg_dir.glob(f"{name}-*.ts"))}
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("fault", ["half", "stall", "404"])
+def test_a_skipped_segment_fails_the_item(env, tmp_path, monkeypatch, fault):
+    # the middle of three 1-second segments: stops after half its bytes, stops
+    # right after its headers, or is missing. ffmpeg skips it and exits 0
+    monkeypatch.setattr(stream_mod, "get_chunk_timeout", lambda: 2)
+    segments = make_segments(tmp_path, "segment", "-bsf:v", "dump_extra=freq=keyframe")
+    assert len(segments) == 3
+    raw = raw_media()
+    with Server({}, slow_limit=40) as srv:
+        root = serve_hls(srv, raw, VIDEO_ONLY_MASTER, {"r2160": segments})
+        middle = f"{root}/r2160/segment-1.ts"
+        if fault == "404":
+            del srv.files[middle]
+        else:
+            srv.slow[middle] = fault
+        ele = make_ele(raw)
+        result = download_locally(ele)
+    assert result == ("skipped", 0)
+    assert files_in(env.out, env.temp) == []
+    assert env.marks == [] and len(env.ffmpeg_runs) == 1
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("clip", ["cfr", "ntsc_rounded", "variable_rate", "no_metadata"])
+def test_a_clean_copy_passes_the_skipped_segment_check(env, tmp_path, clip):
+    # guards against false failures, so it passes with or without the check
+    rate, vf = {
+        "cfr": ("10", None),
+        "ntsc_rounded": ("30000/1001", None),  # 29.97 fps; the metadata says 30 and 3.0 s
+        "variable_rate": ("30", "settb=1/600,setpts=(N+0.4*sin(N))/(30*TB)"),  # steps 0.020-0.047 s
+        "no_metadata": ("10", None),
+    }[clip]
+    segments = make_clip_segments(tmp_path, "segment", rate, vf)
+    raw = raw_media()
+    with Server({}) as srv:
+        serve_hls(srv, raw, VIDEO_ONLY_MASTER, {"r2160": segments})
+        if clip == "no_metadata":
+            set_duration(raw["media"], None)
+            assert video.expected_duration(raw["media"]) is None
+        ele = make_ele(raw)
+        result = download_locally(ele)
+    assert result[0] == "Videos" and result[1] > 0
+    assert files_in(env.out, env.temp) == [f"{ele.filename}.mp4"]
+    assert len(env.marks) == 1
+
+
+def test_skipped_segment_check_tolerances():
+    ten_min = [i / 30 for i in range(30 * 600)]
+    assert video.incomplete_reason(ten_min, None, 600.0) is None
+    assert video.incomplete_reason(ten_min, None, 602.0) is None  # metadata rounded up
+    assert video.incomplete_reason(ten_min, None, None) is None
+    # variable frame rate: uneven steps, and a frame held for 0.4 s
+    jitter = sorted(i / 30 + 0.4 / 30 * math.sin(i) for i in range(900))
+    held = [t if t < 10 else t + 0.4 for t in jitter]
+    assert video.incomplete_reason(jitter, None, 30.0) is None
+    assert video.incomplete_reason(held, None, 30.4) is None
+    # one 6-second segment lost in the middle of ten minutes
+    hole = [t for t in ten_min if not 300 <= t < 306]
+    assert "missing" in video.incomplete_reason(hole, None, 600.0)
+    assert "missing" in video.incomplete_reason(hole, None, None)
+    # 0.6 s lost part-way through a segment
+    assert "missing" in video.incomplete_reason([t for t in ten_min if not 300 <= t < 300.6])
+    # first or last segment lost: only the metadata length can tell
+    for cut in (ten_min[180:], ten_min[:-180]):
+        assert video.incomplete_reason(cut, None, None) is None
+        assert "covers" in video.incomplete_reason(cut, None, 600.0)
+    # a hole in separate audio, with whole video
+    audio = [i * 1024 / 44100 for i in range(int(600 * 44100 / 1024))]
+    assert "audio" in video.incomplete_reason(ten_min, [t for t in audio if not 300 <= t < 306])
+    assert video.incomplete_reason([], [], 600.0) == "the copy has no video or audio"
+    assert video.expected_duration(raw_media()["media"]) == pytest.approx(26.566667)

@@ -30,7 +30,7 @@ from ofscraper.sites.fansly import auth as fansly_auth
 from ofscraper.sites.fansly import headers as fansly_headers
 from ofscraper.sites.fansly import video as fansly_video
 from ofscraper.utils.cache.profile import set_profile_cache
-from ofscraper.utils.system.ffmpeg import get_ffmpeg
+from ofscraper.utils.system.ffmpeg import get_ffmpeg, get_ffprobe
 from ofscraper.utils.system.ffprobe import get_media_duration, verify_media_integrity
 from ofscraper.commands.scraper.actions.download.utils.chunk import get_chunk_timeout
 
@@ -92,6 +92,22 @@ def _run_process(proc, cmd, timeout):
     return p.returncode, stderr
 
 
+def _packet_times(ffprobe, path, stream):
+    """Packet times (seconds) of one stream, read without decoding."""
+    out = subprocess.run(
+        [str(ffprobe), "-v", "error", "-select_streams", stream,
+         "-show_entries", "packet=dts_time", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    times = []
+    for value in out.split():
+        try:
+            times.append(float(value.strip(",")))
+        except ValueError:
+            pass  # N/A
+    return times
+
+
 class FanslyStreamDownloadManager(DownloadManager):
     async def stream_download(self, c, ele, username, model_id):
         await common_globals.sem.acquire()
@@ -140,6 +156,7 @@ class FanslyStreamDownloadManager(DownloadManager):
             await self._run_ffmpeg(
                 url, temp, best.cookies, audio_url, stream_timeout(ele.duration)
             )
+            await self._check_complete(temp, ele)
             total = temp.stat().st_size
 
             if await self._check_forced_skip(ele, total) == 0:
@@ -169,14 +186,51 @@ class FanslyStreamDownloadManager(DownloadManager):
     async def _fetch_text(self, c, url, cookies):
         # HEADERS only: the CloudFront cookies must not be replaced by the
         # session's own (none for Fansly), and CDN requests are never signed
-        async with c.requests_async(
-            url=url, cookies=cookies or None, actions=[HEADERS]
-        ) as r:
-            if not r.ok:
-                raise fansly_video.StreamError(
-                    f"stream manifest request failed with status {r.status}"
-                )
-            return await r.text_()
+        try:
+            async with c.requests_async(
+                url=url, cookies=cookies or None, actions=[HEADERS]
+            ) as r:
+                if not r.ok:
+                    raise fansly_video.StreamError(
+                        f"stream manifest request failed with status {r.status}"
+                    )
+                return await r.text_()
+        except fansly_video.StreamError:
+            raise
+        except Exception as e:
+            # the session raises for statuses other than 404 (a 403 once the
+            # cookies expire, a 5xx); the direct file may still work
+            raise fansly_video.StreamError(
+                f"stream manifest request failed: {type(e).__name__}"
+            ) from e
+
+    async def _check_complete(self, temp, ele):
+        """Fail a copy that ffmpeg finished with a segment missing.
+
+        ffmpeg skips a segment it can't read and still exits 0, so the packet
+        times of the copy are checked for holes (see ``video.timeline``).
+        """
+        ffprobe = get_ffprobe()
+        if not ffprobe:
+            common_globals.log.warning(
+                f"{common_logs.get_medialog(ele)} ffprobe not found; "
+                "the stream copy can't be checked for skipped segments"
+            )
+            return
+        loop = asyncio.get_event_loop()
+        video_times, audio_times = [
+            await loop.run_in_executor(
+                common_globals.thread, partial(_packet_times, ffprobe, temp, stream)
+            )
+            for stream in ("v:0", "a:0")
+        ]
+        reason = fansly_video.incomplete_reason(
+            video_times,
+            audio_times,
+            fansly_video.expected_duration(fansly_video.raw_media(ele)),
+        )
+        if reason:
+            raise Exception(f"Fansly stream copy is incomplete: {reason}")
 
     async def _run_ffmpeg(self, url, temp, cookies, audio_url=None, timeout=None):
         cmd = fansly_video.ffmpeg_command(

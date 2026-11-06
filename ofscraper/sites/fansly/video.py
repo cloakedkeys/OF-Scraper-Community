@@ -11,6 +11,7 @@ The largest rendition wins; on a tie direct beats HLS, which beats DASH.
 
 import json
 import re
+import statistics
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urljoin, urlparse
 
@@ -245,6 +246,60 @@ def best_rendition(text: str, base_url: str) -> tuple:
 def best_rendition_url(text: str, base_url: str) -> str:
     """URL of the largest rendition. A plain media playlist is used as it is."""
     return best_rendition(text, base_url)[0]
+
+
+def expected_duration(media):
+    """The video's length in seconds from Fansly's metadata, or None."""
+    for obj in [media or {}] + list((media or {}).get("variants") or []):
+        try:
+            seconds = float(_meta(obj).get("duration") or 0)
+        except (TypeError, ValueError):
+            seconds = 0
+        if seconds > 0:
+            return seconds
+    return None
+
+
+# ffmpeg's HLS and DASH readers skip a segment they can't read (a 404, or a
+# connection that stops part-way) and still exit 0, leaving a hole in the
+# timestamps. A hole is a step between packets longer than both GAP_MIN and
+# three normal steps; a clean stream, even one with a variable frame rate, has
+# none. The copy must also cover the metadata length within
+# max(SHORT_MIN, SHORT_SHARE of it), which catches a lost first or last segment.
+GAP_MIN = 0.5
+SHORT_MIN = 1.0
+SHORT_SHARE = 0.005
+
+
+def timeline(times) -> tuple:
+    """(seconds covered, seconds missing in holes) for one stream's packet times."""
+    ts = sorted(times)
+    if len(ts) < 2:
+        return 0.0, 0.0
+    steps = [b - a for a, b in zip(ts, ts[1:])]
+    step = statistics.median(steps)
+    limit = max(GAP_MIN, 3 * step)
+    missing = sum(d - step for d in steps if d > limit)
+    return ts[-1] - ts[0] + step - missing, missing
+
+
+def incomplete_reason(video_times, audio_times=None, expected=None):
+    """Why a stream copy is incomplete, or None when it looks whole.
+
+    ``expected`` is the metadata length; without it only holes are found.
+    """
+    tracks = [(name, times) for name, times in (("video", video_times), ("audio", audio_times))
+              if times and len(times) >= 2]
+    if not tracks:
+        return "the copy has no video or audio"
+    for name, times in tracks:
+        missing = timeline(times)[1]
+        if missing:
+            return f"{missing:.1f}s of {name} is missing (a segment was skipped)"
+    covered = timeline(tracks[0][1])[0]
+    if expected and covered < expected - max(SHORT_MIN, SHORT_SHARE * expected):
+        return f"the copy covers {covered:.1f}s, but the video is {expected:.1f}s"
+    return None
 
 
 _PROTECTION = re.compile(r"<\s*(?:[\w-]+:)?ContentProtection\b")

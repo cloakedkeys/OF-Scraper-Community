@@ -121,16 +121,14 @@ async def download(c, ele, model_id, username):
             data = await FanslyStreamDownloadManager().stream_download(
                 c, ele, username, model_id
             )
-        if data is not None:
-            pass
-        elif ele.url:
+        if data is None and ele.url:
             data = await MainDownloadManager().main_download(
                 c,
                 ele,
                 username,
                 model_id,
             )
-        elif ele.mpd:
+        elif data is None and ele.mpd:
             data = await AltDownloadManager().alt_download(c, ele, username, model_id)
         common_globals.log.debug(f"{get_medialog(ele)} Download finished")
         return data
