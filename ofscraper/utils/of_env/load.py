@@ -7,6 +7,21 @@ import yaml
 log = logging.getLogger("shared")
 
 
+def _env_text(value):
+    """
+    Objects and lists are stored as JSON so settings that expect JSON can
+    parse them; str() would give Python syntax. YAML-only types inside them
+    (dates, sets, binary) become text, and anything json can't write at all,
+    such as a list that contains itself, keeps the old str() form.
+    """
+    if isinstance(value, (dict, list)):
+        try:
+            return json.dumps(value, default=str)
+        except (TypeError, ValueError):
+            pass
+    return str(value)
+
+
 def load_env_files(values: list[str] | None):
     """
     Loads environment variables from a list of file paths.
@@ -55,17 +70,8 @@ def load_env_files(values: list[str] | None):
                 data = dotenv_values(dotenv_path=file_path)
 
             if data:
-                # Update os.environ, ensuring all keys and values are strings.
-                # Objects and lists are stored as JSON so settings that expect
-                # JSON can parse them; str() would give Python syntax.
-                os.environ.update(
-                    {
-                        str(k): (
-                            json.dumps(v) if isinstance(v, (dict, list)) else str(v)
-                        )
-                        for k, v in data.items()
-                    }
-                )
+                # Update os.environ, ensuring all keys and values are strings
+                os.environ.update({str(k): _env_text(v) for k, v in data.items()})
                 log.info(
                     f"Successfully loaded environment variables from '{file_path}'"
                 )
