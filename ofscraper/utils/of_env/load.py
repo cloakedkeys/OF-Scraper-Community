@@ -55,8 +55,17 @@ def load_env_files(values: list[str] | None):
                 data = dotenv_values(dotenv_path=file_path)
 
             if data:
-                # Update os.environ, ensuring all keys and values are strings
-                os.environ.update({str(k): str(v) for k, v in data.items()})
+                # Update os.environ, ensuring all keys and values are strings.
+                # Objects and lists are stored as JSON so settings that expect
+                # JSON can parse them; str() would give Python syntax.
+                os.environ.update(
+                    {
+                        str(k): (
+                            json.dumps(v) if isinstance(v, (dict, list)) else str(v)
+                        )
+                        for k, v in data.items()
+                    }
+                )
                 log.info(
                     f"Successfully loaded environment variables from '{file_path}'"
                 )
