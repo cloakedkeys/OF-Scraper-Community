@@ -172,6 +172,11 @@ class download_session(sessionManager):
             forbidden_sleeper=forbidden_sleeper,
             **kwargs,
         )
+        # A read timeout of 0 means no limit (None). aiohttp reads 0 that way,
+        # but httpx reads 0 as "fail at once". Set here, after the base class:
+        # a None passed to it means "use OF_READ_TIMEOUT".
+        if self._read_timeout == 0:
+            self._read_timeout = None
 
     @contextlib.asynccontextmanager
     async def requests_async(
