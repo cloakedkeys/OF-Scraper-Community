@@ -502,6 +502,21 @@ def test_fansly_default_database_path_is_unchanged(fansly, path_env, monkeypatch
     assert path == path_env / "cfg" / "main_profile" / ".data" / str(CREATOR_ID) / "user_data.db"
 
 
+@pytest.mark.parametrize(
+    "fmt", ["{configpath}/{profile}/.data/{model_username}", "ABS/{model_username}/meta"]
+)
+def test_fansly_database_without_a_site_placeholder_is_separate(fansly, path_env, monkeypatch,
+                                                                 fmt):
+    # a format with nothing site-specific resolves to one folder for both sites
+    fmt = fmt.replace("ABS", str(path_env / "abs"))
+    monkeypatch.setattr(placeholder.data, "get_metadata", lambda *a, **k: fmt)
+    fansly_db = placeholder.databasePlaceholder().databasePathHelper(CREATOR_ID, CREATOR)
+    fansly.site = "onlyfans"
+    onlyfans_db = placeholder.databasePlaceholder().databasePathHelper(CREATOR_ID, CREATOR)
+    assert fansly_db != onlyfans_db
+    assert fansly_db == onlyfans_db.parent / "Fansly" / "user_data.db"
+
+
 def test_saving_files_message_shows_the_fansly_folder(fansly, path_env, monkeypatch):
     from ofscraper.commands.scraper.actions.download import download
 

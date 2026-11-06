@@ -2,6 +2,7 @@ import logging
 import os
 import pathlib
 import re
+import string
 import arrow
 
 import ofscraper.sites as sites
@@ -30,6 +31,24 @@ def site_save_location():
     if sites.is_fansly():
         return str(pathlib.Path(location, sites.site_name()))
     return location
+
+
+# Placeholders whose value differs between OnlyFans and Fansly. {model_id} counts:
+# Fansly ids are 18-digit snowflakes, OnlyFans ids are far shorter.
+_SITE_SPECIFIC_FIELDS = {
+    "save_location", "savelocation", "root", "site_name", "sitename",
+    "model_id", "modelid",
+}
+
+
+def _is_site_specific(fmt):
+    """True when ``fmt`` resolves to a different path for each site."""
+    fields = {
+        name.split(".")[0].split("[")[0]
+        for _, name, _, _ in string.Formatter().parse(fmt)
+        if name
+    }
+    return bool(fields & _SITE_SPECIFIC_FIELDS)
 
 
 def default_media_root():
@@ -134,7 +153,12 @@ class databasePlaceholder(basePlaceholder):
         log.trace(
             f"modelid:{model_id}  database placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
         )
-        formatStr = data.get_metadata().format(**self._variables)
+        metadata_format = data.get_metadata()
+        formatStr = metadata_format.format(**self._variables)
+        if sites.is_fansly() and not _is_site_specific(metadata_format):
+            # e.g. {configpath}/{profile}/.data/{model_username} resolves to the
+            # same folder on both sites; keep Fansly rows out of the OnlyFans db
+            formatStr = pathlib.Path(formatStr, sites.site_name())
         data_path = pathlib.Path(formatStr, "user_data.db")
         data_path = pathlib.Path(os.path.normpath(data_path))
         self._metadata = data_path
