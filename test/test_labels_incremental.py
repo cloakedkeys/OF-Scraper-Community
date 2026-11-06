@@ -251,6 +251,54 @@ def test_marks_are_dropped_when_saving_media_rows_fails(monkeypatch, fake_cache)
     assert 1 not in labels._finished_labels
 
 
+def test_marks_are_dropped_when_the_pass_is_cancelled(monkeypatch, fake_cache):
+    import ofscraper.data.posts.post as post
+
+    async def cancelled_tasks(model_id, username, ele, c=None):
+        labels.mark_label_finished(model_id, 7)
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(post, "process_tasks", cancelled_tasks)
+
+    async def run():
+        return await post.process_areas(SimpleNamespace(name="creator"), 1, "creator")
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(run())
+    assert 1 not in labels._finished_labels
+    # a later pass in the same process doesn't commit the stale mark
+    labels.commit_finished_labels(1)
+    assert fake_cache.data.get(COMPLETE) is None
+
+
+@pytest.mark.parametrize("username, tracked", [("creator", True), (None, False)])
+def test_only_runs_with_a_username_track_finished_scans(monkeypatch, username, tracked):
+    seen = {}
+
+    async def fake_names(model_id, c=None):
+        return [{"id": 7, "name": "favourites"}]
+
+    async def fake_known(labels_, model_id, username):
+        return {}
+
+    async def fake_posts(labels_, model_id, c=None, known=None, track=False):
+        seen["track"] = track
+        return []
+
+    monkeypatch.setattr(labels, "get_labels_data", fake_names)
+    monkeypatch.setattr(labels, "get_known_label_posts", fake_known)
+    monkeypatch.setattr(labels, "get_posts_for_labels", fake_posts)
+    monkeypatch.setattr(labels, "update_check", lambda *a, **k: None)
+    monkeypatch.setattr(labels.settings, "get_settings", lambda: SimpleNamespace(label=None))
+
+    async def run():
+        # get_labels is wrapped by @run; inside a running loop it returns the coroutine
+        return await labels.get_labels(1, c=None, username=username)
+
+    asyncio.run(run())
+    assert seen["track"] is tracked
+
+
 def test_missing_media_filter_matches_the_timeline(monkeypatch):
     rows = [
         {"media_id": 1, "post_id": 10, "media_type": "videos", "downloaded": 0, "unlocked": 1},

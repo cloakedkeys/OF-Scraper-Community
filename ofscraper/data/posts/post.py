@@ -470,9 +470,12 @@ async def process_areas(ele, model_id, username, c=None):
         labels_api.commit_finished_labels(model_id)
         return postcollection
     except Exception as E:
-        labels_api.discard_finished_labels(model_id)
         log.traceback_(E)
         log.traceback_(traceback.format_exc())
+    finally:
+        # anything not committed above (an error, or a cancelled pass) is
+        # dropped, so a later pass in the same process can't trust it
+        labels_api.discard_finished_labels(model_id)
 
 
 def process_single_task(func):
