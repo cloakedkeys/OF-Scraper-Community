@@ -21,6 +21,12 @@ from ofscraper.scripts.naming_script import naming_script
 log = logging.getLogger("shared")
 
 
+def default_media_root():
+    """Save location; Fansly profiles save under ``<save location>/Fansly``."""
+    root = pathlib.Path(common_paths.get_save_location())
+    return root / sites.site_name() if sites.is_fansly() else root
+
+
 class basePlaceholder:
     def __init__(self) -> None:
         self._ele = None
@@ -244,7 +250,7 @@ class Placeholders(basePlaceholder):
         ele = self._ele
         username = ele.username
         model_id = ele.model_id
-        root = pathlib.Path(root or common_paths.get_save_location())
+        root = pathlib.Path(root or default_media_root())
         await self.add_common_variables(ele, username, model_id)
         globals().update(self._variables)
         log.trace(
@@ -450,7 +456,7 @@ class Textholders(basePlaceholder):
         ele = self._ele
         username = ele.username
         model_id = ele.model_id
-        root = pathlib.Path(root or common_paths.get_save_location())
+        root = pathlib.Path(root or default_media_root())
         await self.add_common_variables(ele, username, model_id)
         globals().update(self._variables)
         log.trace(
