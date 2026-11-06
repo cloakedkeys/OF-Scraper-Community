@@ -24,6 +24,13 @@ def test_formatters_keep_line_with_stray_closing_tag(formatter):
     assert "done" in out and "here" in out
 
 
+def test_fallback_removes_escapes_like_rich_does():
+    fmt = r" \[%(module)s:%(lineno)d]  %(message)s"
+    out = log_class.LogFileFormatter(fmt).format(_record(STRAY))
+    assert "\\[" not in out
+    assert out.startswith(" [")
+
+
 def test_formatters_still_strip_valid_markup():
     out = log_class.LogFileFormatter("%(message)s").format(
         _record("[bold]ok[/bold] fine")
@@ -55,6 +62,13 @@ def test_terminal_handler_keeps_line_with_stray_closing_tag():
     out, raised = _rich_output(STRAY)
     assert not raised
     assert STRAY in out
+
+
+def test_terminal_fallback_removes_escapes():
+    out, raised = _rich_output(r"\[loc] " + STRAY)
+    assert not raised
+    assert "[loc] " + STRAY in out
+    assert "\\[" not in out
 
 
 def test_terminal_handler_still_renders_valid_markup():

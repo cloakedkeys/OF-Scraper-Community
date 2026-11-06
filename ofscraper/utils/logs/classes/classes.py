@@ -8,13 +8,19 @@ from rich.text import Text
 import ofscraper.utils.logs.utils.sensitive as sensitive
 
 
+def _unescape(t: str) -> str:
+    # What Rich would have done with "\[" escapes
+    return re.sub(r"\\(\[)", r"\1", t)
+
+
 def strip_markup(t: str) -> str:
-    """Plain text of a Rich-markup string; the text unchanged if the markup is
-    broken (e.g. a stray closing tag), so the line is still logged."""
+    """Plain text of a Rich-markup string; the text as is (escapes removed) if
+    the markup is broken (e.g. a stray closing tag), so the line is still
+    logged."""
     try:
         return Text.from_markup(t).plain
     except MarkupError:
-        return t
+        return _unescape(t)
 
 
 class SafeRichHandler(RichHandler):
@@ -25,7 +31,7 @@ class SafeRichHandler(RichHandler):
         try:
             return super().render_message(record, message)
         except MarkupError:
-            return Text(message)
+            return Text(_unescape(message))
 
 
 class TraceBackOnly(logging.Filter):
