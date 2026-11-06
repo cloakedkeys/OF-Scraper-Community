@@ -21,10 +21,6 @@ import ofscraper.utils.logs.utils.sensitive as sensitive
 log = logging.getLogger("shared")
 
 
-class NotLoggedIn(Exception):
-    """/me answered, but with isAuth false."""
-
-
 def scrape_user():
     with manager.Manager.session.get_ofsession() as c:
         return _scraper_user_helper(c)
@@ -34,6 +30,8 @@ def _scraper_user_helper(c):
     try:
         with c.requests(of_env.getattr("meEP")) as r:
             data = r.json_()
+            if not data["isAuth"]:
+                raise NotLoggedIn("OnlyFans says this session isn't logged in")
             if data["isAuth"]:
                 sensitive.add_sensitive_pattern(data["id"], "userid")
                 sensitive.add_sensitive_pattern(
@@ -44,8 +42,6 @@ def _scraper_user_helper(c):
                     f"{data['name']} | {data['name']}|\\b{data['name']}\\b",
                     "name",
                 )
-            else:
-                raise NotLoggedIn("OnlyFans says this session isn't logged in")
 
     except Exception as E:
         log.traceback_(E)
@@ -68,3 +64,7 @@ def parse_subscriber_count():
             log.traceback_(E)
             log.traceback_(traceback.format_exc())
             raise E
+
+
+class NotLoggedIn(Exception):
+    """/me answered, but with isAuth false."""
