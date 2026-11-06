@@ -51,15 +51,19 @@ def unavailable_message(e: Exception) -> str | None:
             else "connection failed"
         )
         return f"Couldn't reach {_host(e)} ({reason}). Check your connection or VPN."
+    if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
+        return f"{_host(e)} is rate limiting requests. Try again later."
     if isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500:
         return (
             f"{_host(e)} returned {e.response.status_code}: the server had an "
             "error. Try again later."
         )
     if isinstance(e, json.JSONDecodeError):
+        # the parse error doesn't say which request it came from
         return (
-            "Got a reply that isn't JSON, maybe a captive portal or a VPN block "
-            "page. Check your connection or VPN."
+            "Got a reply that isn't JSON from OnlyFans or the dynamic rule host. "
+            "It may be a captive portal or a VPN block page, or the server may "
+            "be having problems. Check your connection or VPN."
         )
     return None
 

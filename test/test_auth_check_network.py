@@ -72,6 +72,7 @@ TIMEOUT = httpx.ConnectTimeout(
             ),
             "Couldn't reach onlyfans.com (connection failed)",
         ),
+        (_status_error(429), "onlyfans.com is rate limiting requests"),
         (_status_error(500), "onlyfans.com returned 500: the server had an error"),
         (_status_error(502), "onlyfans.com returned 502: the server had an error"),
         (
