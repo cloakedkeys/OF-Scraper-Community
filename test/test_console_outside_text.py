@@ -128,6 +128,27 @@ def test_db_table_shows_filenames_and_paths_with_brackets(monkeypatch):
     assert r"D:\media\[old]" in out
 
 
+@pytest.mark.parametrize(
+    "save,dirformat,filled",
+    [
+        (r"D:\media", "[{model_username}]", "[alice]"),
+        (r"D:\media\[2024]", "{model_username}", "alice"),
+        (r"D:\media", r"[Old] x\[{date}]", r"[Old] x\[{date}]"),
+        ("/data/[archive]/OF", "{model_username}", "alice"),
+        (r"D:\media", "{model_username}", "alice"),
+    ],
+)
+def test_saving_files_to_line(monkeypatch, save, dirformat, filled):
+    import ofscraper.commands.scraper.actions.download.download as download
+
+    monkeypatch.setattr(download.common_paths, "get_save_location", lambda: save)
+    monkeypatch.setattr(download.config_data, "get_dirformat", lambda: dirformat)
+    monkeypatch.setattr(download.config_data, "get_fileformat", lambda: "{filename}.{ext}")
+    con, buf = _console()
+    con.print(download.save_path_str(username="alice", model_id=1))
+    want = str(Path(save, filled, "{filename}.{ext}"))
+    assert buf.getvalue().strip() == f"Saving files to {want}"
+
 def test_auth_file_path_with_brackets(monkeypatch):
     con, buf = _console()
     monkeypatch.setattr(auth_warning, "console", con)
