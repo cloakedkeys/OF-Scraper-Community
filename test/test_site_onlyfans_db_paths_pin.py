@@ -6,6 +6,7 @@ existed. They must keep passing unchanged.
 
 import asyncio
 import contextlib
+import copy
 import pathlib
 import sqlite3
 from types import SimpleNamespace
@@ -14,7 +15,10 @@ import pytest
 
 import ofscraper.classes.of.posts as posts_
 import ofscraper.classes.placeholder as placeholder
+import ofscraper.data.posts.post as post
 import ofscraper.db.operations as operations
+import ofscraper.utils.settings as settings
+from ofscraper.commands.scraper.actions.download import download
 from ofscraper.db.operations_.media import batch_mediainsert
 
 MODEL_ID = 12345
@@ -202,3 +206,117 @@ def test_onlyfans_media_dir_is_unchanged(path_env, cls):
     temp_root = path_env / "tmp"
     path = asyncio.run(holder.getmediadir(root=temp_root, create=False))
     assert pathlib.Path(path) == temp_root / USERNAME / "Timeline" / "Videos"
+
+
+# metadata formats a user may set; the database lands where it always did
+@pytest.mark.parametrize(
+    "fmt,expected",
+    [
+        ("{configpath}/{profile}/.data/{model_id}", ("cfg", "main_profile", ".data", str(MODEL_ID))),
+        ("{save_location}/{model_username}/metadata", ("data", USERNAME, "metadata")),
+        ("{root}/{model_username}/metadata", ("data", USERNAME, "metadata")),
+    ],
+)
+def test_onlyfans_database_path_is_unchanged(path_env, monkeypatch, fmt, expected):
+    monkeypatch.setattr(placeholder.data, "get_metadata", lambda *a, **k: fmt)
+    path = placeholder.databasePlaceholder().databasePathHelper(MODEL_ID, USERNAME)
+    assert path == path_env.joinpath(*expected, "user_data.db")
+
+
+def test_onlyfans_saving_files_message_is_unchanged(path_env, monkeypatch):
+    monkeypatch.setattr(download.config_data, "get_dirformat", lambda *a, **k: "{model_username}/x")
+    monkeypatch.setattr(download.config_data, "get_fileformat", lambda *a, **k: "f.{ext}")
+    shown = download.save_path_str(USERNAME, MODEL_ID)
+    assert str(path_env / "data" / USERNAME / "x" / "f.{ext}") in shown
+    assert "Fansly" not in shown
+
+
+# ------------------------------------------------------------------ routing
+
+
+@pytest.fixture
+def onlyfans(monkeypatch):
+    real = settings.get_settings()
+
+    class Stub(SimpleNamespace):
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    stub = Stub(site="onlyfans", after=None, post_id=None, timeline_strict=False)
+    monkeypatch.setattr(settings, "get_settings", lambda: stub)
+    return stub
+
+
+def test_onlyfans_preview_post_keeps_preview_in_the_database(tmp_db):
+    item = dict(TIMELINE_POST, id=1002, preview=[2001])
+    item["media"] = [TIMELINE_POST["media"][0]]
+
+    async def run():
+        await operations.table_init_create(model_id=MODEL_ID, username=USERNAME)
+        p = posts_.Post(item, MODEL_ID, USERNAME, "Timeline")
+        assert [m.preview for m in p.all_media] == [1]
+        await batch_mediainsert(p.all_media, model_id=MODEL_ID, username=USERNAME, downloaded=False)
+
+    asyncio.run(run())
+    with contextlib.closing(sqlite3.connect(tmp_db)) as conn:
+        rows = conn.execute("SELECT media_id, post_id, preview FROM medias").fetchall()
+    assert rows == [(2001, 1002, 1)]
+
+
+def test_onlyfans_run_calls_the_onlyfans_fetchers(onlyfans, tmp_db, monkeypatch):
+    calls = []
+
+    def record(name, result):
+        async def fetch(*args, **kwargs):
+            calls.append(name)
+            return copy.deepcopy(result)
+
+        return fetch
+
+    async def fansly_fetch(*args, **kwargs):
+        raise AssertionError("a Fansly fetcher ran on an OnlyFans run")
+
+    def fail(e):
+        raise e if isinstance(e, BaseException) else AssertionError(e)
+
+    monkeypatch.setattr(post.log, "traceback_", fail, raising=False)
+    monkeypatch.setattr(post.timeline, "get_timeline_posts", record("timeline", [TIMELINE_POST]))
+    monkeypatch.setattr(post.messages, "get_messages", record("messages", [MESSAGE]))
+    monkeypatch.setattr(post.paid, "get_paid_posts", record("paid", [MESSAGE]))
+    for name in ("get_timeline_posts", "get_messages", "get_paid_posts"):
+        monkeypatch.setattr(post.fansly_scrape, name, fansly_fetch)
+
+    async def run():
+        await operations.table_init_create(model_id=MODEL_ID, username=USERNAME)
+        timeline_posts, _ = await post.process_timeline_posts(MODEL_ID, USERNAME, None)
+        messages_, _ = await post.process_messages(MODEL_ID, USERNAME, None)
+        paid_, _ = await post.process_paid_post(MODEL_ID, USERNAME, None)
+        return timeline_posts, messages_, paid_
+
+    timeline_posts, messages_, paid_ = asyncio.run(run())
+    assert calls == ["timeline", "messages", "paid"]
+    assert [p.id for p in timeline_posts] == [1001]
+    assert [p.id for p in messages_] == [3001]
+    assert [p.id for p in paid_] == [3001]
+
+
+def test_onlyfans_run_keeps_every_area(onlyfans, monkeypatch):
+    called = []
+
+    async def fake(name):
+        called.append(name)
+        return [], name
+
+    names = ["paid_post", "messages", "timeline_posts", "pinned_posts", "archived_posts",
+             "highlights", "stories", "labels", "streamed_posts"]
+    for name in names:
+        monkeypatch.setattr(post, f"process_{name}", lambda *a, _n=name, **k: fake(_n))
+    monkeypatch.setattr(post, "process_profile", lambda *a, **k: fake("profile"))
+    monkeypatch.setattr(post, "get_final_posts_area", lambda: [
+        "Profile", "Purchased", "Messages", "Pinned", "Timeline", "Archived", "Highlights",
+        "Stories", "Labels", "Streams"])
+    monkeypatch.setattr(post, "get_like_area", lambda: [])
+    monkeypatch.setattr(post, "get_download_area", lambda: [])
+    monkeypatch.setattr(post.progress_utils, "setup_live", lambda *a, **k: contextlib.nullcontext())
+    asyncio.run(post.process_tasks(MODEL_ID, USERNAME, SimpleNamespace(active=True)))
+    assert sorted(called) == sorted(names + ["profile"])

@@ -477,3 +477,69 @@ def test_fansly_files_go_under_a_fansly_folder(fansly, path_env, cls):
     # an explicit root (the temp folder) is left alone
     path = asyncio.run(holder.getmediadir(root=path_env / "tmp", create=False))
     assert pathlib.Path(path) == path_env / "tmp" / CREATOR / "Timeline" / "Videos"
+
+
+# ------------------------------------------------------------------ review fixes
+
+
+@pytest.mark.parametrize(
+    "fmt", ["{save_location}/{model_username}/metadata", "{root}/{model_username}/metadata"]
+)
+def test_fansly_database_is_not_the_onlyfans_one(fansly, path_env, monkeypatch, fmt):
+    # the same username on both sites must not share a user_data.db
+    monkeypatch.setattr(placeholder.data, "get_metadata", lambda *a, **k: fmt)
+    fansly_db = placeholder.databasePlaceholder().databasePathHelper(CREATOR_ID, CREATOR)
+    fansly.site = "onlyfans"
+    onlyfans_db = placeholder.databasePlaceholder().databasePathHelper(CREATOR_ID, CREATOR)
+    assert fansly_db == path_env / "data" / "Fansly" / CREATOR / "metadata" / "user_data.db"
+    assert onlyfans_db == path_env / "data" / CREATOR / "metadata" / "user_data.db"
+
+
+def test_fansly_default_database_path_is_unchanged(fansly, path_env, monkeypatch):
+    monkeypatch.setattr(placeholder.data, "get_metadata",
+                        lambda *a, **k: "{configpath}/{profile}/.data/{model_id}")
+    path = placeholder.databasePlaceholder().databasePathHelper(CREATOR_ID, CREATOR)
+    assert path == path_env / "cfg" / "main_profile" / ".data" / str(CREATOR_ID) / "user_data.db"
+
+
+def test_saving_files_message_shows_the_fansly_folder(fansly, path_env, monkeypatch):
+    from ofscraper.commands.scraper.actions.download import download
+
+    monkeypatch.setattr(download.config_data, "get_dirformat", lambda *a, **k: "{model_username}/x")
+    monkeypatch.setattr(download.config_data, "get_fileformat", lambda *a, **k: "f.{ext}")
+    shown = download.save_path_str(CREATOR, CREATOR_ID)
+    assert str(path_env / "data" / "Fansly" / CREATOR / "x" / "f.{ext}") in shown
+
+
+def priced(item_id, dollars):
+    flag = {"metadata": json.dumps({"1": json.dumps({"price": dollars * 1000})})}
+    return {"id": item_id, "permissions": {"permissionFlags": [flag]}}
+
+
+def test_unpriced_bundle_counts_every_member():
+    bundle = {"id": "b1"}
+    pairs = [(priced("a1", 1), bundle), (priced("a2", 2), bundle), (priced("a3", 3), bundle)]
+    assert normalize._price(pairs) / 1000 == 6.0
+
+
+def test_priced_bundle_counts_once():
+    bundle = priced("b1", 5)
+    pairs = [(priced("a1", 1), bundle), (priced("a2", 2), bundle), (priced("a3", 3), None)]
+    assert normalize._price(pairs) / 1000 == 8.0
+
+
+def test_following_stops_when_a_page_repeats(fansly):
+    # a server that ignores offset returns the same full page every time
+    page = [{"accountId": str(100000000000000300 + i)} for i in range(api.FOLLOWING_LIMIT)]
+    c = FakeSession(lambda path, query: envelope(page))
+    out = asyncio.run(api.following_ids(c, "1"))
+    assert out == [p["accountId"] for p in page]
+    assert len(c.urls) == 2
+
+
+def test_groups_stop_when_a_page_repeats(fansly):
+    data = [{"groupId": str(100000000000000400 + i)} for i in range(api.GROUPS_LIMIT)]
+    c = FakeSession(lambda path, query: envelope({"data": data}))
+    pages = asyncio.run(api.groups(c))
+    assert len(pages) == 1
+    assert len(c.urls) == 2

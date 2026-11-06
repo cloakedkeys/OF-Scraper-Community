@@ -55,13 +55,19 @@ async def following_ids(c, my_account_id, limit=None):
     limit = limit or FOLLOWING_LIMIT
     out = []
     offset = 0
+    previous = None
     for _ in range(MAX_PAGES):
         page = await get_json(
             c,
             f"account/{my_account_id}/following?before=0&after=0&limit={limit}&offset={offset}",
         )
         page = page or []
-        out.extend(str(x["accountId"]) for x in page if x.get("accountId"))
+        ids = [str(x["accountId"]) for x in page if x.get("accountId")]
+        # a server that ignores offset returns the same page again
+        if ids and ids == previous:
+            break
+        previous = ids
+        out.extend(ids)
         if len(page) < limit:
             break
         offset += limit
@@ -135,6 +141,7 @@ async def groups(c, limit=None):
     limit = limit or GROUPS_LIMIT
     pages = []
     offset = 0
+    previous = None
     for _ in range(MAX_PAGES):
         page = await get_json(
             c,
@@ -142,8 +149,14 @@ async def groups(c, limit=None):
             f"&search=&limit={limit}&offset={offset}",
         )
         page = page or {}
+        data = page.get("data") or []
+        ids = [str(x.get("groupId")) for x in data]
+        # a server that ignores offset returns the same page again
+        if ids and ids == previous:
+            break
+        previous = ids
         pages.append(page)
-        if len(page.get("data") or []) < limit:
+        if len(data) < limit:
             break
         offset += limit
     return pages

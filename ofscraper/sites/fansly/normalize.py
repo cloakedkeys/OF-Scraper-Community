@@ -235,16 +235,16 @@ def missing_account_media_ids(response):
 
 
 def _price(pairs):
+    """A priced bundle counts once; an unpriced bundle counts each member."""
     total = 0
     counted = set()
     for account_media, bundle in pairs:
         if bundle is not None:
-            if bundle["id"] in counted:
-                continue
-            counted.add(bundle["id"])
             bundle_price = price_mills(bundle)
             if bundle_price:
-                total += bundle_price
+                if bundle["id"] not in counted:
+                    counted.add(bundle["id"])
+                    total += bundle_price
                 continue
         total += price_mills(account_media)
     return total

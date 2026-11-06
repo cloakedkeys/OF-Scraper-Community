@@ -21,10 +21,20 @@ from ofscraper.scripts.naming_script import naming_script
 log = logging.getLogger("shared")
 
 
+def site_save_location():
+    """Save location; Fansly runs use ``<save location>/Fansly``.
+
+    OnlyFans gets the configured value unchanged (same type, no Path round trip).
+    """
+    location = common_paths.get_save_location()
+    if sites.is_fansly():
+        return str(pathlib.Path(location, sites.site_name()))
+    return location
+
+
 def default_media_root():
     """Save location; Fansly profiles save under ``<save location>/Fansly``."""
-    root = pathlib.Path(common_paths.get_save_location())
-    return root / sites.site_name() if sites.is_fansly() else root
+    return pathlib.Path(site_save_location())
 
 
 class basePlaceholder:
@@ -33,14 +43,17 @@ class basePlaceholder:
 
     def create_variables_base(self):
         my_id, my_username = me.parse_user()
+        # {save_location} and {root} share the media folder's site root, so a
+        # metadata path built from them can't reach an OnlyFans user_data.db
+        save_location = site_save_location()
         self._variables = {
             "config_path": common_paths.get_config_home(),
             "profile": profile_data.get_active_profile(),
             "site_name": sites.site_name(),
-            "save_location": common_paths.get_save_location(),
+            "save_location": save_location,
             "my_id": my_id,
             "my_username": my_username,
-            "root": pathlib.Path((common_paths.get_save_location())),
+            "root": pathlib.Path((save_location)),
         }
 
     def async_wrapper(f):
