@@ -94,7 +94,9 @@ def test_audio_pssh_with_regex_characters_is_masked():
 
     import ofscraper.classes.of.media as media
 
-    pssh = "AAAAW3Bzc2gAAA+/AAAA=="  # base64, starts a regex quantifier at "+"
+    # base64 with "+": as a raw regex "A+" means "one or more A", so the
+    # value didn't match itself and was logged in full
+    pssh = "AAAAW3Bzc2gAAA+/AAAA=="
 
     async def run():
         loop = asyncio.get_running_loop()
@@ -117,6 +119,40 @@ def test_audio_pssh_with_regex_characters_is_masked():
     out = formatted(LogFileFormatter(), f"license request for {pssh}")
     assert pssh not in out and "pssh_code" in out
     assert "LOGGING ERROR" not in out
+
+
+def me_response(username, name):
+    import contextlib
+    from types import SimpleNamespace
+
+    data = {"isAuth": True, "id": 123456789, "username": username, "name": name}
+
+    class FakeSession:
+        @contextlib.contextmanager
+        def requests(self, url):
+            yield SimpleNamespace(json_=lambda: data)
+
+    return FakeSession()
+
+
+@pytest.mark.parametrize("name", ["Jane (VIP)", "A+B", "Jane (VIP", "*Star*", "Plain Name"])
+def test_display_name_with_symbols_is_masked(name):
+    import ofscraper.data.api.me as me
+
+    me._scraper_user_helper(me_response("plainuser1", name))
+    out = formatted(LogFileFormatter(), f"hello {name} and plainuser1 here")
+    assert name not in out
+    assert "plainuser1" not in out
+    assert "LOGGING ERROR" not in out
+
+
+def test_username_still_masked_only_as_a_whole_word():
+    import ofscraper.data.api.me as me
+
+    me._scraper_user_helper(me_response("ann", "Ann Example"))
+    out = formatted(LogFileFormatter(), "ann is here; channel stays")
+    assert "channel stays" in out  # "ann" inside a longer word is left alone
+    assert not out.endswith("ann is here; channel stays")
 
 
 def test_empty_sess_registers_nothing(fake_auth):
