@@ -12,6 +12,9 @@ def check_auth():
     log.info("checking auth status")
     while status != "UP":
         status = init.getstatus()
+        if status == "NETWORK":
+            # the auth may be fine, so don't ask for it again
+            raise SystemExit(1)
         if status != "UP":
             log.info("Auth Failed")
             make.make_auth(auth=auth_file.read_auth())
