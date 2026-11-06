@@ -6,6 +6,8 @@ which is truthy (#174, item 4). For 36 keys the bare name is also the
 documented variable the loader reads, so this hit documented settings too.
 """
 
+import logging
+
 import pytest
 
 import ofscraper.utils.of_env.of_env as of_env
@@ -38,6 +40,19 @@ def test_bad_value_falls_back_to_the_configured_value(monkeypatch):
     configured = of_env.getattr("DOWNLOAD_NUM_TRIES")
     monkeypatch.setenv("DOWNLOAD_NUM_TRIES", "lots")
     assert of_env.getattr("DOWNLOAD_NUM_TRIES") == configured
+
+
+def test_bad_value_is_warned_about_once(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(logging.getLogger("shared"), "warning", warnings.append)
+    monkeypatch.setenv("DOWNLOAD_NUM_TRIES", "many")
+    for _ in range(5):
+        of_env.getattr("DOWNLOAD_NUM_TRIES")
+    assert len(warnings) == 1, warnings
+    # a different bad value is a new warning
+    monkeypatch.setenv("DOWNLOAD_NUM_TRIES", "several")
+    of_env.getattr("DOWNLOAD_NUM_TRIES")
+    assert len(warnings) == 2, warnings
 
 
 def test_unknown_key_is_returned_as_text(monkeypatch):
