@@ -31,10 +31,9 @@ def plain_settings(monkeypatch):
     )
 
 
-@pytest.fixture
-def one_second_default(monkeypatch):
+def set_default(monkeypatch, value):
     """Set the default through its environment variable, as a user would."""
-    monkeypatch.setenv("OFSC_READ_TIMEOUT", "1")
+    monkeypatch.setenv("OFSC_READ_TIMEOUT", value)
     network = load_network_config()
     real = of_env.getattr
 
@@ -46,8 +45,20 @@ def one_second_default(monkeypatch):
     monkeypatch.setattr(of_env, "getattr", getattr_)
 
 
+@pytest.fixture
+def one_second_default(monkeypatch):
+    set_default(monkeypatch, "1")
+
+
+@pytest.fixture
+def no_limit_default(monkeypatch):
+    set_default(monkeypatch, "0")
+
+
 class SilentServer:
     """Accepts connections, reads the request and never answers."""
+
+    reply_after = None
 
     def __init__(self):
         self.sock = socket.socket()
@@ -65,8 +76,23 @@ class SilentServer:
             try:
                 conn, _ = self.sock.accept()
                 self.held.append(conn)
+                if self.reply_after is not None:
+                    threading.Thread(
+                        target=self._reply, args=(conn,), daemon=True
+                    ).start()
             except OSError:
                 pass
+
+    def _reply(self, conn):
+        try:
+            conn.settimeout(5)
+            conn.recv(65536)
+            time.sleep(self.reply_after)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+            )
+        except OSError:
+            pass
 
     def close(self):
         self.stop.set()
@@ -76,12 +102,18 @@ class SilentServer:
         self.sock.close()
 
 
+class SlowServer(SilentServer):
+    """Answers each request after 1.5 s."""
+
+    reply_after = 1.5
+
+
 QUIET = SimpleNamespace(traceback_=lambda *a, **k: None, debug=lambda *a, **k: None)
 
 
-def run_with_cap(fetch, cap=10):
+def run_with_cap(fetch, cap=10, server_class=SilentServer):
     """Run fetch in a thread; report a hang instead of hanging the test."""
-    server = SilentServer()
+    server = server_class()
     result = {}
 
     def worker():
@@ -137,3 +169,38 @@ def test_sync_request_to_a_silent_server_times_out_and_retries(one_second_defaul
     assert isinstance(result["error"], httpx.ReadTimeout), result
     assert attempts == 2
     assert result["seconds"] < 6
+
+
+# OFSC_READ_TIMEOUT=0 means "no limit". aiohttp already read 0 that way, but
+# httpx reads 0 as "fail at once", so a sync request failed straight away.
+
+
+def test_zero_means_no_limit_on_the_async_path(no_limit_default):
+    body = {}
+
+    def fetch(url):
+        async def go():
+            async with sessionManager(retries=1, log=QUIET) as c:
+                async with c.requests_async(url=url) as r:
+                    body["text"] = await r.text_()
+
+        asyncio.run(go())
+
+    hung, result, attempts = run_with_cap(fetch, server_class=SlowServer)
+    assert not hung
+    assert result["error"] is None, result
+    assert body["text"] == "ok"
+
+
+def test_zero_means_no_limit_on_the_sync_path(no_limit_default):
+    body = {}
+
+    def fetch(url):
+        with sessionManager(retries=1, log=QUIET) as c:
+            with c.requests(url) as r:
+                body["text"] = r.text_()
+
+    hung, result, attempts = run_with_cap(fetch, server_class=SlowServer)
+    assert not hung
+    assert result["error"] is None, result
+    assert body["text"] == "ok"
