@@ -38,13 +38,13 @@ def getSenstiveDict() -> dict:
     """
     Returns a combined dictionary of default, user-added, and dynamic patterns.
     """
-    # Patterns added during the session (exact secret values such as the
-    # session cookie) go first: a broader rule applied earlier, like the home
-    # folder name, could rewrite part of a secret so it no longer matches.
-    # Dicts keep insertion order, which is the order they're applied in.
-    combined_patterns = _USER_ADDED_PATTERNS.copy()
-    for pattern, replacement in _DEFAULT_PATTERNS.items():
-        combined_patterns.setdefault(pattern, replacement)
+    # Dicts keep insertion order, which is the order they're applied in:
+    # built-in rules, then patterns added during the session (exact values
+    # such as the session cookie or user id), then the home folder name last.
+    # The home folder name is short and could otherwise rewrite part of a
+    # secret so it no longer matches.
+    combined_patterns = _DEFAULT_PATTERNS.copy()
+    combined_patterns.update(_USER_ADDED_PATTERNS)
 
     # --- Add Dynamic Patterns ---
     # These are generated based on the current user's specific info.

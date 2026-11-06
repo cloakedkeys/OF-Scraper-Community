@@ -80,6 +80,45 @@ def test_a_short_value_masks_nothing(fake_auth):
     assert out.endswith("failed: https://onlyfans.com/x")
 
 
+def test_a_short_user_id_doesnt_split_an_ip_address(monkeypatch):
+    # run-time patterns come after the built-in rules, so the IP rule still
+    # sees the whole address
+    sensitive.add_sensitive_pattern("15", "userid")
+    out = formatted(LogFileFormatter(), "ip 10.15.2.3")
+    assert out.endswith("ip {ip_address}")
+
+
+def test_audio_pssh_with_regex_characters_is_masked():
+    import asyncio
+    from types import SimpleNamespace
+
+    import ofscraper.classes.of.media as media
+
+    pssh = "AAAAW3Bzc2gAAA+/AAAA=="  # base64, starts a regex quantifier at "+"
+
+    async def run():
+        loop = asyncio.get_running_loop()
+
+        def done(value):
+            fut = loop.create_future()
+            fut.set_result(value)
+            return fut
+
+        prot = SimpleNamespace(value=None, pssh=[SimpleNamespace(pssh=pssh)])
+        repr_ = SimpleNamespace(base_urls=[SimpleNamespace(base_url_value="a.mp4")])
+        fake = SimpleNamespace(
+            _audio_adaptation_set=done(SimpleNamespace(content_protections=[prot])),
+            selected_audio_representation=done(repr_),
+            id=1, post_id=2,
+        )
+        return await media.Media.mpd_audio_helper(fake)
+
+    assert asyncio.run(run())["pssh"] == pssh
+    out = formatted(LogFileFormatter(), f"license request for {pssh}")
+    assert pssh not in out and "pssh_code" in out
+    assert "LOGGING ERROR" not in out
+
+
 def test_empty_sess_registers_nothing(fake_auth):
     fake_auth["sess"] = ""
     auth_file.read_auth()
