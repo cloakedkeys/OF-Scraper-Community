@@ -798,20 +798,68 @@ def test_restart_mid_stream_keeps_the_earlier_parts_in_the_sidecar(tmp_path):
     assert on_disk["parts"] == [part1, part2]
 
 
-def test_ffmpeg_is_told_never_to_overwrite():
-    cmd = live.ffmpeg_command("ffmpeg", "https://cdn.example.invalid/v.m3u8", live.pathlib.Path("out.mp4"))
-    assert "-n" in cmd and "-y" not in cmd
-    assert cmd.index("-n") < cmd.index("-i")  # a global option, before the input
+@pytest.mark.parametrize("other_bytes", [b"another recording", b""])
+def test_a_part_taken_by_another_process_is_never_used(tmp_path, monkeypatch, other_bytes):
+    # another app process creates part 1 between the free-name check and
+    # ffmpeg's start; that file must not be written, listed or deleted
+    folder = tmp_path / "Fansly" / "creator_a" / "Livestreams"
+    taken = folder / f"creator_a_{STAMP}_live.mp4"
+    real_next = live.next_part_number
+
+    def racing_next(base):
+        n = real_next(base)
+        folder.mkdir(parents=True, exist_ok=True)
+        if not taken.exists():
+            taken.write_bytes(other_bytes)
+        return n
+
+    monkeypatch.setattr(live, "next_part_number", racing_next)
+    rec, commands = one_part_recorder(tmp_path)
+    sidecar = asyncio.run(rec.run())
+
+    assert taken.exists() and taken.read_bytes() == other_bytes
+    assert taken.name not in sidecar["parts"]
+    assert sidecar["parts"] == [f"creator_a_{STAMP}_live_part2.mp4"]
+    assert all(str(taken) not in c for c in commands)
 
 
-@needs_ffmpeg
-def test_real_ffmpeg_leaves_an_existing_recording_alone(hls, tmp_path):
-    hls.valid.add("t1")
-    out = tmp_path / "taken.mp4"
-    out.write_bytes(b"another recording")
-    cmd = live.ffmpeg_command("ffmpeg", f"{hls.base}/live/high.m3u8?vt=t1", out)
-    asyncio.run(asyncio.wait_for(live.run_ffmpeg(cmd), timeout=60))
-    assert out.read_bytes() == b"another recording"
+def test_the_part_file_exists_before_ffmpeg_starts(tmp_path):
+    seen = []
+    rec, _ = one_part_recorder(tmp_path)
+    inner = rec.ffmpeg_runner
+
+    async def checking_ffmpeg(cmd, stop=None):
+        seen.append(live.pathlib.Path(cmd[-1]).exists())
+        return await inner(cmd, stop)
+
+    rec.ffmpeg_runner = checking_ffmpeg
+    asyncio.run(rec.run())
+    assert seen == [True]
+
+
+def test_claim_is_released_only_once():
+    # a second release would drop a claim another thread made in between
+    released = []
+    real_release = live.release
+    stream = stream_a()
+
+    async def main():
+        stop, wake = asyncio.Event(), asyncio.Event()
+
+        async def record(s, stop_event):
+            return None
+
+        watcher = live.LiveWatcher(None, record, interval=1000, jitter=0)
+        live.release = lambda key: (released.append(key), real_release(key))
+        try:
+            assert watcher._start(stream, stop, wake)
+            await asyncio.gather(*watcher.active.values(), return_exceptions=True)
+            await asyncio.sleep(0)
+        finally:
+            live.release = real_release
+
+    asyncio.run(main())
+    assert released == [stream["accountId"]]
 
 
 def test_one_shot_run_and_watch_thread_never_record_the_same_creator_at_once():

@@ -182,6 +182,23 @@ def next_part_number(base: pathlib.Path) -> int:
     return n
 
 
+def reserve_part(base: pathlib.Path) -> pathlib.Path:
+    """Create the next free part file exclusively and return it.
+
+    Only a file this recorder created is ever handed to ffmpeg, counted as a
+    part or deleted, even when another process records the same stream.
+    """
+    base.parent.mkdir(parents=True, exist_ok=True)
+    n = next_part_number(base)
+    while True:
+        path = part_path(base, n)
+        try:
+            with open(path, "x"):
+                return path
+        except FileExistsError:
+            n += 1
+
+
 def sidecar_path(base: pathlib.Path) -> pathlib.Path:
     return base.with_name(f"{base.name}.json")
 
@@ -194,9 +211,8 @@ def chat_path(base: pathlib.Path) -> pathlib.Path:
 
 def ffmpeg_command(ffmpeg: str, url: str, out: pathlib.Path, user_agent: str = "") -> list:
     headers = f"Origin: {constants.ORIGIN}\r\nReferer: {constants.REFERER}\r\n"
-    # -n: never overwrite. If something else took the file name between the
-    # free-name check and ffmpeg's start, ffmpeg exits and leaves it alone.
-    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-n"]
+    # -y: ``out`` is the empty file reserve_part() created for this recording
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
     if user_agent:
         cmd += ["-user_agent", user_agent]
     cmd += [
@@ -401,7 +417,7 @@ class LiveRecorder:
         if scheme not in self.schemes:
             log.info(f"{self.username}: skipping a variant URL with scheme {scheme or 'none'!r}")
             return False, False
-        out = part_path(self.base, next_part_number(self.base))
+        out = reserve_part(self.base)
         log.info(f"{self.username}: recording livestream to {out.name}")
         await self.ffmpeg_runner(
             ffmpeg_command(self.ffmpeg, variant, out, self.user_agent), stop)
@@ -467,11 +483,12 @@ class LiveWatcher:
                 log.info(f"{stream.get('username')}: livestream recording failed: {e}")
             finally:
                 self.active.pop(key, None)
-                release(key)
                 wake.set()
 
         task = asyncio.ensure_future(runner())
-        # also when the task is cancelled before it ever ran
+        # the only release: it also runs when the task is cancelled before it
+        # ever ran. Releasing in runner() as well could drop a claim another
+        # thread made in between.
         task.add_done_callback(lambda _: release(key))
         self.active[key] = task
         self.max_seen = max(self.max_seen, len(self.active))
