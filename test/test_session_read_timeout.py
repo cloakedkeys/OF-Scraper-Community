@@ -175,6 +175,21 @@ def test_sync_request_to_a_silent_server_times_out_and_retries(one_second_defaul
 # httpx reads 0 as "fail at once", so a sync request failed straight away.
 
 
+def test_zero_from_any_source_means_no_limit(monkeypatch):
+    # A bare OF_READ_TIMEOUT=0 reaches the session as the number 0 once
+    # of_env converts bare keys to their type (#183), not via the OFSC_ loader
+    real = of_env.getattr
+    monkeypatch.setattr(
+        of_env,
+        "getattr",
+        lambda k, d=None: 0 if k == "OF_READ_TIMEOUT" else real(k, d),
+    )
+    assert sessionManager()._read_timeout is None
+    # and a 0 passed to the session
+    monkeypatch.setattr(of_env, "getattr", real)
+    assert sessionManager(read_timeout=0)._read_timeout is None
+
+
 def test_zero_means_no_limit_on_the_async_path(no_limit_default):
     body = {}
 
