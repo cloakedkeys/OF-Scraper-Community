@@ -93,3 +93,24 @@ def test_placeholder_or_empty_token_adds_no_pattern(clean_patterns):
     fansly_auth.hide_token("")
     fansly_auth.hide_token(fansly_auth.PLACEHOLDER)
     assert sensitive._USER_ADDED_PATTERNS == {}
+
+
+@pytest.mark.parametrize("fansly", [True, False])
+def test_auth_check_fetches_the_onlyfans_rule_only_for_onlyfans(monkeypatch, fansly):
+    # the auth check fetches OnlyFans' dynamic rule before /me. Fansly requests
+    # aren't signed with it, so a Fansly profile mustn't depend on GitHub
+    from types import SimpleNamespace
+
+    import ofscraper.data.api.init as init
+
+    fetches = []
+    monkeypatch.setattr(sites, "is_fansly", lambda: fansly)
+    monkeypatch.setattr(
+        init.settings, "get_settings", lambda: SimpleNamespace(anon=False)
+    )
+    monkeypatch.setattr(
+        init.auth_requests, "get_request_auth", lambda: fetches.append(1)
+    )
+    monkeypatch.setattr(init.me, "scrape_user", lambda: {"isAuth": True})
+    assert init.getstatus() == "UP"
+    assert fetches == ([] if fansly else [1])
