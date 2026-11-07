@@ -511,6 +511,7 @@ class sessionManager:
     async def _async_wait_before_request(self):
         paced = await self._rate_limit_sleeper.async_do_sleep()
         await self._forbidden_sleeper.async_do_sleep(pace=not paced)
+
     def reset_sleep(self):
         self._rate_limit_sleeper.reset_sleep()
         self._forbidden_sleeper.reset_sleep()
