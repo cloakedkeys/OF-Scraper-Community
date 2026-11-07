@@ -62,8 +62,36 @@ class DownloadManager:
         return (
             None
             if not resume_size or not total
-            else {"Range": f"bytes={resume_size}-{total}"}
+            else {"Range": f"bytes={resume_size}-"}
         )
+
+    def _full_size_from_reply(self, r, resume_size, path):
+        """Return (total, resume_size) for the reply to a request that may have
+        asked for a range.
+
+        A 206 reply carries only the missing bytes, so its Content-Length is the
+        size of that piece, not of the file. The full size comes from
+        Content-Range, or from the part on disk plus Content-Length. A server
+        that ignores Range answers 200 with the whole file, so the part on disk
+        is dropped and the download starts again from 0 instead of appending.
+        """
+        length = r.headers.get("content-length")
+        length = int(length) if length is not None else None
+        if not resume_size:
+            return length, 0
+        if r.status != 206:
+            pathlib.Path(path).unlink(missing_ok=True)
+            return length, 0
+        content_range = (r.headers.get("content-range") or "").strip()
+        sent, _, full = content_range.removeprefix("bytes ").partition("/")
+        start = sent.split("-")[0].strip()
+        if start and start != str(resume_size):
+            raise Exception(
+                f"resume asked for bytes from {resume_size} but the server sent {content_range}"
+            )
+        if full.strip().isdigit():
+            return int(full), resume_size
+        return (resume_size + length if length is not None else None), resume_size
 
     def _get_resume_size(
         self,

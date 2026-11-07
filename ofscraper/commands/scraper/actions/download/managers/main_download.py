@@ -159,7 +159,9 @@ class MainDownloadManager(DownloadManager):
                 total_timeout=None,
                 read_timeout=get_chunk_timeout(),
             ) as r:
-                total = int(r.headers["content-length"])
+                total, resume_size = self._full_size_from_reply(
+                    r, resume_size, tempholderObj.tempfilepath
+                )
                 data = {
                     "content-total": total,
                     "content-type": r.headers.get("content-type"),
