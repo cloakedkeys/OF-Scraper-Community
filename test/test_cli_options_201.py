@@ -20,14 +20,16 @@ def test_block_ads_is_accepted():
 
 
 def test_length_filters_take_plain_seconds():
-    params = _parse(["--length-max", "90", "--length-min", "1.5"])
-    assert params["length_max"] == 90
-    assert params["length_min"] == 1.5
+    params = _parse(["--length-max", "90", "--length-min", "5"])
+    # whole seconds as ints: the table view splits them into h/m/s inputs
+    assert params["length_max"] == 90 and type(params["length_max"]) is int
+    assert params["length_min"] == 5
 
 
-def test_length_filters_reject_size_suffixes():
+@pytest.mark.parametrize("value", ["1m", "1.5", "nan", "inf", "-1"])
+def test_length_filters_reject_anything_but_whole_seconds(value):
     with pytest.raises(click.BadParameter):
-        _parse(["--length-max", "1m"])
+        _parse(["--length-max", value])
 
 
 @pytest.fixture
@@ -52,3 +54,15 @@ def test_config_env_files_are_loaded_without_the_option(monkeypatch, loaded):
     monkeypatch.setattr(settings.config_data, "get_env_files", lambda *a, **k: "a.env, b.env")
     settings.setup_settings()
     assert loaded == [["a.env", "b.env"]]
+
+
+def test_neg_filter_does_not_grow_on_each_settings_build(monkeypatch):
+    from ofscraper.utils.args.main import AutoDotDict
+
+    args = AutoDotDict(_parse(["--block-ads", "--neg-filter", "foo"]))
+    args.command = "OF-Scraper"
+    monkeypatch.setattr(settings.read_args, "retriveArgs", lambda *a, **k: args)
+    first = settings.merged_settings().neg_filter
+    second = settings.merged_settings().neg_filter
+    assert args.neg_filter == ["foo"]
+    assert first == second and len(second) == 2

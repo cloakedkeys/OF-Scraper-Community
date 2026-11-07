@@ -241,20 +241,20 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 #### `--length-max`
 
 - **Also:** `-lx`
-- **Dest:** `length_max` · **Type:** float range · **Default:** none
+- **Dest:** `length_max` · **Type:** integer range · **Default:** none
 - **Commands:** all
 - **Config fallback:** `content_filter_options.length_max`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/media_content.py`
-- max duration in seconds (plain number, e.g. 90); only applies to videos
+- max duration in seconds (whole number, e.g. 90); only applies to videos
 
 #### `--length-min`
 
 - **Also:** `-lm`
-- **Dest:** `length_min` · **Type:** float range · **Default:** none
+- **Dest:** `length_min` · **Type:** integer range · **Default:** none
 - **Commands:** all
 - **Config fallback:** `content_filter_options.length_min`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/media_content.py`
-- min duration in seconds (plain number, e.g. 90); only applies to videos
+- min duration in seconds (whole number, e.g. 90); only applies to videos
 
 #### `--media-id`
 

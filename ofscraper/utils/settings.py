@@ -137,7 +137,8 @@ def merged_settings():
     merged.trunicate = False if args.original else config_data.get_truncation()
 
     # --- Ad Blocking & Filters ---
-    neg = args.neg_filter or []
+    # a copy: appending to the args list grew it on every settings rebuild
+    neg = list(args.neg_filter or [])
     if args.block_ads or config_data.get_block_ads():
         neg.append(ads.get_ad_key_words())
     merged.neg_filter = neg
