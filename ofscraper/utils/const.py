@@ -7,6 +7,13 @@ DYNAMIC_OPTIONS = [
     "xagler",
     "rafa",
 ]
+# other names accepted for a dynamic rule, and the rule each one picks
+DYNAMIC_ALIASES = {
+    "dc": "digitalcriminals",
+    "digital": "digitalcriminals",
+    "digitals": "digitalcriminals",
+    "digitalcriminal": "digitalcriminals",
+}
 
 MEDIA_ALIASES = {
     "photo": "images",

@@ -542,14 +542,21 @@ Enter 0 for no minimum
 
 def advanced_config() -> dict:
     out = {}
+    # show the rule an alias such as the default "digital" picks, and offer it
+    # even if OFSC_DYNAMIC_OPTIONS leaves it out (#226)
+    dynamic_rule = data.get_dynamic()
+    dynamic_rule = const.DYNAMIC_ALIASES.get(dynamic_rule, dynamic_rule)
+    dynamic_choices = list(of_env.getattr("DYNAMIC_OPTIONS"))
+    if dynamic_rule not in dynamic_choices:
+        dynamic_choices.append(dynamic_rule)
     new_settings = promptClasses.batchConverter(
         *[
             {
                 "type": "list",
                 "name": "dynamic-mode-default",
                 "message": "What would you like to use for dynamic rules",
-                "default": data.get_dynamic(),
-                "choices": of_env.getattr("DYNAMIC_OPTIONS"),
+                "default": dynamic_rule,
+                "choices": dynamic_choices,
             },
             {
                 "type": "list",
