@@ -51,8 +51,8 @@ standard API uses `SESSION_*`. The wait starts at `*_MIN_SLEEP`. If that is 0,
 the first error sets it to `*_SLEEP_INIT` seconds (or 1 if that is 0);
 otherwise the first error already multiplies it. Each error multiplies the wait
 by `*_SLEEP_INCREASE_FACTOR`, up to `*_SLEEP_MAX`, but only if
-`*_SLEEP_INCREASE_TIME_DIFF` seconds have passed since the last change (or since
-the session started). After `*_SLEEP_DECAY_THRESHOLD` seconds without a change
+`*_SLEEP_INCREASE_TIME_DIFF` seconds have passed since the last change (or since the program started or
+the last per-creator reset). After `*_SLEEP_DECAY_THRESHOLD` seconds without a change
 the wait is divided by `*_SLEEP_DECAY_FACTOR`, down to `*_MIN_SLEEP`.
 `*_MIN_SLEEP` is also the minimum gap kept between requests. Before each
 request the rate-limit wait is checked first, and the 403 wait only when the
@@ -77,7 +77,7 @@ ENV = {
     "profilesPromptChoices": "Menu entries of the interactive profile menu; not read from the environment.",
     "modelPrompt": "Menu entries for filtering and sorting the creator list interactively; not read from the environment.",
     "LOG_SUBPROCESS_LEVEL": "Log level for subprocess output that has no more specific setting. `OFSC_LOG_SUBPROCESS_LEVELL` is the old misspelled name, still read.",
-    "MPD_SESSION_SLEEP_INIT": "Defined but not read anywhere; MPD requests have no backoff values of their own.",
+    "MPD_SESSION_SLEEP_INIT": "Defined but not read anywhere; MPD requests use the standard `SESSION_*` values.",
     "DISK_SPACE_CHECK_PATH": "Path whose disk's free space is compared with `download_options.system_free_min` (`ofscraper/utils/system/free.py`). It's not the save location unless you set it to be.",
 }
 

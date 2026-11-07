@@ -24,8 +24,8 @@ standard API uses `SESSION_*`. The wait starts at `*_MIN_SLEEP`. If that is 0,
 the first error sets it to `*_SLEEP_INIT` seconds (or 1 if that is 0);
 otherwise the first error already multiplies it. Each error multiplies the wait
 by `*_SLEEP_INCREASE_FACTOR`, up to `*_SLEEP_MAX`, but only if
-`*_SLEEP_INCREASE_TIME_DIFF` seconds have passed since the last change (or since
-the session started). After `*_SLEEP_DECAY_THRESHOLD` seconds without a change
+`*_SLEEP_INCREASE_TIME_DIFF` seconds have passed since the last change (or since the program started or
+the last per-creator reset). After `*_SLEEP_DECAY_THRESHOLD` seconds without a change
 the wait is divided by `*_SLEEP_DECAY_FACTOR`, down to `*_MIN_SLEEP`.
 `*_MIN_SLEEP` is also the minimum gap kept between requests. Before each
 request the rate-limit wait is checked first, and the 403 wait only when the
@@ -454,7 +454,7 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="mpd_pool_connect_timeout"></a>`MPD_POOL_CONNECT_TIMEOUT` | `OFSC_MPD_POOL_CONNECT_TIMEOUT` | `45` | Pool connection timeout for MPD operations (seconds). |
 | <a id="mpd_max_sems"></a>`MPD_MAX_SEMS` | `OFSC_MPD_MAX_SEMS` | `10` | Maximum semaphores for MPD operations. |
 | <a id="mpd_num_tries"></a>`MPD_NUM_TRIES` | `OFSC_MPD_NUM_TRIES` | `5` | Number of retries for MPD operations. |
-| <a id="mpd_session_sleep_init"></a>`MPD_SESSION_SLEEP_INIT` | `OFSC_MPD_SESSION_SLEEP_INIT` | `45` | Defined but not read anywhere; MPD requests have no backoff values of their own. |
+| <a id="mpd_session_sleep_init"></a>`MPD_SESSION_SLEEP_INIT` | `OFSC_MPD_SESSION_SLEEP_INIT` | `45` | Defined but not read anywhere; MPD requests use the standard `SESSION_*` values. |
 
 ## `ofscraper/utils/of_env/values/req/ratelimit.py`
 
