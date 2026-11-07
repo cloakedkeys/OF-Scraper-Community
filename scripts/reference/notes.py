@@ -16,12 +16,12 @@ CLI = {
     "text_only": "Also turns on `--text`: text files are written and media is skipped.",
     "original": "Turns off file name truncation for the run, whatever `file_options.truncation_default` says.",
     "no_auto_resume": "Overrides `download_options.auto_resume` to off for the run.",
-    "no_cache": "Disables both the general cache and the API cache, as `advanced_options.cache-mode` `disabled` does. It also turns off incremental downloads.",
-    "no_api_cache": "Disables only the API response cache, as `advanced_options.cache-mode` `api_disabled` does.",
+    "no_cache": "Disables both the general cache and the API cache, and turns off incremental downloads. It's the only way to do so: `advanced_options.cache-mode` `disabled` doesn't work at present (#200).",
+    "no_api_cache": "Disables only the API response cache.",
     "download_limit": "Values below 1024 bytes per second are raised to 1024. The limit is shared by all downloads in the run.",
     "key_mode": "`cdrm` posts request headers, cookies included, to cdrm-project.com; `manual` uses the local CDM files (`--private-key`, `--client-id`).",
     "quality": "The lowest video quality to accept: the smallest available quality at or above it is downloaded, and `source` when none matches (`ofscraper/utils/args/accessors/quality.py`, `classes/of/media.py`). Without it, `source` is used.",
-    "env_files": "Not loaded at present: `setup_settings` loads only `advanced_options.env_files` (and a `.env` in the working folder), and nothing reads the merged value of this option.",
+    "env_files": "Not loaded at present: `setup_settings` loads only `advanced_options.env_files` and nothing reads the merged value of this option (#201).",
 }
 
 # --------------------------------------------------------------------------
@@ -34,9 +34,9 @@ Built-in defaults the app reads with `of_env.getattr(KEY)`
 `ofscraper/utils/of_env/values/` and cached. Each value can be overridden two
 ways: the listed `OFSC_*` environment variable, read when the defaults are
 loaded, or an environment variable with the bare key name (e.g. `DATABASE_TIMEOUT`),
-read on every lookup and converted to the default's type. A `.env` file in the
-working folder, then the env files named in `advanced_options.env_files`, are
-loaded into the environment first and override variables already set
+read on every lookup and converted to the default's type. a `.env` file found by python-dotenv, which searches upward from `ofscraper/utils/of_env/` (from the working folder only in the standalone binaries, the REPL or a debugger), then
+the env files named in `advanced_options.env_files`, are loaded into the
+environment first and override variables already set
 (`ofscraper/utils/of_env/load.py`). Values shown are the defaults with no environment variables set; paths
 under your home directory are shown as `{home_directory}`. Descriptions come
 from the comment above each value in the source where there is one.
@@ -55,6 +55,10 @@ change the wait is divided by `*_SLEEP_DECAY_FACTOR`, down to `*_MIN_SLEEP`,
 which is also the minimum gap kept between requests. At present only the
 `SESSION_SLEEP_DECAY_*` values are used, for every kind of request (#198).
 """
+
+# options merged_settings reads but that don't actually override the config
+# value, so they aren't listed as overrides or fallbacks
+NOT_MERGED = {"env_files"}
 
 # descriptions for keys whose source has no comment naming them
 ENV = {
@@ -119,7 +123,7 @@ PLACEHOLDERS = {
     "profile": "Name of the active profile, e.g. main_profile.",
     "site_name": "Name of the site being scraped (sites.site_name()), e.g. the Fansly name on Fansly runs; usually written {sitename}.",
     "save_location": "The configured save location; on Fansly runs it is '<save location>/Fansly'. Same value as {root} but as the configured string.",
-    "my_id": "Despite the name, this is the logged-in account's display NAME (profile 'name', UTF-16 encoded by me.parse_user), not its numeric id; 'anon' in anonymous mode.",
+    "my_id": "Despite the name, this is the logged-in account's display NAME (profile 'name', UTF-16 encoded by me.parse_user), not its numeric id; 'anon' in anonymous mode. (#206)",
     "my_username": "Username of the logged-in account; 'anon' in anonymous mode.",
     "root": "Pathlib.Path of {save_location} (the media root, Fansly subfolder included).",
     "username": "The creator's username. In dir_format, file_format and text files it also exists, as the underscore-free alias of {user_name} (same value).",
@@ -207,7 +211,7 @@ CONFIG = {
     "cdm_options.key-mode-default": "How DRM content keys are obtained: 'manual' uses the local CDM files in private-key and client-id; 'cdrm' asks cdrm-project.com and sends it the request headers, cookies included. Other values fall back to the default. The -k/--key-mode option overrides it.",
     "performance_options.download_sems": "Number of downloads that run at the same time (the worker thread pool is twice this); must be at least 1. The --sem/-sd option overrides it.",
     "performance_options.download_limit": "Maximum download speed in bytes per second, shared across downloads; accepts a size string such as '10MB'. 0 means unlimited, and any non-zero value below 1024 is raised to 1024. The -dl/--download-limit option overrides it.",
-    "content_filter_options.block_ads": "When true, posts whose text matches a built-in advertising regex (#ad, giveaway, shoutout, promo and similar) are excluded, added on top of any --neg-filter patterns. A -ba/--block-ads option is defined but not attached to any command, so the CLI rejects it.",
+    "content_filter_options.block_ads": "When true, posts whose text matches a built-in advertising regex (#ad, giveaway, shoutout, promo and similar) are excluded, added on top of any --neg-filter patterns. A -ba/--block-ads option is defined but not attached to any command, so the CLI rejects it (#201).",
     "content_filter_options.file_size_max": "Media larger than this are skipped at download time; also applied by the db command and the table view. Accepts bytes or a size string such as '500MB'; 0 means no limit, and an unparseable value is treated as 0. The -sx/--size-max option overrides it.",
     "content_filter_options.file_size_min": "Media smaller than this are skipped at download time; also applied by the db command and the table view. Accepts bytes or a size string; 0 means no limit, and an unparseable value is treated as 0. The -sm/--size-min option overrides it.",
     "content_filter_options.length_max": "Maximum duration in seconds; longer videos are filtered out. Only videos with a known duration are affected, not audio or images; 0 means no limit. The -lx/--length-max option overrides it.",
@@ -215,25 +219,25 @@ CONFIG = {
     "advanced_options.dynamic-mode-default": "Which source of OnlyFans request-signing rules to use: datawhores, xagler, rafa, digitalcriminals (aliases dc, digital), generic (needs OFSC_DYNAMIC_GENERIC_URL) or manual (needs OFSC_DYNAMIC_RULE_MANUAL). Unknown values fall back to the default, and anything that yields no rule falls back to datawhores. The -dr/--dynamic-rules option overrides it.",
     "advanced_options.skip_unavailable_content": "When true, timeline, pinned, archived, stories and highlights are not scraped for creators whose subscription has expired; profile, purchased content and messages are still scraped. Labels and streams are only scraped for active subscriptions regardless.",
     "advanced_options.downloadbars": "When true, shows a progress bar for each file being downloaded in addition to the overall progress. The -db/--downloadbars flag can turn it on but not off.",
-    "advanced_options.cache-mode": "Storage backend for the on-disk cache: 'sqlite' (pickled values, cache_sql folder) or 'json' (JSON values, cache_json folder). 'disabled' is accepted but does not currently disable the cache (it selects JSON storage in the cache_sql folder); use --no-cache to disable caching. Other values fall back to the default.",
+    "advanced_options.cache-mode": "Storage backend for the on-disk cache: 'sqlite' (pickled values, cache_sql folder) or 'json' (JSON values, cache_json folder). 'disabled' is accepted but does not currently disable the cache (it selects JSON storage in the cache_sql folder); use --no-cache to disable caching (#200). Other values fall back to the default.",
     "advanced_options.rotate_logs": "When true, each run writes its own log file in a per-day folder under the logging directory; when false, all runs of a day append to one file. Must be true for logs_expire_time to delete old logs.",
     "advanced_options.sanitize_text": "When true, post and message text is stored in the database with HTML tags removed and whitespace collapsed; when false the raw API text is stored. Does not affect file names.",
     "advanced_options.temp_dir": "Root folder for in-progress (.part) downloads, laid out with dir_format like the final location; when unset, temp files are written under save_location. Surrounding quotes are stripped.",
     "advanced_options.remove_hash_match": "true hashes every download and deletes later files whose hash matches an earlier one for the same creator and media type; false only records hashes; null skips hashing.",
     "advanced_options.infinite_loop_action_mode": "When true, action mode (--action) asks after each run whether to continue and offers another action instead of exiting.",
-    "advanced_options.incremental_downloads": "When true and no --after is given, each area is scanned only from the newest previously scanned post instead of from the start; like/unlike actions and forced full scans still scan everything. Turned off for the run by --no-cache. Setting it to false in config.json currently has no effect: the getter treats false as missing and uses the default.",
+    "advanced_options.incremental_downloads": "When true and no --after is given, each area is scanned only from the newest previously scanned post instead of from the start; like/unlike actions and forced full scans still scan everything. Turned off for the run by --no-cache. Setting it to false in config.json currently has no effect: the getter treats false as missing and uses the default (#200).",
     "advanced_options.default_user_list": "OnlyFans user lists to select creators from when -ul/--user-list is not given; a list or comma-separated string. The reserved names ofscraper.main, ofscraper.active and ofscraper.expired mean all, active and expired subscriptions. Names are matched against lowercased list names.",
     "advanced_options.default_black_list": "OnlyFans user lists whose members are excluded from selection when -bl/--black-list is not given; a list or comma-separated string. Names are matched against lowercased list names.",
     "advanced_options.logs_expire_time": "Age in hours after which .log files in the logging directory are deleted at cleanup, along with empty log folders. 0 disables it, and nothing is deleted unless rotate_logs is true.",
     "advanced_options.ssl_verify": "TLS mode for HTTP sessions: 'false' (also '0', 'none' or empty) turns certificate verification off, 'default' uses Python's standard SSL context, and any other value (normally 'custom') uses the hardened custom context in cert.py that shapes the TLS fingerprint. A legacy JSON boolean (true or false) is read as 'custom'.",
-    "advanced_options.env_files": "List of .env, .yaml/.yml or .json files whose values are loaded as environment variables (OFSC_* overrides) before settings are built; later files override earlier ones. A .env file in the working directory is always loaded first.",
+    "advanced_options.env_files": "List of .env, .yaml/.yml or .json files whose values are loaded as environment variables (OFSC_* overrides) before settings are built; later files override earlier ones. Before them, a .env file found by python-dotenv, which searches upward from `ofscraper/utils/of_env/` (from the working folder only in the standalone binaries, the REPL or a debugger), is loaded. The --env-files option isn't loaded at present (#201).",
     "script_options.after_action_script": "Executable run after each user is processed by the like, unlike or download actions (and after scrape-paid, check and manual downloads). It receives JSON with the username, media and posts on stdin. The -aas/--after-action-script option overrides it.",
     "script_options.post_script": "Executable run once when the program finishes. It receives JSON on stdin listing processed and unprocessed users for the like, unlike, download and scrape-paid activities. The -ps/--post-script option overrides it.",
     "script_options.naming_script": "Executable run for each download to choose its path. It receives JSON about the media, post and current formats on stdin; non-empty stdout is used as the full file path in place of dir_format and file_format. The -ns/--naming-script option overrides it.",
     "script_options.after_download_script": "Executable run after each file is downloaded (including text files), with the final file path on stdin. The -adl/--after-download-script option overrides it.",
     "script_options.skip_download_script": "Executable run before each download with JSON about the media, post and total size on stdin. If it prints 'false' or nothing, the download is skipped; any other output lets it proceed. The -sdl/--skip-download-script option overrides it.",
     "responsetype.timeline": "Folder name used for {responsetype} for timeline posts. The value is capitalized (only its first letter kept uppercase); empty falls back to the type name.",
-    "responsetype.message": "Intended folder name for {responsetype} for messages; currently has no effect, because messages are looked up under the key 'messages' and so always get 'Messages'.",
+    "responsetype.message": "Intended folder name for {responsetype} for messages; currently has no effect, because messages are looked up under the key 'messages' and so always get 'Messages' (#200).",
     "responsetype.archived": "Folder name used for {responsetype} for archived posts; it takes precedence over pinned and other types. The value is capitalized (only its first letter kept uppercase); empty falls back to the type name.",
     "responsetype.paid": "Folder name used for {responsetype} for purchased (paid) content found by --scrape-paid or the purchased area. The value is capitalized (only its first letter kept uppercase); empty falls back to the type name.",
     "responsetype.stories": "Folder name used for {responsetype} for stories. The value is capitalized (only its first letter kept uppercase); empty falls back to the type name.",

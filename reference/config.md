@@ -175,7 +175,7 @@ Every key `config.json` holds, in the order the file is written (`ofscraper/util
 
 - **Default:** `false` · **Read by:** `get_block_ads()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`BLOCKED_ADS_DEFAULT`](env.md#blocked_ads_default)
-- When true, posts whose text matches a built-in advertising regex (#ad, giveaway, shoutout, promo and similar) are excluded, added on top of any --neg-filter patterns. A -ba/--block-ads option is defined but not attached to any command, so the CLI rejects it.
+- When true, posts whose text matches a built-in advertising regex (#ad, giveaway, shoutout, promo and similar) are excluded, added on top of any --neg-filter patterns. A -ba/--block-ads option is defined but not attached to any command, so the CLI rejects it (#201).
 
 ### `content_filter_options.file_size_max`
 
@@ -235,7 +235,7 @@ Every key `config.json` holds, in the order the file is written (`ofscraper/util
 
 - **Default:** `"sqlite"` · **Read by:** `cache_mode_helper()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`CACHEDEFAULT`](env.md#cachedefault)
-- Storage backend for the on-disk cache: 'sqlite' (pickled values, cache_sql folder) or 'json' (JSON values, cache_json folder). 'disabled' is accepted but does not currently disable the cache (it selects JSON storage in the cache_sql folder); use --no-cache to disable caching. Other values fall back to the default.
+- Storage backend for the on-disk cache: 'sqlite' (pickled values, cache_sql folder) or 'json' (JSON values, cache_json folder). 'disabled' is accepted but does not currently disable the cache (it selects JSON storage in the cache_sql folder); use --no-cache to disable caching (#200). Other values fall back to the default.
 
 ### `advanced_options.rotate_logs`
 
@@ -272,7 +272,7 @@ Every key `config.json` holds, in the order the file is written (`ofscraper/util
 - **Default:** `true` · **Read by:** `get_incremental_downloads()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`INCREMENTAL_DOWNLOADS_DEFAULT`](env.md#incremental_downloads_default)
 - **Also reads:** `enable_auto_after`
-- When true and no --after is given, each area is scanned only from the newest previously scanned post instead of from the start; like/unlike actions and forced full scans still scan everything. Turned off for the run by --no-cache. Setting it to false in config.json currently has no effect: the getter treats false as missing and uses the default.
+- When true and no --after is given, each area is scanned only from the newest previously scanned post instead of from the start; like/unlike actions and forced full scans still scan everything. Turned off for the run by --no-cache. Setting it to false in config.json currently has no effect: the getter treats false as missing and uses the default (#200).
 
 ### `advanced_options.default_user_list`
 
@@ -303,8 +303,7 @@ Every key `config.json` holds, in the order the file is written (`ofscraper/util
 
 - **Default:** `[]` · **Read by:** `get_env_files()` in `ofscraper/utils/config/data.py`
 - **Also reads:** `script_options`, `scripts`
-- **CLI override:** `--env-files`
-- List of .env, .yaml/.yml or .json files whose values are loaded as environment variables (OFSC_* overrides) before settings are built; later files override earlier ones. A .env file in the working directory is always loaded first.
+- List of .env, .yaml/.yml or .json files whose values are loaded as environment variables (OFSC_* overrides) before settings are built; later files override earlier ones. Before them, a .env file found by python-dotenv, which searches upward from `ofscraper/utils/of_env/` (from the working folder only in the standalone binaries, the REPL or a debugger), is loaded. The --env-files option isn't loaded at present (#201).
 
 ## `script_options`
 
@@ -363,7 +362,7 @@ These values are the folder names that fill `{responsetype}` in `dir_format`. Ea
 
 - **Default:** `"Messages"` · **Read by:** `get_messages_progress_responsetype()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`RESPONSE_TYPE_DEFAULT`](env.md#response_type_default)
-- Intended folder name for {responsetype} for messages; currently has no effect, because messages are looked up under the key 'messages' and so always get 'Messages'.
+- Intended folder name for {responsetype} for messages; currently has no effect, because messages are looked up under the key 'messages' and so always get 'Messages' (#200).
 
 ### `responsetype.archived`
 

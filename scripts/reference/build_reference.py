@@ -244,7 +244,7 @@ def getter_details(getter, module_file, key_path):
     return sorted(set(envs)), older
 
 
-def settings_links():
+def settings_links(not_merged=()):
     """CLI dest -> config getters it's merged with, from settings.merged_settings"""
     fn = module_functions(ROOT / "ofscraper/utils/settings.py")["merged_settings"]
     links = {}
@@ -262,7 +262,7 @@ def settings_links():
                 and getattr(sub.func.value, "id", "") == "config_data"
             ):
                 getters.add(sub.func.attr)
-        for dest in dests:
+        for dest in dests - set(not_merged):
             links.setdefault(dest, set()).update(getters)
         if getters and not dests:
             config_only.update(getters)
@@ -362,7 +362,7 @@ def render_cli(notes):
     import click
 
     definitions = option_definitions()
-    links, _ = settings_links()
+    links, _ = settings_links(notes.NOT_MERGED)
     getters = config_getter_map()
     key_of_getter = {g: k for k, (g, _) in getters.items()}
     options = collect_options()
@@ -498,7 +498,7 @@ def render_config(notes):
 
     defaults = dict(flatten(get_current_config_schema(False)))
     getters = config_getter_map()
-    links, config_only = settings_links()
+    links, config_only = settings_links(notes.NOT_MERGED)
     options = {e["param"].name: e["param"] for e in collect_options()}
     dest_of_getter = {}
     for dest, gs in links.items():
@@ -765,12 +765,17 @@ def database_schema():
     # asking for it when there's none is deprecated
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    # the pre-migration backup reads the real profile's config and cache;
+    # a throwaway database needs no backup
+    backup = transition.create_backup_transition
+    transition.create_backup_transition = lambda *args, **kwargs: None
     with tempfile.TemporaryDirectory() as tmp:
         path = pathlib.Path(tmp, "user_data.db")
         try:
             operations.create_tables(model_id=1, username="a_creator", db_path=path)
             transition.modify_tables(model_id=1, username="a_creator", db_path=path)
         finally:
+            transition.create_backup_transition = backup
             asyncio.set_event_loop(None)
             loop.close()
         tables = {}

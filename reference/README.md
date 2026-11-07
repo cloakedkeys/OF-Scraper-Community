@@ -32,13 +32,13 @@ wins:
    names and locations ([config.md](config.md)).
 3. **The built-in default**, used when the key is missing or empty. It's
    read with `of_env.getattr`, so an environment variable can change it
-   ([env.md](env.md)): `OFSC_<NAME>` when the defaults load, or the bare key
+   ([env.md](env.md)): the listed variable (usually `OFSC_<NAME>`) when the
+   defaults load, or the bare key
    name on every lookup. Environment variables change only defaults; they
    don't override a value that's in `config.json`.
 
-Environment variables come from the process, then a `.env` file in the
-working folder, then the files in `advanced_options.env_files`, each
-overriding the last. The `--env-files` option isn't loaded at present.
+Environment variables come from the process, then a `.env` file found by python-dotenv, which searches upward from `ofscraper/utils/of_env/` (from the working folder only in the standalone binaries, the REPL or a debugger),
+then the files in `advanced_options.env_files`, each overriding the last. The `--env-files` option isn't loaded at present.
 
 Settings without a `config.json` key (the backoff values, timeouts, API
 URLs, and most of [env.md](env.md)) can only be changed through the

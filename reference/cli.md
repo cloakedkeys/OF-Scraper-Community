@@ -122,10 +122,9 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 
 - **Dest:** `env_files` · **Type:** path; repeatable · **Default:** none
 - **Commands:** all
-- **Config fallback:** `advanced_options.env_files`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/program.py`
 - Path to a custom environment variables file (.env).
-- **Note:** Not loaded at present: `setup_settings` loads only `advanced_options.env_files` (and a `.env` in the working folder), and nothing reads the merged value of this option.
+- **Note:** Not loaded at present: `setup_settings` loads only `advanced_options.env_files` and nothing reads the merged value of this option (#201).
 
 ### Logging Options
 
@@ -894,7 +893,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
 - Disable cache and forces consecutive api scan
-- **Note:** Disables both the general cache and the API cache, as `advanced_options.cache-mode` `disabled` does. It also turns off incremental downloads.
+- **Note:** Disables both the general cache and the API cache, and turns off incremental downloads. It's the only way to do so: `advanced_options.cache-mode` `disabled` doesn't work at present (#200).
 
 #### `--no-api-cache`
 
@@ -903,7 +902,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
 - Forces consecutive api scan
-- **Note:** Disables only the API response cache, as `advanced_options.cache-mode` `api_disabled` does.
+- **Note:** Disables only the API response cache.
 
 #### `--key-mode`
 

@@ -7,9 +7,9 @@ Built-in defaults the app reads with `of_env.getattr(KEY)`
 `ofscraper/utils/of_env/values/` and cached. Each value can be overridden two
 ways: the listed `OFSC_*` environment variable, read when the defaults are
 loaded, or an environment variable with the bare key name (e.g. `DATABASE_TIMEOUT`),
-read on every lookup and converted to the default's type. A `.env` file in the
-working folder, then the env files named in `advanced_options.env_files`, are
-loaded into the environment first and override variables already set
+read on every lookup and converted to the default's type. a `.env` file found by python-dotenv, which searches upward from `ofscraper/utils/of_env/` (from the working folder only in the standalone binaries, the REPL or a debugger), then
+the env files named in `advanced_options.env_files`, are loaded into the
+environment first and override variables already set
 (`ofscraper/utils/of_env/load.py`). Values shown are the defaults with no environment variables set; paths
 under your home directory are shown as `{home_directory}`. Descriptions come
 from the comment above each value in the source where there is one.

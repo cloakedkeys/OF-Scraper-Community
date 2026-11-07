@@ -6,6 +6,7 @@ then run ``python scripts/reference/build_reference.py`` and commit the
 regenerated files in reference/.
 """
 
+import ast
 import difflib
 import importlib.util
 import pathlib
@@ -72,6 +73,25 @@ def test_every_option_is_described(build, notes, environment):
     )
     assert undocumented == [], "options with no help text and no notes.CLI entry"
     assert sorted(set(notes.CLI) - dests) == [], "notes.CLI names options that don't exist"
+    assert sorted(set(notes.NOT_MERGED) - dests) == [], "notes.NOT_MERGED names options that don't exist"
+
+
+def test_the_generator_knows_every_subcommand(build):
+    # parse_args registers the subcommands; the generator lists them by hand
+    tree = ast.parse((ROOT / "ofscraper/utils/args/main.py").read_text(encoding="utf-8"))
+    registered = {
+        node.args[1].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "attr", "") == "add_command"
+        and len(node.args) > 1
+        and isinstance(node.args[1], ast.Constant)
+    }
+    assert registered, "no add_command calls found in ofscraper/utils/args/main.py"
+    listed = set(build.COMMANDS) - {""}
+    assert sorted(registered - listed) == [], "add these to COMMANDS and command_objects()"
+    assert sorted(listed - registered) == [], "COMMANDS names commands that aren't registered"
+    assert set(build.command_objects()) == set(build.COMMANDS)
 
 
 def test_every_action_and_command_is_described(build, notes, environment):
