@@ -66,3 +66,16 @@ def test_neg_filter_does_not_grow_on_each_settings_build(monkeypatch):
     second = settings.merged_settings().neg_filter
     assert args.neg_filter == ["foo"]
     assert first == second and len(second) == 2
+
+
+def test_table_time_field_accepts_decimal_seconds():
+    # config.json can hold a decimal length; the table view splits it into h/m/s
+    from ofscraper.classes.table.fields.timefield import TimeField
+
+    inputs = [SimpleNamespace(value=None) for _ in range(3)]
+    field = object.__new__(TimeField)
+    field.query_one = lambda *a: SimpleNamespace(query=lambda *a: inputs)
+    field.update_table_max(5400.0)
+    assert [i.value for i in inputs] == ["1", "30", "0"]
+    field.update_table_min(90.7)
+    assert [i.value for i in inputs] == ["0", "1", "30"]
