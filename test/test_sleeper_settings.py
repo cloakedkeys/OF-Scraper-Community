@@ -1,6 +1,7 @@
 import pytest
 
 import ofscraper.utils.of_env.of_env as of_env
+from ofscraper.managers.sessionmanager.sessionmanager import SessionSleep, sessionManager
 from ofscraper.managers.sessionmanager.sleepers import Sleeper
 
 PREFIXES = [
@@ -40,6 +41,25 @@ def test_each_backoff_uses_its_own_settings(monkeypatch, prefix):
     sleeper = Sleeper()._create_sleeper(prefix, prefix)
     for n, (attribute, suffix) in enumerate(SETTINGS.items(), start=1):
         assert getattr(sleeper, attribute) == 1000 + n, f"{prefix}_{suffix}"
+
+
+def test_a_backoff_built_without_settings_uses_the_standard_api_values():
+    sleeper = SessionSleep()
+    for attribute, suffix in SETTINGS.items():
+        assert getattr(sleeper, attribute) == of_env.getattr(f"SESSION_{suffix}"), suffix
+
+
+def test_a_session_without_backoffs_builds_both_from_settings():
+    session = sessionManager()
+    for prefix, sleeper in (
+        ("SESSION", session._rate_limit_sleeper),
+        ("SESSION_403", session._forbidden_sleeper),
+    ):
+        for attribute, suffix in SETTINGS.items():
+            assert getattr(sleeper, attribute) == of_env.getattr(f"{prefix}_{suffix}"), f"{prefix}_{suffix}"
+    # a 429 after this no longer fails comparing against a missing minimum
+    session._rate_limit_sleeper.toomany_req()
+    session._rate_limit_sleeper._maybe_decay_sleep()
 
 
 @pytest.mark.parametrize("prefix", PREFIXES)
