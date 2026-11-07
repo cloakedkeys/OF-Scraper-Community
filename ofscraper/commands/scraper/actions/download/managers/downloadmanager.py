@@ -88,6 +88,8 @@ class DownloadManager:
         """
         length = r.headers.get("content-length")
         length = int(length) if length is not None else None
+        if length is None and 200 <= r.status < 300 and r.status != 206:
+            self._require_chunked(r, path)
         if not resume_size:
             return length, 0
         content_range = (r.headers.get("content-range") or "").strip()
@@ -122,6 +124,23 @@ class DownloadManager:
     def _start_over(self, path, reason):
         pathlib.Path(path).unlink(missing_ok=True)
         raise StartOver(f"can't resume, downloading from the start: {reason}")
+
+    def _require_chunked(self, r, path):
+        """A reply with no Content-Length is only taken if it's chunked: a
+        chunked transfer marks its own end, so a cut-off one fails. A reply
+        that just ends when the connection closes can't be told apart from
+        one cut off halfway, so it fails before anything is written, and
+        the part on disk is left as it was."""
+        encoding = (r.headers.get("transfer-encoding") or "").lower()
+        if "chunked" in encoding:
+            return
+        message = (
+            f"{pathlib.Path(path).name}: the server sent no file size and didn't "
+            "send the file chunked, so a cut-off download can't be detected; "
+            "not downloaded, the .part is kept"
+        )
+        common_globals.log.info(message)
+        raise Exception(message)
 
     def _get_resume_size(
         self,

@@ -4,6 +4,8 @@ A server that sends a file chunked, without Content-Length or Content-Range,
 used to make the normal downloader's size check crash with TypeError on
 every retry, and the DRM downloader stop with "DRM segment empty size". Now
 the reply is written to its end, and what was written is the file's size.
+Only a chunked reply is taken that way: one that just ends when the
+connection closes can't be told from one cut off halfway, so it fails.
 Each test runs a downloader's whole request step, retries included, through
 the real session against a local server.
 """
@@ -11,6 +13,7 @@ the real session against a local server.
 import asyncio
 import contextvars
 import logging
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -225,6 +228,97 @@ def test_part_with_no_saved_size_is_downloaded_again(tmp_path, monkeypatch, run)
     assert part.read_bytes() == BODY
     assert total == T
     assert seen == [None]
+
+
+def _raw_reply(mode):
+    """A raw socket server's reply with no Content-Length: chunked, or (not
+    chunked) ended by closing the connection. "cut" stops halfway."""
+    half = BODY[: T // 2]
+    if mode == "chunked_cut":
+        return (
+            b"HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\n"
+            b"Transfer-Encoding: chunked\r\n\r\n"
+            + b"%x\r\n" % len(half)
+            + half
+            + b"\r\n"
+        )
+    head = b"HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nConnection: close\r\n\r\n"
+    return head + (half if mode == "close_cut" else BODY)
+
+
+def _raw_run(mode):
+    """Like _run, but the server writes `mode`'s reply on a raw socket and
+    closes the connection, ignoring any Range."""
+
+    def run(body, download):
+        seen = []
+
+        async def handle(reader, writer):
+            request = (await reader.readuntil(b"\r\n\r\n")).decode()
+            rng = [
+                line.split(":", 1)[1].strip()
+                for line in request.split("\r\n")
+                if line.lower().startswith("range:")
+            ]
+            seen.append(rng[0] if rng else None)
+            writer.write(_raw_reply(mode))
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+
+        async def go():
+            server = await asyncio.start_server(handle, "127.0.0.1", 0)
+            base = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+            try:
+                async with sessionManager(
+                    retries=1, wait_min=0, wait_max=0, log=logging.getLogger("test")
+                ) as c:
+                    try:
+                        return await download(c, base), seen
+                    except Exception as E:
+                        return E, seen
+            finally:
+                server.close()
+                await server.wait_closed()
+
+        return asyncio.run(go())
+
+    return run
+
+
+@RUNS
+@pytest.mark.parametrize("mode", ["chunked_cut", "close_cut", "close_full"])
+def test_reply_without_size_must_be_chunked(tmp_path, monkeypatch, run, mode):
+    # a reply that ends by closing the connection can't be checked: cut off
+    # halfway it looks just like a whole one, so neither is taken as the file
+    monkeypatch.setattr(sys.modules[__name__], "_run", _raw_run(mode))
+    result, seen, part, _ = run(tmp_path, monkeypatch)
+    assert isinstance(result, Exception)
+    if mode != "chunked_cut":
+        assert "didn't send the file chunked" in str(result)
+        # nothing was written
+        assert not part.exists() or part.stat().st_size == 0
+    assert seen == [None, None]
+
+
+@RUNS
+def test_unchunked_reply_to_resume_keeps_part(tmp_path, monkeypatch, run):
+    # a server that ignores Range and sends the whole file with no size and
+    # no chunking: the reply is refused before the part is touched
+    for module in (md, ad):
+        monkeypatch.setattr(
+            module,
+            "download_retry",
+            lambda: retries.download_retry(stop=stop_after_attempt(1), wait=wait_none()),
+        )
+    monkeypatch.setattr(sys.modules[__name__], "_run", _raw_run("close_full"))
+    saved = {"content-total": T, "content-type": "video/mp4"}
+    result, seen, part, cached = run(tmp_path, monkeypatch, 30_000, saved)
+    assert isinstance(result, Exception)
+    assert "didn't send the file chunked" in str(result)
+    assert part.read_bytes() == BODY[:30_000]
+    assert seen == ["bytes=30000-"]
+    assert cached == []
 
 
 @RUNS
