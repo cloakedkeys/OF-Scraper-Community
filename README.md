@@ -38,7 +38,7 @@ Upstream hasn't been updated since April 2026. This fork keeps it working:
 
 ## Install
 
-This fork is on PyPI as **`ofscraper-community`**. The command is still `ofscraper`. 
+This fork is on PyPI as **`ofscraper-community`**. The command is still `ofscraper`.
 
 **Requirements:**
 - Python 3.11, 3.12, 3.13, 3.14 or 3.15. Older and newer versions aren't supported.
