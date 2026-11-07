@@ -53,11 +53,18 @@ otherwise the first error already multiplies it. Each error multiplies the wait
 by `*_SLEEP_INCREASE_FACTOR`, up to `*_SLEEP_MAX`, but only if
 `*_SLEEP_INCREASE_TIME_DIFF` seconds have passed since the last change (or since the program started or
 the last per-creator reset). After `*_SLEEP_DECAY_THRESHOLD` seconds without a change
-the wait is divided by `*_SLEEP_DECAY_FACTOR`, down to `*_MIN_SLEEP`.
-`*_MIN_SLEEP` is also the minimum gap kept between requests. Before each
+the wait is divided by `*_SLEEP_DECAY_FACTOR`, down to `*_MIN_SLEEP`; once it
+would drop below 0.5 seconds it goes straight to `*_MIN_SLEEP` and the backoff
+ends. `*_MIN_SLEEP` is also the minimum gap kept between requests. Before each
 request the rate-limit wait runs first, then the 403 backoff if one is running.
 The 403 `*_MIN_SLEEP` gap is kept only when the rate-limit `*_MIN_SLEEP` is 0
 and no rate-limit backoff is running.
+
+Only the standard API session (`SESSION_403_*`) backs off on a 403. Downloads,
+CDM, likes, metadata, Discord and subscriptions never start a 403 backoff (a
+403 there is usually an expired link), so their `<KIND>_SESSION_403_*` values
+have no effect, except that `<KIND>_SESSION_403_MIN_SLEEP` is still kept as a
+gap under the rule above.
 """
 
 # options merged_settings reads but that don't actually override the config
@@ -303,7 +310,7 @@ TABLES = {
     },
     "messages": {
         "summary": "One row per direct message seen in the chat with the creator, from either side.",
-        "written_by": "make_messages_table_changes (ofscraper/db/operations_/messages.py) runs when the Messages area is scraped (ofscraper/data/posts/post.py process_messages), and from manual/url mode and the check command. New message ids are INSERTed; existing rows are UPDATEd only under the metadata command. The messages scanner (ofscraper/data/api/messages.py) sets is_deleted=1 for messages it expected but the API skipped past; unlike posts, an update does not reset is_deleted. Migration rebuilds the table once; the Merge Databases menu copies rows in. No DELETEs. Unique key: UNIQUE (post_id, model_id). Application-side INSERT-or-UPDATE based on existing message ids.",
+        "written_by": "make_messages_table_changes (ofscraper/db/operations_/messages.py) runs when the Messages area is scraped (ofscraper/data/posts/post.py process_messages), and from manual/url mode and the check command. New message ids are INSERTed; existing rows are UPDATEd (and is_deleted reset to 0) only under the metadata command. The messages scanner (ofscraper/data/api/messages.py) sets is_deleted=1 for messages it expected but the API skipped past. Migration rebuilds the table once, in one transaction that keeps every column including is_deleted; the Merge Databases menu copies rows in, is_deleted included. No DELETEs. Unique key: UNIQUE (post_id, model_id). Application-side INSERT-or-UPDATE based on existing message ids.",
         "columns": {
             "id": "Row id (INTEGER PRIMARY KEY), internal only.",
             "post_id": "Site message id.",
@@ -319,7 +326,7 @@ TABLES = {
     },
     "stories": {
         "summary": "One row per story or highlight story seen for the creator.",
-        "written_by": "make_stories_table_changes (ofscraper/db/operations_/stories.py) runs when the Stories or Highlights areas are scraped (ofscraper/data/posts/post.py), and from manual/url mode and the check command. New ids are INSERTed. The function is meant to UPDATE existing rows under the metadata command, but it reads one filter iterator twice, so the update list is always empty and existing story rows are never updated. Migration rebuilds the table once; the Merge Databases menu copies rows in. No DELETEs. Unique key: UNIQUE (post_id, model_id). Application-side insert of ids not already present.",
+        "written_by": "make_stories_table_changes (ofscraper/db/operations_/stories.py) runs when the Stories or Highlights areas are scraped (ofscraper/data/posts/post.py), and from manual/url mode and the check command. New ids are INSERTed; existing rows are UPDATEd only under the metadata command. Migration rebuilds the table once; the Merge Databases menu copies rows in. No DELETEs. Unique key: UNIQUE (post_id, model_id). Application-side insert of ids not already present.",
         "columns": {
             "id": "Row id (INTEGER PRIMARY KEY), internal only.",
             "post_id": "Site story id.",
@@ -362,7 +369,7 @@ TABLES = {
     },
     "products": {
         "summary": "Legacy table for paid products; created and migrated, but no current code path writes rows to it.",
-        "written_by": "Only created (create_products_table), rebuilt once by migration (rebuild_products_table) and copied by the Merge Databases menu (ofscraper/db/operations_/others.py, ofscraper/db/merge.py). No scrape, download or command inserts rows, so it is normally empty. Its transition reader does not select post_id and its writer passes 6 values for 8 placeholders, so a rebuild or merge of a non-empty table would fail. Unique key: UNIQUE (post_id, model_id).",
+        "written_by": "Only created (create_products_table), rebuilt once by migration (rebuild_products_table) and copied by the Merge Databases menu (ofscraper/db/operations_/others.py, ofscraper/db/merge.py). No scrape, download or command inserts rows, so it is normally empty. The rebuild copies every row into the new table in one transaction before the old one is dropped. Unique key: UNIQUE (post_id, model_id).",
         "columns": {
             "id": "Row id (INTEGER PRIMARY KEY), internal only.",
             "post_id": "Id of the product or its post.",
@@ -377,7 +384,7 @@ TABLES = {
     },
     "others": {
         "summary": "Legacy table for content outside the main areas; created and migrated, but no current code path writes rows to it.",
-        "written_by": "Only created (create_others_table), rebuilt once by migration (rebuild_others_table) and copied by the Merge Databases menu. No scrape, download or command inserts rows, so it is normally empty. As with products, its transition reader omits post_id and its writer passes 6 values for 7 placeholders, so a rebuild or merge of a non-empty table would fail. Unique key: UNIQUE (post_id, model_id).",
+        "written_by": "Only created (create_others_table), rebuilt once by migration (rebuild_others_table) and copied by the Merge Databases menu. No scrape, download or command inserts rows, so it is normally empty. As with products, the rebuild copies every row into the new table in one transaction before the old one is dropped. Unique key: UNIQUE (post_id, model_id).",
         "columns": {
             "id": "Row id (INTEGER PRIMARY KEY), internal only.",
             "post_id": "Id of the item.",
