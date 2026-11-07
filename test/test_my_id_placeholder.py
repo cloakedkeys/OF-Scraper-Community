@@ -17,8 +17,7 @@ def base(monkeypatch):
 
 
 def _variables(monkeypatch, anon):
-    real = placeholder.settings.get_settings()
-    fake = SimpleNamespace(**{**vars(real), "anon": anon}) if hasattr(real, "__dict__") else SimpleNamespace(anon=anon)
+    fake = SimpleNamespace(anon=anon)
     monkeypatch.setattr(placeholder.settings, "get_settings", lambda: fake)
     monkeypatch.setattr(placeholder.me.settings, "get_settings", lambda: fake)
     p = placeholder.basePlaceholder()
