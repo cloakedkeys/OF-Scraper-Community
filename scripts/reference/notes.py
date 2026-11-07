@@ -52,8 +52,7 @@ seconds. A later error multiplies it by `*_SLEEP_INCREASE_FACTOR`, up to
 `*_SLEEP_MAX`, but only if `*_SLEEP_INCREASE_TIME_DIFF` seconds have passed
 since the last change. After `*_SLEEP_DECAY_THRESHOLD` seconds without a
 change the wait is divided by `*_SLEEP_DECAY_FACTOR`, down to `*_MIN_SLEEP`,
-which is also the minimum gap kept between requests. At present only the
-`SESSION_SLEEP_DECAY_*` values are used, for every kind of request (#198).
+which is also the minimum gap kept between requests.
 """
 
 # options merged_settings reads but that don't actually override the config
@@ -87,8 +86,8 @@ ENV_PATTERNS = [
     (r"[A-Z_]*SESSION(_403)?_SLEEP_INCREASE_TIME_DIFF", "Seconds that must pass since the last change before another error raises the wait."),
     (r"[A-Z_]*SESSION(_403)?_SLEEP_MAX", "Longest backoff wait, in seconds."),
     (r"[A-Z_]*SESSION(_403)?_SLEEP_INCREASE_FACTOR", "Each further error multiplies the wait by this."),
-    (r"[A-Z_]*SESSION(_403)?_SLEEP_DECAY_THRESHOLD", "Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198)."),
-    (r"[A-Z_]*SESSION(_403)?_SLEEP_DECAY_FACTOR", "The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198)."),
+    (r"[A-Z_]*SESSION(_403)?_SLEEP_DECAY_THRESHOLD", "Seconds without a change after which the wait shrinks."),
+    (r"[A-Z_]*SESSION(_403)?_SLEEP_DECAY_FACTOR", "The wait is divided by this when it shrinks."),
     (r"[A-Z_]*SESSION(_403)?_MIN_SLEEP", "Smallest wait, and the minimum gap kept between requests, in seconds."),
     (r"[A-Z_]+_SUBPROCESS_LEVEL", "Log level for the output of this subprocess (the user script, ffmpeg or ffprobe named in the key); 0 turns that output off."),
 ]

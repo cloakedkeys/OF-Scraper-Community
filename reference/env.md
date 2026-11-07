@@ -25,8 +25,7 @@ seconds. A later error multiplies it by `*_SLEEP_INCREASE_FACTOR`, up to
 `*_SLEEP_MAX`, but only if `*_SLEEP_INCREASE_TIME_DIFF` seconds have passed
 since the last change. After `*_SLEEP_DECAY_THRESHOLD` seconds without a
 change the wait is divided by `*_SLEEP_DECAY_FACTOR`, down to `*_MIN_SLEEP`,
-which is also the minimum gap kept between requests. At present only the
-`SESSION_SLEEP_DECAY_*` values are used, for every kind of request (#198).
+which is also the minimum gap kept between requests.
 
 ## Read directly from the environment
 
@@ -461,8 +460,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="session_sleep_increase_time_diff"></a>`SESSION_SLEEP_INCREASE_TIME_DIFF` | `OFSC_SESSION_SLEEP_INCREASE_TIME_DIFF` | `30.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="session_sleep_max"></a>`SESSION_SLEEP_MAX` | `OFSC_SESSION_SLEEP_MAX` | `180.0` | Longest backoff wait, in seconds. |
 | <a id="session_sleep_increase_factor"></a>`SESSION_SLEEP_INCREASE_FACTOR` | `OFSC_SESSION_SLEEP_INCREASE_FACTOR` | `2.0` | Each further error multiplies the wait by this. |
-| <a id="session_sleep_decay_threshold"></a>`SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="session_sleep_decay_factor"></a>`SESSION_SLEEP_DECAY_FACTOR` | `OFSC_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="session_sleep_decay_threshold"></a>`SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. |
+| <a id="session_sleep_decay_factor"></a>`SESSION_SLEEP_DECAY_FACTOR` | `OFSC_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="session_min_sleep"></a>`SESSION_MIN_SLEEP` | `OFSC_SESSION_MIN_SLEEP` | `0.5` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Standard API: 403 Forbidden Errors)
@@ -473,8 +472,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="session_403_sleep_increase_time_diff"></a>`SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `OFSC_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `60.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="session_403_sleep_max"></a>`SESSION_403_SLEEP_MAX` | `OFSC_SESSION_403_SLEEP_MAX` | `180.0` | Longest backoff wait, in seconds. |
 | <a id="session_403_sleep_increase_factor"></a>`SESSION_403_SLEEP_INCREASE_FACTOR` | `OFSC_SESSION_403_SLEEP_INCREASE_FACTOR` | `1.5` | Each further error multiplies the wait by this. |
-| <a id="session_403_sleep_decay_threshold"></a>`SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_SESSION_403_SLEEP_DECAY_THRESHOLD` | `65.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="session_403_sleep_decay_factor"></a>`SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="session_403_sleep_decay_threshold"></a>`SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_SESSION_403_SLEEP_DECAY_THRESHOLD` | `65.0` | Seconds without a change after which the wait shrinks. |
+| <a id="session_403_sleep_decay_factor"></a>`SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="session_403_min_sleep"></a>`SESSION_403_MIN_SLEEP` | `OFSC_SESSION_403_MIN_SLEEP` | `0.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Downloads: 429/504 Rate Limiting)
@@ -485,8 +484,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="download_session_sleep_increase_time_diff"></a>`DOWNLOAD_SESSION_SLEEP_INCREASE_TIME_DIFF` | `OFSC_DOWNLOAD_SESSION_SLEEP_INCREASE_TIME_DIFF` | `30.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="download_session_sleep_max"></a>`DOWNLOAD_SESSION_SLEEP_MAX` | `OFSC_DOWNLOAD_SESSION_SLEEP_MAX` | `180.0` | Longest backoff wait, in seconds. |
 | <a id="download_session_sleep_increase_factor"></a>`DOWNLOAD_SESSION_SLEEP_INCREASE_FACTOR` | `OFSC_DOWNLOAD_SESSION_SLEEP_INCREASE_FACTOR` | `2.0` | Each further error multiplies the wait by this. |
-| <a id="download_session_sleep_decay_threshold"></a>`DOWNLOAD_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_DOWNLOAD_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="download_session_sleep_decay_factor"></a>`DOWNLOAD_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_DOWNLOAD_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="download_session_sleep_decay_threshold"></a>`DOWNLOAD_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_DOWNLOAD_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. |
+| <a id="download_session_sleep_decay_factor"></a>`DOWNLOAD_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_DOWNLOAD_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="download_session_min_sleep"></a>`DOWNLOAD_SESSION_MIN_SLEEP` | `OFSC_DOWNLOAD_SESSION_MIN_SLEEP` | `0.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Downloads: 403 Forbidden Errors)
@@ -497,8 +496,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="download_session_403_sleep_increase_time_diff"></a>`DOWNLOAD_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `OFSC_DOWNLOAD_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `80.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="download_session_403_sleep_max"></a>`DOWNLOAD_SESSION_403_SLEEP_MAX` | `OFSC_DOWNLOAD_SESSION_403_SLEEP_MAX` | `180.0` | Longest backoff wait, in seconds. |
 | <a id="download_session_403_sleep_increase_factor"></a>`DOWNLOAD_SESSION_403_SLEEP_INCREASE_FACTOR` | `OFSC_DOWNLOAD_SESSION_403_SLEEP_INCREASE_FACTOR` | `1.5` | Each further error multiplies the wait by this. |
-| <a id="download_session_403_sleep_decay_threshold"></a>`DOWNLOAD_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_DOWNLOAD_SESSION_403_SLEEP_DECAY_THRESHOLD` | `70.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="download_session_403_sleep_decay_factor"></a>`DOWNLOAD_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_DOWNLOAD_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="download_session_403_sleep_decay_threshold"></a>`DOWNLOAD_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_DOWNLOAD_SESSION_403_SLEEP_DECAY_THRESHOLD` | `70.0` | Seconds without a change after which the wait shrinks. |
+| <a id="download_session_403_sleep_decay_factor"></a>`DOWNLOAD_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_DOWNLOAD_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="download_session_403_min_sleep"></a>`DOWNLOAD_SESSION_403_MIN_SLEEP` | `OFSC_DOWNLOAD_SESSION_403_MIN_SLEEP` | `0.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For CDM: 429/504 Rate Limiting)
@@ -509,8 +508,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="cdm_session_sleep_increase_time_diff"></a>`CDM_SESSION_SLEEP_INCREASE_TIME_DIFF` | `OFSC_CDM_SESSION_SLEEP_INCREASE_TIME_DIFF` | `30.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="cdm_session_sleep_max"></a>`CDM_SESSION_SLEEP_MAX` | `OFSC_CDM_SESSION_SLEEP_MAX` | `180.0` | Longest backoff wait, in seconds. |
 | <a id="cdm_session_sleep_increase_factor"></a>`CDM_SESSION_SLEEP_INCREASE_FACTOR` | `OFSC_CDM_SESSION_SLEEP_INCREASE_FACTOR` | `2.0` | Each further error multiplies the wait by this. |
-| <a id="cdm_session_sleep_decay_threshold"></a>`CDM_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_CDM_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="cdm_session_sleep_decay_factor"></a>`CDM_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_CDM_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="cdm_session_sleep_decay_threshold"></a>`CDM_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_CDM_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. |
+| <a id="cdm_session_sleep_decay_factor"></a>`CDM_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_CDM_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="cdm_session_min_sleep"></a>`CDM_SESSION_MIN_SLEEP` | `OFSC_CDM_SESSION_MIN_SLEEP` | `1.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For CDM: 403 Forbidden Errors)
@@ -521,8 +520,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="cdm_session_403_sleep_increase_time_diff"></a>`CDM_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `OFSC_CDM_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `60.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="cdm_session_403_sleep_max"></a>`CDM_SESSION_403_SLEEP_MAX` | `OFSC_CDM_SESSION_403_SLEEP_MAX` | `180.0` | Longest backoff wait, in seconds. |
 | <a id="cdm_session_403_sleep_increase_factor"></a>`CDM_SESSION_403_SLEEP_INCREASE_FACTOR` | `OFSC_CDM_SESSION_403_SLEEP_INCREASE_FACTOR` | `1.5` | Each further error multiplies the wait by this. |
-| <a id="cdm_session_403_sleep_decay_threshold"></a>`CDM_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_CDM_SESSION_403_SLEEP_DECAY_THRESHOLD` | `65.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="cdm_session_403_sleep_decay_factor"></a>`CDM_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_CDM_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="cdm_session_403_sleep_decay_threshold"></a>`CDM_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_CDM_SESSION_403_SLEEP_DECAY_THRESHOLD` | `65.0` | Seconds without a change after which the wait shrinks. |
+| <a id="cdm_session_403_sleep_decay_factor"></a>`CDM_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_CDM_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="cdm_session_403_min_sleep"></a>`CDM_SESSION_403_MIN_SLEEP` | `OFSC_CDM_SESSION_403_MIN_SLEEP` | `0.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Like Operations: 429/504 Rate Limiting)
@@ -533,8 +532,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="like_session_sleep_increase_time_diff"></a>`LIKE_SESSION_SLEEP_INCREASE_TIME_DIFF` | `OFSC_LIKE_SESSION_SLEEP_INCREASE_TIME_DIFF` | `4.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="like_session_sleep_max"></a>`LIKE_SESSION_SLEEP_MAX` | `OFSC_LIKE_SESSION_SLEEP_MAX` | `120.0` | Longest backoff wait, in seconds. |
 | <a id="like_session_sleep_increase_factor"></a>`LIKE_SESSION_SLEEP_INCREASE_FACTOR` | `OFSC_LIKE_SESSION_SLEEP_INCREASE_FACTOR` | `2.0` | Each further error multiplies the wait by this. |
-| <a id="like_session_sleep_decay_threshold"></a>`LIKE_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_LIKE_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="like_session_sleep_decay_factor"></a>`LIKE_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_LIKE_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="like_session_sleep_decay_threshold"></a>`LIKE_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_LIKE_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. |
+| <a id="like_session_sleep_decay_factor"></a>`LIKE_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_LIKE_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="like_session_min_sleep"></a>`LIKE_SESSION_MIN_SLEEP` | `OFSC_LIKE_SESSION_MIN_SLEEP` | `0.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Like Operations: 403 Forbidden Errors)
@@ -545,8 +544,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="like_session_403_sleep_increase_time_diff"></a>`LIKE_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `OFSC_LIKE_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `4.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="like_session_403_sleep_max"></a>`LIKE_SESSION_403_SLEEP_MAX` | `OFSC_LIKE_SESSION_403_SLEEP_MAX` | `120.0` | Longest backoff wait, in seconds. |
 | <a id="like_session_403_sleep_increase_factor"></a>`LIKE_SESSION_403_SLEEP_INCREASE_FACTOR` | `OFSC_LIKE_SESSION_403_SLEEP_INCREASE_FACTOR` | `1.5` | Each further error multiplies the wait by this. |
-| <a id="like_session_403_sleep_decay_threshold"></a>`LIKE_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_LIKE_SESSION_403_SLEEP_DECAY_THRESHOLD` | `65.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="like_session_403_sleep_decay_factor"></a>`LIKE_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_LIKE_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="like_session_403_sleep_decay_threshold"></a>`LIKE_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_LIKE_SESSION_403_SLEEP_DECAY_THRESHOLD` | `65.0` | Seconds without a change after which the wait shrinks. |
+| <a id="like_session_403_sleep_decay_factor"></a>`LIKE_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_LIKE_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="like_session_403_min_sleep"></a>`LIKE_SESSION_403_MIN_SLEEP` | `OFSC_LIKE_SESSION_403_MIN_SLEEP` | `0.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Metadata: 429/504 Rate Limiting)
@@ -557,8 +556,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="metadata_session_sleep_increase_time_diff"></a>`METADATA_SESSION_SLEEP_INCREASE_TIME_DIFF` | `OFSC_METADATA_SESSION_SLEEP_INCREASE_TIME_DIFF` | `35.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="metadata_session_sleep_max"></a>`METADATA_SESSION_SLEEP_MAX` | `OFSC_METADATA_SESSION_SLEEP_MAX` | `60.0` | Longest backoff wait, in seconds. |
 | <a id="metadata_session_sleep_increase_factor"></a>`METADATA_SESSION_SLEEP_INCREASE_FACTOR` | `OFSC_METADATA_SESSION_SLEEP_INCREASE_FACTOR` | `1.5` | Each further error multiplies the wait by this. |
-| <a id="metadata_session_sleep_decay_threshold"></a>`METADATA_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_METADATA_SESSION_SLEEP_DECAY_THRESHOLD` | `35.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="metadata_session_sleep_decay_factor"></a>`METADATA_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_METADATA_SESSION_SLEEP_DECAY_FACTOR` | `2.0` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="metadata_session_sleep_decay_threshold"></a>`METADATA_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_METADATA_SESSION_SLEEP_DECAY_THRESHOLD` | `35.0` | Seconds without a change after which the wait shrinks. |
+| <a id="metadata_session_sleep_decay_factor"></a>`METADATA_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_METADATA_SESSION_SLEEP_DECAY_FACTOR` | `2.0` | The wait is divided by this when it shrinks. |
 | <a id="metadata_session_min_sleep"></a>`METADATA_SESSION_MIN_SLEEP` | `OFSC_METADATA_SESSION_MIN_SLEEP` | `0.5` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Metadata: 403 Forbidden Errors)
@@ -569,8 +568,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="metadata_session_403_sleep_increase_time_diff"></a>`METADATA_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `OFSC_METADATA_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `35.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="metadata_session_403_sleep_max"></a>`METADATA_SESSION_403_SLEEP_MAX` | `OFSC_METADATA_SESSION_403_SLEEP_MAX` | `60.0` | Longest backoff wait, in seconds. |
 | <a id="metadata_session_403_sleep_increase_factor"></a>`METADATA_SESSION_403_SLEEP_INCREASE_FACTOR` | `OFSC_METADATA_SESSION_403_SLEEP_INCREASE_FACTOR` | `1.5` | Each further error multiplies the wait by this. |
-| <a id="metadata_session_403_sleep_decay_threshold"></a>`METADATA_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_METADATA_SESSION_403_SLEEP_DECAY_THRESHOLD` | `30.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="metadata_session_403_sleep_decay_factor"></a>`METADATA_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_METADATA_SESSION_403_SLEEP_DECAY_FACTOR` | `2.0` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="metadata_session_403_sleep_decay_threshold"></a>`METADATA_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_METADATA_SESSION_403_SLEEP_DECAY_THRESHOLD` | `30.0` | Seconds without a change after which the wait shrinks. |
+| <a id="metadata_session_403_sleep_decay_factor"></a>`METADATA_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_METADATA_SESSION_403_SLEEP_DECAY_FACTOR` | `2.0` | The wait is divided by this when it shrinks. |
 | <a id="metadata_session_403_min_sleep"></a>`METADATA_SESSION_403_MIN_SLEEP` | `OFSC_METADATA_SESSION_403_MIN_SLEEP` | `2.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Discord: 429/504 Rate Limiting)
@@ -581,8 +580,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="discord_session_sleep_increase_time_diff"></a>`DISCORD_SESSION_SLEEP_INCREASE_TIME_DIFF` | `OFSC_DISCORD_SESSION_SLEEP_INCREASE_TIME_DIFF` | `30.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="discord_session_sleep_max"></a>`DISCORD_SESSION_SLEEP_MAX` | `OFSC_DISCORD_SESSION_SLEEP_MAX` | `60.0` | Longest backoff wait, in seconds. |
 | <a id="discord_session_sleep_increase_factor"></a>`DISCORD_SESSION_SLEEP_INCREASE_FACTOR` | `OFSC_DISCORD_SESSION_SLEEP_INCREASE_FACTOR` | `2.0` | Each further error multiplies the wait by this. |
-| <a id="discord_session_sleep_decay_threshold"></a>`DISCORD_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_DISCORD_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="discord_session_sleep_decay_factor"></a>`DISCORD_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_DISCORD_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="discord_session_sleep_decay_threshold"></a>`DISCORD_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_DISCORD_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. |
+| <a id="discord_session_sleep_decay_factor"></a>`DISCORD_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_DISCORD_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="discord_session_min_sleep"></a>`DISCORD_SESSION_MIN_SLEEP` | `OFSC_DISCORD_SESSION_MIN_SLEEP` | `2.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Discord: 403 Forbidden Errors)
@@ -593,8 +592,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="discord_session_403_sleep_increase_time_diff"></a>`DISCORD_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `OFSC_DISCORD_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `30.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="discord_session_403_sleep_max"></a>`DISCORD_SESSION_403_SLEEP_MAX` | `OFSC_DISCORD_SESSION_403_SLEEP_MAX` | `300.0` | Longest backoff wait, in seconds. |
 | <a id="discord_session_403_sleep_increase_factor"></a>`DISCORD_SESSION_403_SLEEP_INCREASE_FACTOR` | `OFSC_DISCORD_SESSION_403_SLEEP_INCREASE_FACTOR` | `4.0` | Each further error multiplies the wait by this. |
-| <a id="discord_session_403_sleep_decay_threshold"></a>`DISCORD_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_DISCORD_SESSION_403_SLEEP_DECAY_THRESHOLD` | `60.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="discord_session_403_sleep_decay_factor"></a>`DISCORD_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_DISCORD_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="discord_session_403_sleep_decay_threshold"></a>`DISCORD_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_DISCORD_SESSION_403_SLEEP_DECAY_THRESHOLD` | `60.0` | Seconds without a change after which the wait shrinks. |
+| <a id="discord_session_403_sleep_decay_factor"></a>`DISCORD_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_DISCORD_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="discord_session_403_min_sleep"></a>`DISCORD_SESSION_403_MIN_SLEEP` | `OFSC_DISCORD_SESSION_403_MIN_SLEEP` | `30.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Subscription API: 429/504 Rate Limiting)
@@ -605,8 +604,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="subscription_session_sleep_increase_time_diff"></a>`SUBSCRIPTION_SESSION_SLEEP_INCREASE_TIME_DIFF` | `OFSC_SUBSCRIPTION_SESSION_SLEEP_INCREASE_TIME_DIFF` | `30.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="subscription_session_sleep_max"></a>`SUBSCRIPTION_SESSION_SLEEP_MAX` | `OFSC_SUBSCRIPTION_SESSION_SLEEP_MAX` | `180.0` | Longest backoff wait, in seconds. |
 | <a id="subscription_session_sleep_increase_factor"></a>`SUBSCRIPTION_SESSION_SLEEP_INCREASE_FACTOR` | `OFSC_SUBSCRIPTION_SESSION_SLEEP_INCREASE_FACTOR` | `2.0` | Each further error multiplies the wait by this. |
-| <a id="subscription_session_sleep_decay_threshold"></a>`SUBSCRIPTION_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_SUBSCRIPTION_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="subscription_session_sleep_decay_factor"></a>`SUBSCRIPTION_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_SUBSCRIPTION_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="subscription_session_sleep_decay_threshold"></a>`SUBSCRIPTION_SESSION_SLEEP_DECAY_THRESHOLD` | `OFSC_SUBSCRIPTION_SESSION_SLEEP_DECAY_THRESHOLD` | `120.0` | Seconds without a change after which the wait shrinks. |
+| <a id="subscription_session_sleep_decay_factor"></a>`SUBSCRIPTION_SESSION_SLEEP_DECAY_FACTOR` | `OFSC_SUBSCRIPTION_SESSION_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="subscription_session_min_sleep"></a>`SUBSCRIPTION_SESSION_MIN_SLEEP` | `OFSC_SUBSCRIPTION_SESSION_MIN_SLEEP` | `0.5` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ### Dynamic Session Sleep Configuration (For Subscription API: 403 Forbidden Errors)
@@ -617,8 +616,8 @@ These are read with `os.getenv` where they're used, not through `of_env.getattr`
 | <a id="subscription_session_403_sleep_increase_time_diff"></a>`SUBSCRIPTION_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `OFSC_SUBSCRIPTION_SESSION_403_SLEEP_INCREASE_TIME_DIFF` | `60.0` | Seconds that must pass since the last change before another error raises the wait. |
 | <a id="subscription_session_403_sleep_max"></a>`SUBSCRIPTION_SESSION_403_SLEEP_MAX` | `OFSC_SUBSCRIPTION_SESSION_403_SLEEP_MAX` | `180.0` | Longest backoff wait, in seconds. |
 | <a id="subscription_session_403_sleep_increase_factor"></a>`SUBSCRIPTION_SESSION_403_SLEEP_INCREASE_FACTOR` | `OFSC_SUBSCRIPTION_SESSION_403_SLEEP_INCREASE_FACTOR` | `1.5` | Each further error multiplies the wait by this. |
-| <a id="subscription_session_403_sleep_decay_threshold"></a>`SUBSCRIPTION_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_SUBSCRIPTION_SESSION_403_SLEEP_DECAY_THRESHOLD` | `65.0` | Seconds without a change after which the wait shrinks. Only `SESSION_SLEEP_DECAY_THRESHOLD` is read at present (#198). |
-| <a id="subscription_session_403_sleep_decay_factor"></a>`SUBSCRIPTION_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_SUBSCRIPTION_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. Only `SESSION_SLEEP_DECAY_FACTOR` is read at present (#198). |
+| <a id="subscription_session_403_sleep_decay_threshold"></a>`SUBSCRIPTION_SESSION_403_SLEEP_DECAY_THRESHOLD` | `OFSC_SUBSCRIPTION_SESSION_403_SLEEP_DECAY_THRESHOLD` | `65.0` | Seconds without a change after which the wait shrinks. |
+| <a id="subscription_session_403_sleep_decay_factor"></a>`SUBSCRIPTION_SESSION_403_SLEEP_DECAY_FACTOR` | `OFSC_SUBSCRIPTION_SESSION_403_SLEEP_DECAY_FACTOR` | `1.5` | The wait is divided by this when it shrinks. |
 | <a id="subscription_session_403_min_sleep"></a>`SUBSCRIPTION_SESSION_403_MIN_SLEEP` | `OFSC_SUBSCRIPTION_SESSION_403_MIN_SLEEP` | `0.0` | Smallest wait, and the minimum gap kept between requests, in seconds. |
 
 ## `ofscraper/utils/of_env/values/req/req.py`
