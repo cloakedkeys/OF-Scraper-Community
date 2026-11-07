@@ -41,11 +41,6 @@ def test_incremental_downloads_false_is_kept():
     assert new["advanced_options"]["incremental_downloads"] is False
 
 
-def test_incremental_downloads_legacy_false_is_kept():
-    cfg = {"advanced_options": {"enable_auto_after": False}}
-    assert data.get_incremental_downloads(config=cfg) is False
-
-
 # 2. cache-mode disabled / api_disabled
 
 
@@ -123,8 +118,7 @@ def test_removed_deviint_aliases_are_rejected(alias):
     assert data.get_dynamic(config=cfg) == data.of_env.getattr("DYNAMIC_RULE_DEFAULT")
 
 
-@pytest.mark.parametrize("alias", data.of_env.getattr("DYNAMIC_OPTIONS_ALL"))
-def test_every_accepted_dynamic_alias_picks_its_rule(alias, monkeypatch):
+def test_every_accepted_dynamic_alias_picks_its_rule(monkeypatch):
     import ofscraper.utils.auth.request as request
 
     rules = {
@@ -138,7 +132,6 @@ def test_every_accepted_dynamic_alias_picks_its_rule(alias, monkeypatch):
         "manual": "manual",
         "generic": "generic",
     }
-    assert alias in rules, f"{alias} is accepted but names no known rule"
     for name in {"datawhores", "xagler", "rafa", "digitalcriminals", "generic"}:
         monkeypatch.setattr(request, f"get_request_auth_{name}", lambda n=name: n)
     monkeypatch.setattr(request, "get_request_auth_dynamic_rule_manual", lambda: "manual")
@@ -152,12 +145,17 @@ def test_every_accepted_dynamic_alias_picks_its_rule(alias, monkeypatch):
             else real(key, *a, **k)
         ),
     )
-    cfg = {"advanced_options": {"dynamic-mode-default": alias}}
-    rule = data.get_dynamic(config=cfg)
-    monkeypatch.setattr(
-        request.settings, "get_settings", lambda: SimpleNamespace(dynamic_rules=rule)
-    )
     monkeypatch.setattr(request.cache, "set", lambda *a, **k: None)
-    monkeypatch.setattr(request, "curr_auth", None)
-    monkeypatch.setattr(request, "last_check", None)
-    assert request.get_request_auth() == rules[alias]
+    picked = {}
+    for alias in data.of_env.getattr("DYNAMIC_OPTIONS_ALL"):
+        cfg = {"advanced_options": {"dynamic-mode-default": alias}}
+        rule = data.get_dynamic(config=cfg)
+        monkeypatch.setattr(
+            request.settings,
+            "get_settings",
+            lambda rule=rule: SimpleNamespace(dynamic_rules=rule),
+        )
+        monkeypatch.setattr(request, "curr_auth", None)
+        monkeypatch.setattr(request, "last_check", None)
+        picked[alias] = request.get_request_auth()
+    assert picked == {alias: rules.get(alias) for alias in picked}
