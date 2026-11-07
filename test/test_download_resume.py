@@ -243,7 +243,12 @@ def test_main_416_restarts(tmp_path):
     assert [c["content-total"] for c in cached] == [T]
 
 
-def _alt_resume(tmp_path, monkeypatch, have, mode="range", cached_total=T):
+def _alt_resume(
+    tmp_path, monkeypatch, have, mode="range", cached_total=T, kind="video", body=BODY
+):
+    monkeypatch.setattr(
+        common_globals, "attempt2", SimpleNamespace(get=lambda *a: 1), raising=False
+    )
     monkeypatch.setattr(ad, "send_chunk_msg", lambda *a, **k: None)
     monkeypatch.setattr(ad, "temp_file_logger", lambda *a, **k: None)
     monkeypatch.setattr(ad, "get_alt_params", lambda ele: {})
@@ -257,12 +262,12 @@ def _alt_resume(tmp_path, monkeypatch, have, mode="range", cached_total=T):
     mgr = _manager(ad.AltDownloadManager, cached)
     ph = SimpleNamespace(tempfilepath=part, trunicated_filepath=part)
     ele = SimpleNamespace(mpd="x", hls_header="", id=1, username="u", filename="f")
-    item = {"origname": "v", "total": cached_total, "type": "video", "name": "v"}
+    item = {"origname": "v", "total": cached_total, "type": kind, "name": "v"}
 
     async def run(c):
-        return await mgr._send_req_inner(c, ele, item, ph)
+        return await mgr._alt_download_sendreq(item, c, ele, ph)
 
-    item = asyncio.run(_serve(mode, seen, run))
+    item = asyncio.run(_serve(mode, seen, run, body))
     return item["total"], part.read_bytes(), seen, cached
 
 
@@ -289,6 +294,28 @@ def test_drm_server_ignores_range_restarts(tmp_path, monkeypatch, have):
 def test_drm_fresh_download(tmp_path, monkeypatch):
     total, data, seen, cached = _alt_resume(tmp_path, monkeypatch, 0, cached_total=None)
     assert seen == [None]
+    assert total == T
+    assert data == BODY
+    assert [c["content-total"] for c in cached] == [T]
+
+
+def test_drm_audio_file_changed_size_restarts(tmp_path, monkeypatch):
+    # the audio .part is the start of the old 1,000,000-byte track; the server
+    # now has a 1,200,000-byte track
+    total, data, seen, cached = _alt_resume(
+        tmp_path, monkeypatch, 300_000, kind="audio", body=BODY_NEW
+    )
+    assert seen == ["bytes=300000-", None]
+    assert total == len(BODY_NEW)
+    assert data == BODY_NEW
+    assert [c["content-total"] for c in cached] == [len(BODY_NEW)]
+
+
+def test_drm_416_restarts(tmp_path, monkeypatch):
+    total, data, seen, cached = _alt_resume(
+        tmp_path, monkeypatch, T, cached_total=1_500_000
+    )
+    assert seen == [f"bytes={T}-", None]
     assert total == T
     assert data == BODY
     assert [c["content-total"] for c in cached] == [T]
