@@ -177,7 +177,10 @@ class AltDownloadManager(DownloadManager):
             common_globals.log.debug(f"{get_medialog(ele)} resume header {headers}")
             params = get_alt_params(ele)
             url = _mpd_segment_url(ele.mpd, item["origname"])
-            headers = {"Cookie": f"{ele.hls_header}{auth_requests.get_cookies_str()}"}
+            headers = {
+                **(headers or {}),
+                "Cookie": f"{ele.hls_header}{auth_requests.get_cookies_str()}",
+            }
             common_globals.log.debug(
                 f"{get_medialog(ele)} [attempt {self._alt_attempt_get(item).get()}/{get_download_retries()}] Downloading media with url  {url}"
             )
@@ -190,9 +193,10 @@ class AltDownloadManager(DownloadManager):
                 read_timeout=get_chunk_timeout(),
             ) as l:
                 content_type = (l.headers.get("content-type") or "").lower()
-                cl_raw = l.headers.get("content-length")
                 try:
-                    total = int(cl_raw) if cl_raw is not None else None
+                    total, resume_size = self._full_size_from_reply(
+                        l, resume_size, placeholderObj.tempfilepath
+                    )
                 except (TypeError, ValueError):
                     total = None
                 item["total"] = total
