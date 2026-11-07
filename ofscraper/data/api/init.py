@@ -17,6 +17,7 @@ import traceback
 
 import httpx
 
+import ofscraper.utils.auth.request as auth_requests
 import ofscraper.utils.console as console
 import ofscraper.utils.settings as settings
 from . import me
@@ -72,6 +73,9 @@ def getstatus():
     if settings.get_settings().anon:
         return "UP"
     try:
+        # fetch the dynamic rule once, with its own retries. Otherwise each
+        # retry of /me fetches it again, retries included
+        auth_requests.get_request_auth()
         data = me.scrape_user()
         # /me answers isAuth false when no one is logged in. That's a normal
         # answer for anonymous runs, so it's only treated as bad auth here
