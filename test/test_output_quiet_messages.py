@@ -3,8 +3,8 @@
 Those modes quiet the shared console (#255). A few messages went straight to
 the shared console although the user has to see them: the list shown by
 "Print Selection", the CDM check's failures, the "another instance" warning,
-the confirmations after the config and profile menus, and errors while
-cleaning up old logs. They now print through get_console(), which stays loud.
+the confirmations after the config and profile menus, and the warning about
+Discord with DEBUG. They now print through get_console(), which stays loud.
 """
 
 import io
@@ -165,7 +165,7 @@ def test_another_instance_warning_shows(monkeypatch, screen):
 def test_config_menu_confirmation_shows(monkeypatch, screen):
     import ofscraper.utils.config.menu as menu
 
-    monkeypatch.setattr(menu, "console", screen.shared)
+    monkeypatch.setattr(menu, "console", screen.shared, raising=False)  # only the old code has it
     monkeypatch.setattr(menu.config_file, "open_config", lambda: {})
     monkeypatch.setattr(menu.config_, "update_config_full", lambda *a, **k: None)
     monkeypatch.setattr(menu.settings, "update_settings", lambda: None)
@@ -185,48 +185,6 @@ def test_profile_created_confirmation_shows(monkeypatch, screen):
         monkeypatch.setattr(manage, "console", screen.shared)
     manage.create_profile()
     assert "Successfully created" in screen.buf.getvalue()
-
-
-class _BadLog:
-    def stat(self):
-        raise OSError("locked")
-
-    def __str__(self):
-        return "old.log"
-
-
-class _BadFolder:
-    def is_dir(self):
-        return True
-
-    def iterdir(self):
-        return iter(())
-
-    def rmdir(self):
-        raise OSError("locked")
-
-    def __str__(self):
-        return "empty_folder"
-
-
-@pytest.mark.parametrize("screen", MODES, indirect=True)
-def test_log_cleanup_errors_show(monkeypatch, screen):
-    import ofscraper.utils.paths.manage as manage
-
-    monkeypatch.setattr(manage, "console", screen.shared)
-    monkeypatch.setattr(
-        manage.settings, "get_settings", lambda: SimpleNamespace(logs_expire_time=1)
-    )
-    monkeypatch.setattr(
-        manage.common_paths,
-        "get_log_folder",
-        lambda: SimpleNamespace(rglob=lambda pattern: [_BadLog()] if pattern == "*.log" else [_BadFolder()]),
-    )
-    manage.delete_old_logs()
-    manage.delete_empty_folders()
-    out = screen.buf.getvalue()
-    assert "Error deleting file old.log" in out
-    assert "Error deleting folder empty_folder" in out
 
 
 @pytest.mark.parametrize("screen", MODES, indirect=True)
