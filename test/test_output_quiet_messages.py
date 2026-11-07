@@ -227,3 +227,14 @@ def test_log_cleanup_errors_show(monkeypatch, screen):
     out = screen.buf.getvalue()
     assert "Error deleting file old.log" in out
     assert "Error deleting folder empty_folder" in out
+
+
+@pytest.mark.parametrize("screen", MODES, indirect=True)
+def test_discord_debug_tip_shows(monkeypatch, screen):
+    import ofscraper.utils.logs.logs as logs
+
+    monkeypatch.setattr(
+        logs.settings, "get_settings", lambda: SimpleNamespace(discord_level="DEBUG")
+    )
+    logs.discord_warning()
+    assert "Warning Discord with DEBUG is not recommended" in screen.buf.getvalue()
