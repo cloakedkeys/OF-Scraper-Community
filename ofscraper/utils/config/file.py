@@ -7,6 +7,7 @@ from ofscraper.utils.markup import escape_text
 
 import ofscraper.utils.config.schema as schema
 import ofscraper.utils.console as console_
+import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.paths.common as common_paths
 
 console = console_.get_shared_console()
@@ -14,7 +15,12 @@ log = logging.getLogger("shared")
 
 
 def make_config(config=False):
-    config = schema.get_current_config_schema(config=config)
+    if config is False:
+        # a new file holds the built-in defaults, not environment values
+        with of_env.builtin_defaults():
+            config = schema.get_current_config_schema(config=config)
+    else:
+        config = schema.get_current_config_schema(config=config)
     if isinstance(config, str):
         config = json_loads(config)
 
