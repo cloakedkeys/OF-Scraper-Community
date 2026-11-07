@@ -39,17 +39,33 @@ Upstream hasn't been updated since April 2026. This fork keeps it working:
 
 ## Install
 
-Install from this repo. The `ofscraper` package on PyPI is upstream's last release and doesn't have these fixes.
+This fork is on PyPI as **`ofscraper-community`**. The command is still `ofscraper`.
 
 **With uv (recommended)**
 
 ```
-uv tool install --force git+https://github.com/cloakedkeys/OF-Scraper-Community
+uv tool install ofscraper-community
+```
+
+**With pipx**
+
+```
+pipx install ofscraper-community
 ```
 
 **With pip**
 
 ```
+pip install ofscraper-community
+```
+
+> [!NOTE]
+> The `ofscraper` package on PyPI is upstream's last release and doesn't have these fixes. Both packages provide the `ofscraper` command and Python package, so installing both into the same environment with plain pip makes them overwrite each other. Run `pip uninstall ofscraper` before installing `ofscraper-community`. If you already have both, uninstall both and then install `ofscraper-community` again. `uv tool` and `pipx` give each tool its own environment, so they don't clash.
+
+**Latest unreleased changes:** to get what's on `main` before it's released, install from this repo.
+
+```
+uv tool install --force git+https://github.com/cloakedkeys/OF-Scraper-Community
 pip install git+https://github.com/cloakedkeys/OF-Scraper-Community
 ```
 
@@ -63,7 +79,7 @@ docker pull ghcr.io/cloakedkeys/of-scraper-community:latest
 
 Python 3.11 to 3.15 is supported. Protected (DRM) videos also need ffmpeg 6 or newer.
 
-To update, run the same install command again.
+To update, run `uv tool upgrade ofscraper-community`, `pipx upgrade ofscraper-community` or `pip install -U ofscraper-community`. For a GitHub install, run the same install command again.
 
 ## Getting started
 
