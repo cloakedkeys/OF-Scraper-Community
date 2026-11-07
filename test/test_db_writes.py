@@ -16,6 +16,7 @@ import ofscraper.classes.placeholder as placeholder
 import ofscraper.db.merge as merge
 import ofscraper.db.operations as operations
 import ofscraper.db.operations_.others as others
+import ofscraper.db.utils.rebuild as rebuild
 import ofscraper.utils.settings as settings
 from ofscraper.db.operations_.messages import (
     get_deleted_messages_ids,
@@ -198,6 +199,45 @@ def test_failed_rebuild_leaves_the_old_table_untouched(tmp_path, monkeypatch):
 
     asyncio.run(run())
     assert rows(db, "others", OTHER_COLS) == OTHERS
+
+
+def tables(db):
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        return sorted(
+            r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        )
+
+
+def test_failed_rebuild_on_a_plain_connection_leaves_no_trace(tmp_path):
+    db = tmp_path / "user_data.db"
+    asyncio.run(new_database(db))
+    insert(db, "others", OTHER_COLS, OTHERS)
+    before = tables(db)
+    duplicate = [OTHERS[0], OTHERS[0]]
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        with pytest.raises(sqlite3.IntegrityError):
+            rebuild.replace_table(
+                conn, "others", others.otherCreate, others.othersInsert, duplicate
+            )
+    assert tables(db) == before
+    assert rows(db, "others", OTHER_COLS) == OTHERS
+
+
+def test_rebuild_keeps_views_on_the_table_working(tmp_path):
+    db = tmp_path / "user_data.db"
+
+    async def run():
+        await new_database(db)
+        insert(db, "others", OTHER_COLS, without_model_id(OTHER_COLS, OTHERS))
+        with contextlib.closing(sqlite3.connect(db)) as conn:
+            conn.execute("CREATE VIEW others_view AS SELECT post_id FROM others")
+            conn.commit()
+        await others.rebuild_others_table(db_path=db)
+
+    asyncio.run(run())
+    assert rows(db, "others", OTHER_COLS) == OTHERS
+    assert rows(db, "others_view", ["post_id"]) == [(601,), (602,)]
+    assert "others_rebuild_new" not in tables(db)
 
 
 def test_merge_copies_products_others_and_messages(tmp_path, monkeypatch):
