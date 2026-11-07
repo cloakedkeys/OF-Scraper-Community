@@ -102,6 +102,7 @@ class AltDownloadManager(DownloadManager):
         ).init()
         item["path"] = placeholderObj.tempfilepath
         item["total"] = None
+        item["validator"] = None
 
         _attempt = self._alt_attempt_get(item)
         _attempt.set(0)
@@ -167,6 +168,7 @@ class AltDownloadManager(DownloadManager):
                 # the part was deleted; ask for the whole track, without a range
                 common_globals.log.debug(f"{get_medialog(ele)} {E}")
                 item["total"] = None
+                item["validator"] = None
                 return await self._send_req_inner(c, ele, item, placeholderObj)
         except OSError as E:
             raise E
@@ -179,7 +181,9 @@ class AltDownloadManager(DownloadManager):
 
             resume_size = self._get_resume_size(placeholderObj)
             saved_total = item["total"]
-            headers = self._get_resume_header(resume_size, saved_total)
+            headers = self._get_resume_header(
+                resume_size, saved_total, item.get("validator")
+            )
             # reset total
             total = None
             common_globals.log.debug(f"{get_medialog(ele)} resume header {headers}")
@@ -226,6 +230,7 @@ class AltDownloadManager(DownloadManager):
                 data = {
                     "content-total": total,
                     "content-type": l.headers.get("content-type"),
+                    "validator": self._validator(l),
                 }
 
                 common_globals.log.debug(
@@ -442,6 +447,7 @@ class AltDownloadManager(DownloadManager):
         )
         total = int(data.get("content-total")) if data.get("content-total") else None
         item["total"] = total
+        item["validator"] = data.get("validator")
         resume_size = self._get_resume_size(placeholderObj)
         resume_size = self._resume_cleaner(
             resume_size, total, placeholderObj.tempfilepath
