@@ -16,7 +16,8 @@ def update_config_helper(updated_config):
     current_config = config_file.open_config()
     config_.update_config_full(current_config, updated_config)
     settings.update_settings()
-    console.print("`config.json` has been successfully edited.")
+    # the answer to a prompt, so shown even when --output quiets the shared console
+    console_.get_console().print("`config.json` has been successfully edited.")
 
 
 def download_config():

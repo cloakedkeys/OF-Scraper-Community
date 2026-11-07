@@ -70,7 +70,7 @@ def delete_old_logs():
                 log_file.unlink()  # pathlib's way to delete a file
                 console.print(f"Deleted old log file: {escape_text(log_file)}")
         except OSError as e:
-            console.print(f"Error deleting file {escape_text(log_file)}: {escape_text(e)}")
+            console_.get_console().print(f"Error deleting file {escape_text(log_file)}: {escape_text(e)}")
 def delete_empty_folders():
     """
     Recursively finds and deletes empty folders within thelog folder.
@@ -85,5 +85,5 @@ def delete_empty_folders():
                 folder.rmdir()
                 console.print(f"Deleted empty folder: {escape_text(folder)}")
             except OSError as e:
-                console.print(f"Error deleting folder {escape_text(folder)}: {escape_text(e)}")
+                console_.get_console().print(f"Error deleting folder {escape_text(folder)}: {escape_text(e)}")
 
