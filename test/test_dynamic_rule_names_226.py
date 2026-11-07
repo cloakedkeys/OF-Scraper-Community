@@ -51,18 +51,23 @@ def _dynamic_question(monkeypatch):
 def test_menu_offers_and_selects_the_default_rule(config, monkeypatch):
     question = _dynamic_question(monkeypatch)
     assert question["default"] in question["choices"]
-    assert question["default"] == "digitalcriminals"
+    # listed and saved as "digital", the name a new config.json holds
+    assert question["default"] == "digital"
 
 
 # 2. an alias selects its rule
 
 
-@pytest.mark.parametrize("alias", ["dc", "digital", "digitals", "digitalcriminal"])
+@pytest.mark.parametrize(
+    "alias", ["dc", "digital", "digitals", "digitalcriminal", "digitalcriminals"]
+)
 def test_menu_selects_the_rule_an_alias_picks(config, monkeypatch, alias):
     config["advanced_options"] = {"dynamic-mode-default": alias}
     question = _dynamic_question(monkeypatch)
-    assert question["default"] == "digitalcriminals"
-    assert "digitalcriminals" in question["choices"]
+    assert question["default"] == "digital"
+    # the rule is listed once, by the name the menu saves
+    assert question["choices"].count("digital") == 1
+    assert "digitalcriminals" not in question["choices"]
 
 
 def test_menu_choices_have_no_removed_rules(config, monkeypatch):

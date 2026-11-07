@@ -14,6 +14,11 @@ DYNAMIC_ALIASES = {
     "digitals": "digitalcriminals",
     "digitalcriminal": "digitalcriminals",
 }
+# the name the config menu lists and saves for a rule, when it isn't the
+# rule's own name; "digital" is also the default in a new config.json
+DYNAMIC_MENU_NAMES = {
+    "digitalcriminals": "digital",
+}
 
 MEDIA_ALIASES = {
     "photo": "images",
