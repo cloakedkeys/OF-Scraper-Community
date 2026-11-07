@@ -31,6 +31,19 @@ def test_new_config_holds_builtin_defaults(env_overrides):
     assert written["file_options"]["date"] == "MM-DD-YYYY"
 
 
+def test_auto_update_fills_missing_keys_with_builtin_defaults(env_overrides):
+    # an older config.json without these keys gets them filled in on update
+    config_file.make_config()
+    old = json.loads(env_overrides.read_text())
+    del old["content_filter_options"]["length_max"]
+    del old["file_options"]["date"]
+    config_file.auto_update_config(old)
+    written = json.loads(env_overrides.read_text())
+    assert written["content_filter_options"]["length_max"] == 0
+    assert written["file_options"]["date"] == "MM-DD-YYYY"
+    assert of_env.getattr("MAX_LENGTH_DEFAULT") == 4242
+
+
 def test_environment_still_applies_after_new_config(env_overrides):
     config_file.make_config()
     assert os.environ["OFSC_MAX_LENGTH_DEFAULT"] == "4242"

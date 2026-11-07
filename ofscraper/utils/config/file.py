@@ -69,7 +69,10 @@ def write_config(updated_config):
 
 def auto_update_config(config: dict) -> dict:
     log.info("Auto updating config...")
-    new_config = schema.get_current_config_schema(config)
+    # keys missing from the file get the built-in defaults, not environment
+    # values; the environment still applies at runtime
+    with of_env.builtin_defaults():
+        new_config = schema.get_current_config_schema(config)
     write_config(new_config)
     return new_config
 
