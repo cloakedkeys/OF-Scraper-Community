@@ -99,6 +99,38 @@ def test_restored_even_when_the_screen_raises(run):
     assert shared.quiet is True
 
 
+class _BrokenLive(_Live):
+    def __init__(self, fail_on):
+        self.fail_on = fail_on
+        self.calls = 0
+
+    def update(self, layout, refresh=False):
+        self.calls += 1
+        if self.calls == self.fail_on:
+            raise RuntimeError("live update failed")
+        self.renderable = layout
+
+
+def test_restored_when_the_screen_fails_to_open(run, monkeypatch):
+    shared = run(["--output", "LOW"], SUPRESS_DOWNLOAD_DISPLAY="False")
+    monkeypatch.setattr(screens, "get_live", lambda: _BrokenLive(fail_on=1))
+    with pytest.raises(RuntimeError):
+        with screens.setup_live("download"):
+            pass
+    assert shared.quiet is True
+
+
+def test_restored_when_closing_the_screen_fails(run, monkeypatch):
+    shared = run(["--output", "LOW"], SUPRESS_DOWNLOAD_DISPLAY="False")
+    live = _BrokenLive(fail_on=2)
+    live.renderable = "previous screen"
+    monkeypatch.setattr(screens, "get_live", lambda: live)
+    with pytest.raises(RuntimeError):
+        with screens.setup_live("download"):
+            pass
+    assert shared.quiet is True
+
+
 def test_afterwards_the_console_follows_the_options_again(run):
     shared = run(["--output", "NORMAL"], SUPRESS_DOWNLOAD_DISPLAY="True")
     with screens.setup_live("download"):

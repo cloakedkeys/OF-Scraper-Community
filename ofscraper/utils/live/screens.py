@@ -137,16 +137,26 @@ class ProgressLayoutManager:
                 before = getattr(shared, "_quiet_override", shared.quiet)
                 self.quiet_before = (shared, before)
                 shared.quiet = supress
-        if not self.live.is_started:
-            self.live.start()
-        self.live.update(self.layout, refresh=True)
+        try:
+            if not self.live.is_started:
+                self.live.start()
+            self.live.update(self.layout, refresh=True)
+        except BaseException:
+            # __exit__ won't run if the screen fails to open
+            self._restore_quiet()
+            raise
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.previous_layout and self.revert:
-            self.live.update(self.previous_layout, refresh=True)
-        if self.clear_on_exit:
-            clear_tasks_by_name(self.clear_on_exit)
+        try:
+            if self.previous_layout and self.revert:
+                self.live.update(self.previous_layout, refresh=True)
+            if self.clear_on_exit:
+                clear_tasks_by_name(self.clear_on_exit)
+        finally:
+            self._restore_quiet()
+
+    def _restore_quiet(self):
         if self.quiet_before:
             # the SUPRESS_* value applies only while this screen is up
             shared, before = self.quiet_before
