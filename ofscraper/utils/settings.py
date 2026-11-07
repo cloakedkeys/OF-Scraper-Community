@@ -101,11 +101,8 @@ def merged_settings():
     merged.ffmpeg=config_data.get_ffmpeg() or of_env.getattr("FFMPEG_DEFAULT")
 
     # --- Cache Logic ---
-    cache_mode = (
-        config_data.get_cache_mode()
-        if hasattr(config_data, "get_cache_mode")
-        else of_env.getattr("CACHEDEFAULT")
-    )
+    # the mode name; get_cache_mode() returns the diskcache storage class
+    cache_mode = config_data.cache_mode_helper()
     merged.cached_disabled = args.no_cache or cache_mode == "disabled"
     merged.api_cached_disabled = (
         args.no_cache
@@ -140,7 +137,8 @@ def merged_settings():
         if isinstance(out, str):
             out = out.split(",")
         if isinstance(out, list):
-            return [str(x).strip() for x in out if str(x).strip()]
+            # list names are matched lowercased, as the command line does
+            return [str(x).strip().lower() for x in out if str(x).strip()]
         return []
 
     merged.userlist = _listhelper(args.userlist or config_data.get_default_userlist())
