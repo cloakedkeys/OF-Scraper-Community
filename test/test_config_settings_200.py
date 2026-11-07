@@ -41,6 +41,20 @@ def test_incremental_downloads_false_is_kept():
     assert new["advanced_options"]["incremental_downloads"] is False
 
 
+@pytest.mark.parametrize("value", [False, True])
+def test_incremental_downloads_legacy_key_is_kept(value):
+    cfg = {"advanced_options": {"enable_auto_after": value}}
+    assert data.get_incremental_downloads(config=cfg) is value
+    new = schema.get_current_config_schema(cfg)
+    assert new["advanced_options"]["incremental_downloads"] is value
+
+
+def test_incremental_downloads_missing_uses_default():
+    assert data.get_incremental_downloads(config={}) is True
+    new = schema.get_current_config_schema({})
+    assert new["advanced_options"]["incremental_downloads"] is True
+
+
 # 2. cache-mode disabled / api_disabled
 
 
@@ -116,6 +130,39 @@ def test_config_list_names_are_lowercased(config):
 def test_removed_deviint_aliases_are_rejected(alias):
     cfg = {"advanced_options": {"dynamic-mode-default": alias}}
     assert data.get_dynamic(config=cfg) == data.of_env.getattr("DYNAMIC_RULE_DEFAULT")
+
+
+def test_rejected_dynamic_rule_is_logged_once(config, caplog, monkeypatch):
+    import logging
+
+    import ofscraper.utils.settings as settings
+
+    monkeypatch.setattr(settings, "_warned_dynamic_rule", None)
+    config["advanced_options"] = {"dynamic-mode-default": "dv"}
+    with caplog.at_level(logging.WARNING, logger="shared"):
+        settings.merged_settings()
+        merged = settings.merged_settings()
+    default = data.of_env.getattr("DYNAMIC_RULE_DEFAULT")
+    assert merged.dynamic_rules == default
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "dynamic-mode-default" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "'dv'" in warnings[0].getMessage()
+    assert f"'{default}'" in warnings[0].getMessage()
+
+
+def test_accepted_dynamic_rule_is_not_logged(config, caplog):
+    import logging
+
+    import ofscraper.utils.settings as settings
+
+    config["advanced_options"] = {"dynamic-mode-default": "DC"}
+    with caplog.at_level(logging.WARNING, logger="shared"):
+        assert settings.merged_settings().dynamic_rules == "dc"
+    assert "dynamic-mode-default" not in caplog.text
 
 
 def test_every_accepted_dynamic_alias_picks_its_rule(monkeypatch):

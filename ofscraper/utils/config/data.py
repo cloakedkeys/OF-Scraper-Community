@@ -544,6 +544,16 @@ def get_dynamic(config=None):
 
 
 @wrapper.config_reader
+def get_dynamic_configured(config=None):
+    # the raw value, before get_dynamic() checks it; not written to the file
+    if config is False:
+        return None
+    return config.get("dynamic-mode-default") or config.get(
+        "advanced_options", {}
+    ).get("dynamic-mode-default")
+
+
+@wrapper.config_reader
 def get_part_file_clean(config=None):
     if config is False:
         return of_env.getattr("RESUME_DEFAULT")

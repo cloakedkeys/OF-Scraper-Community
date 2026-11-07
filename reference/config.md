@@ -216,7 +216,7 @@ Every key `config.json` holds, in the order the file is written (`ofscraper/util
 - **Default:** `"digital"` · **Read by:** `get_dynamic()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`DYNAMIC_OPTIONS_ALL`](env.md#dynamic_options_all), [`DYNAMIC_RULE_DEFAULT`](env.md#dynamic_rule_default)
 - **CLI override:** `--dynamic-rules`
-- Which source of OnlyFans request-signing rules to use: datawhores, xagler, rafa, digitalcriminals (aliases dc, digital, digitals), generic (needs OFSC_DYNAMIC_GENERIC_URL) or manual (needs OFSC_DYNAMIC_RULE_MANUAL). Unknown values fall back to the default, and anything that yields no rule falls back to datawhores. The -dr/--dynamic-rules option overrides it.
+- Which source of OnlyFans request-signing rules to use: datawhores, xagler, rafa, digitalcriminals (aliases dc, digital, digitals), generic (needs OFSC_DYNAMIC_GENERIC_URL) or manual (needs OFSC_DYNAMIC_RULE_MANUAL). Unknown values fall back to the default with a warning in the log, and anything that yields no rule falls back to datawhores. The -dr/--dynamic-rules option overrides it.
 
 ### `advanced_options.skip_unavailable_content`
 
@@ -362,7 +362,7 @@ These values are the folder names that fill `{responsetype}` in `dir_format`. Ea
 
 - **Default:** `"Messages"` · **Read by:** `get_messages_progress_responsetype()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`RESPONSE_TYPE_DEFAULT`](env.md#response_type_default)
-- Folder name for {responsetype} for messages.
+- Folder name used for {responsetype} for messages. The value is capitalized (only its first letter kept uppercase); empty falls back to the type name.
 
 ### `responsetype.archived`
 
