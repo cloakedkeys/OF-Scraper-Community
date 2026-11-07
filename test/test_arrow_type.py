@@ -1,4 +1,5 @@
 import arrow
+import click
 import pytest
 
 from ofscraper.utils.args.types.arrow import ArrowType
@@ -25,3 +26,12 @@ def test_relative_dates_parse(value, shift):
     result = ArrowType().convert(value, None, None)
     # generous tolerance: the two clocks are read a moment apart
     assert abs((result - expected).total_seconds()) < 30
+
+
+@pytest.mark.parametrize(
+    "value", ["13/01/2021", "02/30/2021", "garbage", "05-01-2021", "yesterday"]
+)
+def test_a_bad_date_is_a_clear_usage_error(value):
+    # a DD/MM date or a typo is reported by click, not as a traceback
+    with pytest.raises(click.BadParameter, match="isn't a date"):
+        ArrowType().convert(value, None, None)

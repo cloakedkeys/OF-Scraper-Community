@@ -13,6 +13,19 @@ class ArrowType(click.ParamType):
         if not out:
             return out
         try:
+            return self._parse(out)
+        except ValueError:
+            # arrow's ParserError is a ValueError too; report it through click
+            # instead of a traceback
+            self.fail(
+                f"{out!r} isn't a date. Use MM/DD/YYYY, YYYY-MM-DD, "
+                "or a relative date such as '3 weeks ago'",
+                param,
+                ctx,
+            )
+
+    def _parse(self, out):
+        try:
             t = arrow.get(str(out))
         except arrow.parser.ParserError:
             try:
