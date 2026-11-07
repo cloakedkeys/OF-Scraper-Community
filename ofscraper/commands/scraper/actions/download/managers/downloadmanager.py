@@ -139,7 +139,8 @@ class DownloadManager:
     def _resume_cleaner(self, resume_size, total, path):
         if not resume_size:
             return 0
-        elif resume_size > total:
+        elif total is None or resume_size > total:
+            # with no saved size there's nothing to check the part against
             pathlib.Path(path).unlink(missing_ok=True)
             return 0
         return resume_size
@@ -173,6 +174,18 @@ class DownloadManager:
 
     async def _after_download_script(self, filepath):
         await after_download_script(filepath)
+
+    def _size_written(self, ele, path):
+        """The size of a file whose reply didn't say how big it was (no
+        Content-Length, chunked). The transfer's own end-of-data marks the end
+        of the file, so what was written is the file. An empty reply is an
+        error, not a 0-byte file: 0 means "skipped" to the callers."""
+        size = pathlib.Path(path).stat().st_size if pathlib.Path(path).exists() else 0
+        if not size:
+            raise Exception(
+                f"{get_medialog(ele)} the server sent no data and no file size"
+            )
+        return size
 
     async def _size_checker(self, path, ele, total, name=None):
         name = name or ele.filename
