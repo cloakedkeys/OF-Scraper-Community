@@ -49,7 +49,7 @@ class scraperManager(CommandManager):
 
     @exit.exit_wrapper
     def runner(self, menu=False):
-        check_auth()
+        check_auth(include_main_menu=menu)
         if live.once_enabled():
             # Fansly --live: record who is live now, then do the other actions
             live.run_blocking(watch=False)
