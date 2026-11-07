@@ -212,6 +212,9 @@ class AltDownloadManager(DownloadManager):
                 except (TypeError, ValueError):
                     total = None
                 item["total"] = total
+                self._check_same_file(
+                    l, resume_size, placeholderObj.tempfilepath, item.get("validator")
+                )
 
                 if any(
                     x in content_type
@@ -230,7 +233,11 @@ class AltDownloadManager(DownloadManager):
                 data = {
                     "content-total": total,
                     "content-type": l.headers.get("content-type"),
-                    "validator": self._validator(l),
+                    # the validator of the reply that started the part: a
+                    # resume keeps the saved one
+                    "validator": (
+                        item.get("validator") if resume_size else self._validator(l)
+                    ),
                 }
 
                 common_globals.log.debug(

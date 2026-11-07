@@ -55,7 +55,11 @@ def _handler(mode, seen, body=BODY, validator=None, if_ranges=None):
         if_range = request.headers.get("If-Range")
         if if_ranges is not None:
             if_ranges.append(if_range)
-        if if_range is not None and if_range not in validator.values():
+        if (
+            if_range is not None
+            and if_range not in validator.values()
+            and mode != "ignore-if-range"
+        ):
             rng = None
         if not rng or mode == "ignore-range":
             return web.Response(
@@ -351,7 +355,9 @@ def _retry_once(monkeypatch, module):
     monkeypatch.setattr(module, "get_download_retries", lambda: 1)
 
 
-def _main_download(tmp_path, monkeypatch, saved, body=BODY, validator=None):
+def _main_download(
+    tmp_path, monkeypatch, saved, body=BODY, validator=None, mode="range"
+):
     """The whole normal download step, from the reply data saved by the run
     that started the .part (300,000 bytes of BODY) to the finished .part."""
     part = tmp_path / "f.part"
@@ -385,7 +391,7 @@ def _main_download(tmp_path, monkeypatch, saved, body=BODY, validator=None):
     async def run(c):
         return await mgr._main_download_downloader(c, ele)
 
-    total, _, _ = asyncio.run(_serve("range", seen, run, body, validator, if_ranges))
+    total, _, _ = asyncio.run(_serve(mode, seen, run, body, validator, if_ranges))
     return total, part.read_bytes(), seen, if_ranges, cached
 
 
@@ -405,10 +411,10 @@ def test_main_changed_file_same_size_starts_over(tmp_path, monkeypatch):
 
 
 def test_main_unchanged_file_resumes_with_last_modified(tmp_path, monkeypatch):
-    # a weak ETag can't be used in If-Range, so Last-Modified is
+    # a server with no ETag: Last-Modified goes in If-Range
     saved = {"content-total": T, "content-type": "video/mp4", "validator": LM}
     total, data, seen, if_ranges, cached = _main_download(
-        tmp_path, monkeypatch, saved, BODY, {"ETag": 'W/"v1"', "Last-Modified": LM}
+        tmp_path, monkeypatch, saved, BODY, {"Last-Modified": LM}
     )
     assert seen == ["bytes=300000-"]
     assert if_ranges == [LM]
@@ -417,19 +423,62 @@ def test_main_unchanged_file_resumes_with_last_modified(tmp_path, monkeypatch):
     assert [c["validator"] for c in cached] == [LM]
 
 
+def test_main_weak_etag_sends_no_if_range(tmp_path, monkeypatch):
+    # a weak ETag can't go in If-Range, and a date mustn't go there when the
+    # server has an ETag, so nothing is saved or sent
+    saved = {"content-total": T, "content-type": "video/mp4", "validator": None}
+    total, data, seen, if_ranges, cached = _main_download(
+        tmp_path, monkeypatch, saved, BODY, {"ETag": 'W/"v1"', "Last-Modified": LM}
+    )
+    assert seen == ["bytes=300000-"]
+    assert if_ranges == [None]
+    assert data == BODY
+    assert [c["validator"] for c in cached] == [None]
+
+
 def test_main_saved_data_without_validator_resumes_as_before(tmp_path, monkeypatch):
-    # saved by an older version, or the server sent no ETag or Last-Modified
+    # saved by an older version, or the server sent no ETag or Last-Modified.
+    # The 206's ETag isn't saved: the part's start was never checked against it
     saved = {"content-total": T, "content-type": "video/mp4"}
-    total, data, seen, if_ranges, _ = _main_download(
+    total, data, seen, if_ranges, cached = _main_download(
         tmp_path, monkeypatch, saved, BODY, {"ETag": '"v1"'}
     )
     assert seen == ["bytes=300000-"]
     assert if_ranges == [None]
     assert total == T
     assert data == BODY
+    assert [c["validator"] for c in cached] == [None]
 
 
-def test_drm_changed_file_same_size_starts_over(tmp_path, monkeypatch):
+def test_main_server_ignoring_if_range_starts_over(tmp_path, monkeypatch):
+    # the server sends the rest of the new file (206) despite If-Range, but
+    # its ETag shows the file changed: the part is dropped and the new file
+    # downloaded whole, and only then is its ETag saved
+    saved = {"content-total": T, "content-type": "video/mp4", "validator": '"v1"'}
+    total, data, seen, if_ranges, cached = _main_download(
+        tmp_path,
+        monkeypatch,
+        saved,
+        BODY_SAME_SIZE,
+        {"ETag": '"v2"'},
+        mode="ignore-if-range",
+    )
+    assert seen == ["bytes=300000-", None]
+    assert if_ranges == ['"v1"', None]
+    assert total == T
+    assert data == BODY_SAME_SIZE
+    assert [c["validator"] for c in cached] == ['"v2"']
+
+
+@pytest.mark.parametrize(
+    "mode, requests",
+    [
+        ("range", ["bytes=300000-"]),
+        # a 206 despite If-Range: its ETag shows the change, so start over
+        ("ignore-if-range", ["bytes=300000-", None]),
+    ],
+)
+def test_drm_changed_file_same_size_starts_over(tmp_path, monkeypatch, mode, requests):
     part = tmp_path / "v.part"
     part.write_bytes(BODY[:300_000])
     _retry_once(monkeypatch, ad)
@@ -467,10 +516,10 @@ def test_drm_changed_file_same_size_starts_over(tmp_path, monkeypatch):
         return await mgr._alt_download_downloader(item, c, ele)
 
     item = asyncio.run(
-        _serve("range", seen, run, BODY_SAME_SIZE, {"ETag": '"v2"'}, if_ranges)
+        _serve(mode, seen, run, BODY_SAME_SIZE, {"ETag": '"v2"'}, if_ranges)
     )
-    assert seen == ["bytes=300000-"]
-    assert if_ranges == ['"v1"']
+    assert seen == requests
+    assert if_ranges == ['"v1"', None][: len(requests)]
     assert item["total"] == T
     assert part.read_bytes() == BODY_SAME_SIZE
     assert [c["validator"] for c in cached] == ['"v2"']
@@ -480,8 +529,9 @@ def test_drm_changed_file_same_size_starts_over(tmp_path, monkeypatch):
     "headers, expected",
     [
         ({"etag": '"v1"', "last-modified": LM}, '"v1"'),
-        ({"etag": 'W/"v1"', "last-modified": LM}, LM),
+        ({"etag": 'W/"v1"', "last-modified": LM}, None),
         ({"etag": 'W/"v1"'}, None),
+        ({"last-modified": LM}, LM),
         ({}, None),
     ],
 )

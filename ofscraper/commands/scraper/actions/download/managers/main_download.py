@@ -177,10 +177,15 @@ class MainDownloadManager(DownloadManager):
                 total, resume_size = self._full_size_from_reply(
                     r, resume_size, tempholderObj.tempfilepath, saved_total
                 )
+                self._check_same_file(
+                    r, resume_size, tempholderObj.tempfilepath, validator
+                )
                 data = {
                     "content-total": total,
                     "content-type": r.headers.get("content-type"),
-                    "validator": self._validator(r),
+                    # the validator of the reply that started the part: a
+                    # resume keeps the saved one
+                    "validator": validator if resume_size else self._validator(r),
                 }
 
                 common_globals.log.debug(
