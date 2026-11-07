@@ -122,6 +122,7 @@ class ProgressLayoutManager:
         self.supress_key = supress_key
         self.previous_layout = None
         self.revert = revert
+        self.quiet_before = None
 
     def __enter__(self):
         self.previous_layout = self.live.renderable
@@ -129,7 +130,13 @@ class ProgressLayoutManager:
             # unset leaves quiet following the output options
             supress = of_env.getattr(self.supress_key)
             if supress is not None:
-                console_.get_shared_console().quiet = supress
+                shared = console_.get_shared_console()
+                # what quiet was set to before this screen (None: it follows
+                # the output options), so __exit__ can put it back; a plain
+                # Console (update_shared, tests) has only its quiet flag
+                before = getattr(shared, "_quiet_override", shared.quiet)
+                self.quiet_before = (shared, before)
+                shared.quiet = supress
         if not self.live.is_started:
             self.live.start()
         self.live.update(self.layout, refresh=True)
@@ -140,6 +147,11 @@ class ProgressLayoutManager:
             self.live.update(self.previous_layout, refresh=True)
         if self.clear_on_exit:
             clear_tasks_by_name(self.clear_on_exit)
+        if self.quiet_before:
+            # the SUPRESS_* value applies only while this screen is up
+            shared, before = self.quiet_before
+            shared.quiet = before
+            self.quiet_before = None
 
 
 class TemporaryTaskState:
