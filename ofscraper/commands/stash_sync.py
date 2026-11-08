@@ -244,13 +244,27 @@ def plan(item, meta, performer_id, studio_id, tag_ids, organized=False):
     return changes
 
 
+def is_windows_path(path):
+    """A drive (C:) or UNC (\\\\server\\share) path, on any OS."""
+    return bool(re.match(r"[A-Za-z]:", path)) or path[:2] in ("\\\\", "//", "\\/", "/\\")
+
+
+def windows_key(path):
+    # Windows paths ignore case, and either slash separates folders
+    return path.replace("/", "\\").lower()
+
+
 def map_path(path, mappings):
     # Either separator ends the prefix, whatever the OS: the database may hold
     # Windows paths while this runs elsewhere, e.g. beside Stash in Docker
     for local, remote in mappings:
         prefix = local.rstrip("\\/")
-        rest = path[len(prefix):]
-        if path.startswith(prefix) and (rest == "" or rest[0] in "\\/"):
+        head, rest = path[: len(prefix)], path[len(prefix):]
+        if is_windows_path(prefix):
+            same = windows_key(head) == windows_key(prefix)
+        else:
+            same = head == prefix
+        if same and (rest == "" or rest[0] in "\\/"):
             mapped = remote.rstrip("\\/") + rest
             return mapped.replace("\\", "/") if "/" in remote and "\\" not in remote else mapped
     return path

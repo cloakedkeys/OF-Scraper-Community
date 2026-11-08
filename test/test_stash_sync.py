@@ -202,6 +202,30 @@ def test_map_path_accepts_either_separator(monkeypatch):
     assert map_path("/srv/dlx/b.jpg", [("/srv/dl", "/media")]) == "/srv/dlx/b.jpg"
 
 
+@pytest.mark.parametrize("sep", ["\\", "/"])
+def test_map_path_windows_prefix_ignores_case_and_slashes(monkeypatch, sep):
+    monkeypatch.setattr(stash_sync.os, "sep", sep)
+    stored = r"C:\dl\Sub\b.jpg"
+    for local in (r"c:\dl", "C:/dl", "c:/DL/", r"C:\dl"):
+        assert map_path(stored, [(local, "/data")]) == "/data/Sub/b.jpg", local
+    assert map_path("C:/dl/Sub/b.jpg", [(r"C:\DL", "/data")]) == "/data/Sub/b.jpg"
+    assert map_path(r"C:\dl", [("c:/dl", "/data")]) == "/data"
+    assert map_path(r"\\NAS\Share\dl\a.jpg", [(r"\\nas\share", "/data")]) == "/data/dl/a.jpg"
+    assert map_path(r"\\nas\share\dl\a.jpg", [("//nas/share/", "/data")]) == "/data/dl/a.jpg"
+    # partial folder names still don't match
+    assert map_path(r"C:\dl2\x.jpg", [("c:/dl", "/data")]) == r"C:\dl2\x.jpg"
+    assert map_path(r"\\nas\share2\x.jpg", [(r"\\NAS\share", "/data")]) == r"\\nas\share2\x.jpg"
+
+
+@pytest.mark.parametrize("sep", ["\\", "/"])
+def test_map_path_posix_prefix_unchanged(monkeypatch, sep):
+    monkeypatch.setattr(stash_sync.os, "sep", sep)
+    assert map_path("/srv/DL/b.jpg", [("/srv/dl", "/media")]) == "/srv/DL/b.jpg"
+    assert map_path("/srv/dlx/b.jpg", [("/srv/dl", "/media")]) == "/srv/dlx/b.jpg"
+    assert map_path("/srv/dl/b.jpg", [("/srv/dl/", "/media")]) == "/media/b.jpg"
+    assert map_path("/srv/dl/b.jpg", [("/", "/media")]) == "/media/srv/dl/b.jpg"
+
+
 def test_fansly_database_is_skipped(library, tmp_path):
     db, media_dir = library
     fansly = db.parent / "Fansly" / "user_data.db"

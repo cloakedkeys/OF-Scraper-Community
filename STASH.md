@@ -71,7 +71,8 @@ folder as `/data`:
 python -m ofscraper.commands.stash_sync "<profile>/.data" --apply --path-map "D:\OnlyFans=/data"
 ```
 
-The mapping also applies to `--scan`. Without it, Stash can't find any of the
+A Windows `LOCAL` path ignores case and accepts `/` or `\` (`d:/onlyfans` works
+too); other paths must match exactly. The mapping also applies to `--scan`. Without it, Stash can't find any of the
 files: the report then says so in a `hint`, and nothing is created in Stash.
 
 ## Notes
