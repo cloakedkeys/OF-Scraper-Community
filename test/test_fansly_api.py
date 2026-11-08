@@ -409,18 +409,28 @@ def test_account_id_alone_is_looked_up_by_id(monkeypatch):
     monkeypatch.setattr(scrape, "_session", lambda _c: _ctx(c))
     models = asyncio.run(scrape.get_models([SOME_ID]))
     assert [(str(m["id"]), m["username"]) for m in models] == [(SOME_ID, "SomeCreator")]
-    assert c.calls("account") == [{"ids": SOME_ID, "ngsw-bypass": "true"}]
+    assert [q["ids"] for q in c.calls("account") if "ids" in q] == [SOME_ID]
 
 
-def test_names_and_ids_are_looked_up_separately_and_merged(monkeypatch):
+def test_names_and_ids_are_looked_up_and_merged(monkeypatch):
     c = FakeSession(_account_route(ACCOUNTS))
     monkeypatch.setattr(scrape, "_session", lambda _c: _ctx(c))
     # "somecreator" is how -u hands the name over; SOME_ID repeats that creator
-    models = asyncio.run(scrape.get_models(["somecreator", OTHER_ID, SOME_ID]))
+    values = ["somecreator", OTHER_ID, SOME_ID]
+    models = asyncio.run(scrape.get_models(values))
     assert sorted(m["username"] for m in models) == ["OtherCreator", "SomeCreator"]
     calls = c.calls("account")
-    assert {"usernames": "somecreator", "ngsw-bypass": "true"} in calls
+    # every value is tried as a username, the all-digit ones also as ids
+    assert [q["usernames"] for q in calls if "usernames" in q] == [",".join(values)]
     assert [q["ids"] for q in calls if "ids" in q] == [f"{OTHER_ID},{SOME_ID}"]
+
+
+def test_all_digit_username_is_still_found(monkeypatch):
+    # a creator whose username is all digits is found by username, not id
+    c = FakeSession(_account_route(ACCOUNTS + [{"id": "100000000000000903", "username": "12345"}]))
+    monkeypatch.setattr(scrape, "_session", lambda _c: _ctx(c))
+    models = asyncio.run(scrape.get_models(["12345"]))
+    assert [m["username"] for m in models] == ["12345"]
 
 
 def test_followed_accounts_are_paged_then_resolved(fansly, monkeypatch):

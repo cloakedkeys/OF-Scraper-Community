@@ -246,7 +246,9 @@ class ModelManager:
 
         # This handles interactive mode when a specific username list is provided via CLI.
         if not is_daemon and usernames:
-            return self._select_by_usernames(filtered_models.values(), usernames)
+            return self._select_by_usernames(
+                filtered_models.values(), usernames, filtered=True
+            )
 
         # FINAL CASE: We must prompt for a selection.
         # This is where the interactive terminal UI menu is actually launched.
@@ -254,14 +256,19 @@ class ModelManager:
             list(filtered_models.values()), existing_selection
         )
 
-    def _select_by_usernames(self, models, usernames) -> List["Model"]:
-        """Models named by -u (username in any case, or account id)."""
+    def _select_by_usernames(self, models, usernames, filtered=False) -> List["Model"]:
+        """
+        Models named by -u (username in any case, or account id).
+        ``filtered`` says whether the filters (and --excluded-username) already ran.
+        """
         selected, unmatched = username_match.select_models(list(models), usernames)
         if unmatched:
-            log.warning(
-                f"No creator matched -u {', '.join(map(str, unmatched))}. "
-                "Check the spelling, and that no filter removed it."
+            reason = (
+                "The name or id wasn't found, or a filter or --excluded-username removed it."
+                if filtered
+                else "No creator has that name or id."
             )
+            log.warning(f"Not selected: {', '.join(map(str, unmatched))}. {reason}")
         return selected
 
     def _filter_and_prompt_for_selection(self):

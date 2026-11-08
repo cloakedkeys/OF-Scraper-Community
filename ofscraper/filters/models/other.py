@@ -6,7 +6,7 @@ import logging
 
 from ofscraper.filters.models.utils.logs import trace_log_user
 import ofscraper.utils.settings as settings
-from ofscraper.utils.username_match import matches_username, username_keys
+from ofscraper.utils.username_match import matches_account, model_matches, username_keys
 
 
 def otherFilters(filterusername):
@@ -16,7 +16,7 @@ def otherFilters(filterusername):
         excluded = username_keys(settings.get_settings().excluded_username)
         filterusername = list(
             filter(
-                lambda x: not matches_username(x.name, excluded),
+                lambda x: not model_matches(x, excluded),
                 filterusername,
             )
         )
@@ -26,9 +26,10 @@ def otherFilters(filterusername):
     return filterusername
 
 
-def is_excluded_username(username):
+def is_excluded_username(username, model_id=None):
     """
-    True if --excluded-username names this model, in any case.
+    True if --excluded-username names this model (username in any case, or
+    account id).
     """
     excluded = username_keys(settings.get_settings().excluded_username)
-    return matches_username(username, excluded)
+    return matches_account(username, model_id, excluded)

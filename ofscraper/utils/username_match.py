@@ -22,9 +22,16 @@ def matches_username(name, keys) -> bool:
     return bool(name) and username_key(name) in keys
 
 
+def matches_account(name, account_id, keys) -> bool:
+    """True if a username or an account id is one of ``keys``."""
+    return matches_username(name, keys) or (
+        account_id is not None and str(account_id) in keys
+    )
+
+
 def model_matches(model, keys) -> bool:
     """True if a model's username or account id is one of ``keys``."""
-    return matches_username(model.name, keys) or str(model.id) in keys
+    return matches_account(model.name, model.id, keys)
 
 
 def select_models(models, names):
