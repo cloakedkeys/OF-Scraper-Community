@@ -192,7 +192,10 @@ def test_map_path():
     assert map_path("/srv/dl/b.jpg", [("/srv/dl", "/media")]) == "/media/b.jpg"
 
 
-def test_map_path_accepts_either_separator():
+def test_map_path_accepts_either_separator(monkeypatch):
+    # As on Linux CI: a Windows path from the database still maps
+    monkeypatch.setattr(stash_sync.os, "sep", "/")
+    assert map_path(r"C:\dl\a\b.jpg", [(r"C:\dl", "/data")]) == "/data/a/b.jpg"
     assert map_path("C:\\dl/a/b.jpg", [(r"C:\dl", "/data")]) == "/data/a/b.jpg"
     assert map_path(r"C:\dl", [("C:\\dl\\", "/data")]) == "/data"
     assert map_path("/srv/dl", [("/srv/dl", "/media")]) == "/media"
