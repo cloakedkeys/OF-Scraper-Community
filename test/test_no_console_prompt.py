@@ -7,6 +7,7 @@ first place a scrape run hit it was the "rescan account for users" question
 after a scan that found no creators.
 """
 
+import copy
 import io
 import logging
 import queue
@@ -72,8 +73,10 @@ def test_no_console_no_creators_raises_without_prompting(monkeypatch):
     assert "no interactive console" in str(info.value)
 
 
-def test_no_console_no_creators_exits_1_with_a_clear_message(monkeypatch, records):
-    mm, _ = _empty_scan_manager(monkeypatch, console=False)
+@pytest.mark.parametrize("daemon", [None, False])
+def test_no_console_no_creators_exits_1_with_a_clear_message(monkeypatch, records, daemon):
+    """Outside daemon mode, an empty scan with no console still exits 1."""
+    mm, _ = _empty_scan_manager(monkeypatch, daemon=daemon, console=False)
     _retry_prompt_must_not_open(monkeypatch)
     monkeypatch.setattr(run, "start_manager", lambda: mm._fetch_all_subs(True))
     monkeypatch.setattr(run.exit_manager, "shutdown", lambda: None)
@@ -102,12 +105,14 @@ def test_console_still_offers_the_retry_prompt(monkeypatch):
 
 
 @pytest.mark.parametrize("console", [True, False])
-def test_daemon_never_prompts(monkeypatch, console):
-    mm, _ = _empty_scan_manager(monkeypatch, daemon=5, console=console)
+def test_daemon_never_prompts(monkeypatch, records, console):
+    """An empty scan can be a swallowed network error: log it, don't end the daemon."""
+    mm, scans = _empty_scan_manager(monkeypatch, daemon=5, console=console)
     _retry_prompt_must_not_open(monkeypatch)
-    with pytest.raises(model.NoCreatorsFound) as info:
-        mm._fetch_all_subs(force_refetch=True)
-    assert "daemon" in str(info.value)
+    mm._fetch_all_subs(force_refetch=True)
+    assert scans == [1]
+    assert mm.all_subs == []
+    assert any("No creators were found" in r.getMessage() for r in records)
 
 
 def test_creators_found_needs_no_prompt(monkeypatch):
@@ -122,14 +127,21 @@ def test_creators_found_needs_no_prompt(monkeypatch):
     assert [m.name for m in mm.all_subs] == ["a"]
 
 
-# --- the daemon ends instead of retrying every pass -------------------------
+# --- the daemon loop ----------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "error",
-    [model.NoCreatorsFound("none"), interactive.NoConsoleError("no console")],
-)
-def test_daemon_stops_on_errors_that_need_a_person(monkeypatch, error):
+class _Wakeup:
+    stopped = False
+
+    def install(self):
+        pass
+
+    def restore(self):
+        pass
+
+
+def _daemon_loop(monkeypatch, runner, model_manager=None, run_settings=None):
+    """Run daemon_process with ``runner`` as each pass; returns the job queue."""
     jobs = queue.Queue()
     monkeypatch.setattr(scraper, "jobqueue", jobs)
     monkeypatch.setattr(scraper.exit, "sigterm_as_keyboard_interrupt", lambda: None)
@@ -137,57 +149,91 @@ def test_daemon_stops_on_errors_that_need_a_person(monkeypatch, error):
     monkeypatch.setattr(scraper.actions, "select_areas", lambda: None)
     monkeypatch.setattr(scraper.live, "watch_enabled", lambda: False)
     monkeypatch.setattr(scraper, "set_schedule", lambda *a, **k: None)
-    monkeypatch.setattr(
-        scraper.settings, "get_settings", lambda: SimpleNamespace(output_level="NORMAL")
-    )
+    run_settings = run_settings or SimpleNamespace(output_level="NORMAL")
+    monkeypatch.setattr(scraper.settings, "get_settings", lambda: run_settings)
     monkeypatch.setattr(
         scraper.manager,
         "Manager",
-        SimpleNamespace(current_model_manager=SimpleNamespace(sync_models=lambda: None)),
+        SimpleNamespace(
+            current_model_manager=model_manager
+            or SimpleNamespace(sync_models=lambda: None)
+        ),
     )
+    monkeypatch.setattr(scraper, "scraperManager", lambda: SimpleNamespace(runner=runner))
+    monkeypatch.setattr(scraper, "DaemonWakeup", _Wakeup)
+    return jobs
+
+
+def test_daemon_stops_when_a_prompt_has_no_console(monkeypatch):
+    """A prompt no one can answer won't be answered next pass, so the daemon ends."""
 
     def runner():
-        raise error
+        raise interactive.NoConsoleError("no console")
 
-    monkeypatch.setattr(scraper, "scraperManager", lambda: SimpleNamespace(runner=runner))
-
-    class Wakeup:
-        stopped = False
-
-        def install(self):
-            pass
-
-        def restore(self):
-            pass
-
-    monkeypatch.setattr(scraper, "DaemonWakeup", Wakeup)
-    with pytest.raises(type(error)):
+    _daemon_loop(monkeypatch, runner)
+    with pytest.raises(interactive.NoConsoleError):
         scraper.daemon_process()
+
+
+@pytest.mark.parametrize("usernames", [["ALL"], []])
+@pytest.mark.parametrize("console", [True, False])
+def test_daemon_retries_after_an_empty_startup_scan(monkeypatch, records, console, usernames):
+    """
+    The first scan finds no creators (say a network error the fetch swallowed).
+    The daemon logs it, keeps running, and the next pass scans again.
+    """
+    mm = model.ModelManager()
+    scans = []
+
+    def scan(all_main_models=False):
+        scans.append(1)
+        found = [model.Model({"id": 1, "username": "a"})] if len(scans) > 1 else []
+        mm._last_fetched = found
+
+    monkeypatch.setattr(mm, "_fetch_all_subs_async", scan)
+    monkeypatch.setattr(mm, "sync_models", lambda: None)
+    # the filters aren't what's tested here: they keep everyone
+    monkeypatch.setattr(mm, "_filtered_models", lambda: dict(mm._all_subs_dict))
+    monkeypatch.setattr(interactive, "is_interactive", lambda: console)
+    _retry_prompt_must_not_open(monkeypatch)
+
+    def fail(*args, **kwargs):
+        raise AssertionError("a prompt opened")
+
+    monkeypatch.setattr(model.prompts, "decide_filters_menu", fail)
+    # without -u the first non-empty pass asks which creators to scrape, as before;
+    # the answer here is "all of them"
+    monkeypatch.setattr(
+        model.retriver, "get_selected_model", lambda models, selected: models
+    )
+
+    selections = []
+
+    def runner():
+        selections.append([m.name for m in mm.prepare_scraper_activity()])
+        if len(selections) == 1:
+            jobs.put(runner)
+        else:
+            raise KeyboardInterrupt
+
+    run_settings = SimpleNamespace(
+        output_level="NORMAL", daemon=5, usernames=usernames, actions=["download"],
+        command="main",
+    )
+    jobs = _daemon_loop(monkeypatch, runner, model_manager=mm, run_settings=run_settings)
+    args = copy.copy(model.settings.get_args())
+    args.daemon = 5
+    monkeypatch.setattr(model.settings, "get_args", lambda: args)
+    with pytest.raises(KeyboardInterrupt):
+        scraper.daemon_process()
+    assert scans == [1, 1]
+    assert selections == [[], ["a"]]
+    assert any("No creators were found" in r.getMessage() for r in records)
 
 
 def test_daemon_keeps_going_after_an_ordinary_error(monkeypatch):
     """Other errors still leave the daemon running for its next pass."""
-    jobs = queue.Queue()
-    monkeypatch.setattr(scraper, "jobqueue", jobs)
-    monkeypatch.setattr(scraper.exit, "sigterm_as_keyboard_interrupt", lambda: None)
-    monkeypatch.setattr(scraper.checkers, "check_auth", lambda: None)
-    monkeypatch.setattr(scraper.actions, "select_areas", lambda: None)
-    monkeypatch.setattr(scraper.live, "watch_enabled", lambda: False)
-    monkeypatch.setattr(scraper, "set_schedule", lambda *a, **k: None)
-    monkeypatch.setattr(
-        scraper.settings, "get_settings", lambda: SimpleNamespace(output_level="NORMAL")
-    )
-    monkeypatch.setattr(
-        scraper.manager,
-        "Manager",
-        SimpleNamespace(current_model_manager=SimpleNamespace(sync_models=lambda: None)),
-    )
     logged = []
-    monkeypatch.setattr(
-        scraper,
-        "log",
-        SimpleNamespace(info=lambda *a, **k: None, traceback_=logged.append),
-    )
     calls = []
 
     def runner():
@@ -197,18 +243,12 @@ def test_daemon_keeps_going_after_an_ordinary_error(monkeypatch):
             raise RuntimeError("a bad pass")
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(scraper, "scraperManager", lambda: SimpleNamespace(runner=runner))
-
-    class Wakeup:
-        stopped = False
-
-        def install(self):
-            pass
-
-        def restore(self):
-            pass
-
-    monkeypatch.setattr(scraper, "DaemonWakeup", Wakeup)
+    jobs = _daemon_loop(monkeypatch, runner)
+    monkeypatch.setattr(
+        scraper,
+        "log",
+        SimpleNamespace(info=lambda *a, **k: None, traceback_=logged.append),
+    )
     with pytest.raises(KeyboardInterrupt):
         scraper.daemon_process()
     assert calls == [1, 1]
@@ -327,24 +367,37 @@ class _Stream(io.StringIO):
 
 
 @pytest.mark.parametrize(
-    "stdin, stdout, expected",
+    "stdin, stdout, windows, others",
     [
-        (_Stream(True), _Stream(True), True),
-        (_Stream(False), _Stream(True), False),
-        (_Stream(True), _Stream(False), False),
-        (None, _Stream(True), False),  # pythonw, or a closed handle
-        (_Stream(True), None, False),
+        (_Stream(True), _Stream(True), True, True),
+        (_Stream(False), _Stream(True), False, False),
+        # `| tee` or `> file`: prompt_toolkit needs a console on stdout only on
+        # Windows; elsewhere it falls back to plain text
+        (_Stream(True), _Stream(False), False, True),
+        (None, _Stream(True), False, False),  # pythonw, or a closed handle
+        (_Stream(True), None, False, True),
     ],
 )
-def test_is_interactive_needs_both_ends_on_a_terminal(monkeypatch, stdin, stdout, expected):
+@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+def test_is_interactive_needs_stdin_on_a_terminal_and_stdout_on_windows(
+    monkeypatch, platform, stdin, stdout, windows, others
+):
+    monkeypatch.setattr(interactive.sys, "platform", platform)
     monkeypatch.setattr(interactive.sys, "stdin", stdin)
     monkeypatch.setattr(interactive.sys, "stdout", stdout)
+    expected = windows if platform == "win32" else others
     assert interactive.is_interactive() is expected
 
 
-def test_is_interactive_treats_a_closed_stream_as_no_console(monkeypatch):
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+@pytest.mark.parametrize("which", ["stdin", "stdout"])
+def test_is_interactive_treats_a_closed_stream_as_no_console(monkeypatch, platform, which):
+    monkeypatch.setattr(interactive.sys, "platform", platform)
+    monkeypatch.setattr(interactive.sys, "stdin", _Stream(True))
+    monkeypatch.setattr(interactive.sys, "stdout", _Stream(True))
     closed = _Stream(True)
     closed.close()
-    monkeypatch.setattr(interactive.sys, "stdin", closed)
-    monkeypatch.setattr(interactive.sys, "stdout", _Stream(True))
-    assert interactive.is_interactive() is False
+    monkeypatch.setattr(interactive.sys, which, closed)
+    # stdout is only checked on Windows
+    expected = which == "stdout" and platform != "win32"
+    assert interactive.is_interactive() is expected

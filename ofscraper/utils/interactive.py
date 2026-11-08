@@ -7,13 +7,16 @@ class NoConsoleError(Exception):
 
 def is_interactive():
     """
-    Whether someone can answer a prompt: stdin and stdout are both a terminal.
+    Whether someone can answer a prompt: stdin is a terminal, and on Windows
+    stdout is too.
 
-    Not when output is redirected, the run is scheduled, or another program
-    started it. prompt_toolkit can't open a prompt then (on Windows it raised
-    NoConsoleScreenBufferError).
+    Not when the run is scheduled or another program started it. On Windows,
+    prompt_toolkit also needs a console on stdout (it raised
+    NoConsoleScreenBufferError when output was redirected). On Linux and macOS
+    it falls back to plain text, so `| tee` and `> file` still work.
     """
-    for stream in (sys.stdin, sys.stdout):
+    streams = (sys.stdin, sys.stdout) if sys.platform == "win32" else (sys.stdin,)
+    for stream in streams:
         try:
             if stream is None or not stream.isatty():
                 return False

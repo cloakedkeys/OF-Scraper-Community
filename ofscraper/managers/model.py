@@ -92,7 +92,10 @@ class ModelManager:
         if settings.get_args().daemon:
             # DAEMON MODE: Silent, no prompts.
             log.info("Daemon mode active. Calling select_models to get model list.")
-            final_selection = self._select_models_scraper()
+            # an empty scan skips this pass; without this the empty list would
+            # open the filter menu (#286)
+            if self._all_subs_dict:
+                final_selection = self._select_models_scraper()
         else:
             # INTERACTIVE MODE: Check if we have a leftover queue from a previous run
             existing_queued_users = [x.name for x in self.get_scrape_selected_models()]
@@ -477,10 +480,13 @@ class ModelManager:
             )
             # no one is there to answer the retry prompt (#286)
             if settings.get_settings().daemon:
-                raise NoCreatorsFound(
-                    "No creators were found, so there's nothing to scrape. "
-                    "Not offering a rescan in daemon mode."
+                # an empty scan can be a network error the fetch swallowed, so
+                # don't end the daemon: the next pass scans again
+                log.error(
+                    "No creators were found, so there's nothing to scrape this "
+                    "pass. The daemon scans again on its next pass."
                 )
+                break
             if not interactive.is_interactive():
                 raise NoCreatorsFound(
                     "No creators were found, so there's nothing to scrape. "
