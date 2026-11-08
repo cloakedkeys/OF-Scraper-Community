@@ -212,24 +212,27 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(dm, "after_download_script", noop)
     monkeypatch.setattr(dm, "skip_download_script", no_skip)
     monkeypatch.setattr(dm.system, "check_free_size", lambda: True)
-    ffmpeg_runs, ffmpeg_procs = [], []
+    ffmpeg_runs, ffmpeg_procs, ffmpeg_cwds, ffmpeg_timeouts = [], [], [], []
     if FFMPEG:
         monkeypatch.setattr(stream_mod, "get_ffmpeg", lambda: FFMPEG)
     else:
         monkeypatch.setattr(stream_mod, "get_ffmpeg", lambda: "ffmpeg")
     real_run_process = getattr(stream_mod, "_run_process", None)
 
-    def counting_run(proc, cmd, timeout):
+    def counting_run(proc, cmd, timeout, cwd=None):
         ffmpeg_runs.append(cmd)
         ffmpeg_procs.append(proc)
-        return real_run_process(proc, cmd, timeout)
+        ffmpeg_cwds.append(cwd)
+        ffmpeg_timeouts.append(timeout)
+        return real_run_process(proc, cmd, timeout, cwd)
 
     # raising=False: the tests can also be run against code without these
     monkeypatch.setattr(stream_mod, "_run_process", counting_run, raising=False)
     # the test hook for the local http server; real runs allow https only
     monkeypatch.setattr(video, "ALLOWED_SCHEMES", ("https", "http"), raising=False)
     yield SimpleNamespace(out=out_dir, temp=temp_dir, marks=marks, stub=stub,
-                          ffmpeg_runs=ffmpeg_runs, ffmpeg_procs=ffmpeg_procs)
+                          ffmpeg_runs=ffmpeg_runs, ffmpeg_procs=ffmpeg_procs,
+                          ffmpeg_cwds=ffmpeg_cwds, ffmpeg_timeouts=ffmpeg_timeouts)
     pool.shutdown(wait=True)
 
 
@@ -1409,3 +1412,98 @@ def test_segment_limit_comes_from_the_environment(monkeypatch):
         monkeypatch.setattr(stream_mod.of_env, "getattr",
                             lambda key, *a, _v=value, **k: _v if key == "FANSLY_STREAM_SEGMENTS" else real(key, *a, **k))
         assert stream_mod.segment_limit() == expected
+
+
+# ------------------------------------------------------------------ review fixes (#295)
+
+@needs_ffmpeg
+def test_join_works_when_the_folder_name_has_a_hash(env, tmp_path, monkeypatch):
+    # ffmpeg's HLS reader resolves segment names against the playlist path as
+    # a URL, so a "#" in that path used to cut it short and fail every join
+    hashed = env.temp / "new video #tag"
+    hashed.mkdir()
+
+    class HashTemp:
+        def __init__(self, ele, name):
+            self.tempfilepath = hashed / f"x #1_{name}"
+
+        async def init(self):
+            return self
+
+    monkeypatch.setattr(stream_mod.placeholder, "tempFilePlaceholder", HashTemp)
+    video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    audio_segments = make_segments(tmp_path, "a", "-vn")
+    raw = raw_media()
+    with Server({}) as srv:
+        serve_hls(srv, raw, SPLIT_AUDIO_MASTER, {"r2160": video_segments, "audio": audio_segments})
+        ele = make_ele(raw)
+        result = download_locally(ele)
+    assert result[0] == "Videos" and result[1] > 0
+    out = env.out / f"{ele.filename}.mp4"
+    assert sorted(s["codec_type"] for s in probe(out)["streams"]) == ["audio", "video"]
+    (join,) = env.ffmpeg_runs
+    assert "#" in str(env.ffmpeg_cwds[0]) and env.ffmpeg_cwds[0].name.endswith(".segments")
+    assert join[join.index("-i") + 1] == "video.m3u8"
+    assert [a for a in join if str(a).endswith(".m3u8")] == ["video.m3u8", "audio.m3u8"]
+    assert list(hashed.iterdir()) == []
+
+
+@needs_ffmpeg
+def test_the_join_gets_only_the_time_left(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(stream_mod, "STREAM_TIMEOUT_FLOOR", 30)
+    segments = make_segments(tmp_path, "segment", "-bsf:v", "dump_extra=freq=keyframe")
+    raw = raw_media()
+    with Server({}) as srv:
+        root = serve_hls(srv, raw, VIDEO_ONLY_MASTER, {"r2160": segments})
+        for name in segments:
+            srv.delay[f"{root}/r2160/{name}"] = 1.0
+        assert download_locally(make_ele(raw))[0] == "Videos"
+    (timeout,) = env.ffmpeg_timeouts
+    assert timeout <= 30 - 0.9  # the fetch took at least a second of the 30
+
+
+@needs_ffmpeg
+def test_not_enough_space_for_the_join_fails_clearly(env, tmp_path, monkeypatch, caplog):
+    segments = make_segments(tmp_path, "segment", "-bsf:v", "dump_extra=freq=keyframe")
+    size = sum(len(b) for b in segments.values())
+    free = []
+
+    def small_drive(path):
+        free.append(path)
+        return size + 1000  # the segments fit, the margin doesn't
+
+    monkeypatch.setattr(stream_mod, "_free_space", small_drive)
+    # a logger that reaches caplog ("shared" doesn't propagate)
+    monkeypatch.setattr(common_globals, "log", logging.getLogger("test_fansly_join_space"))
+    raw = raw_media()
+    with Server({}) as srv:
+        serve_hls(srv, raw, VIDEO_ONLY_MASTER, {"r2160": segments})
+        with caplog.at_level("DEBUG", logger="test_fansly_join_space"):
+            result = download_locally(make_ele(raw))
+    assert result == ("skipped", 0)
+    assert "not enough disk space to join the stream" in caplog.text
+    assert free == [env.temp]  # the drive of the .part
+    assert env.ffmpeg_runs == [] and env.marks == []
+    assert list(env.out.iterdir()) == [] and list(env.temp.iterdir()) == []
+
+
+def test_file_writes_run_off_the_event_loop_and_a_cancel_waits_for_them():
+    calls = []
+
+    def slow_write(data):
+        time.sleep(0.3)
+        calls.append((data, threading.get_ident()))
+
+    async def go():
+        main = threading.get_ident()
+        await stream_mod._off_loop(slow_write, b"a")
+        task = asyncio.ensure_future(stream_mod._off_loop(slow_write, b"b"))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # the cancelled write had finished before the cancel went on
+        assert [d for d, _ in calls] == [b"a", b"b"]
+        assert all(t != main for _, t in calls)
+
+    asyncio.run(go())

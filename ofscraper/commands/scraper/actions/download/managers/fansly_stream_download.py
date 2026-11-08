@@ -18,6 +18,8 @@ import subprocess
 import threading
 from functools import partial
 
+from humanfriendly import format_size
+
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.commands.scraper.actions.utils.general as common
 import ofscraper.commands.scraper.actions.utils.globals as common_globals
@@ -74,6 +76,29 @@ def segment_limit() -> int:
         return 0
 
 
+async def _off_loop(fn, *args):
+    """``fn(*args)`` in the default thread pool. A cancel waits for the call
+    to finish before it goes on, so a file is never closed under a write."""
+    job = asyncio.get_running_loop().run_in_executor(None, fn, *args)
+    try:
+        return await asyncio.shield(job)
+    except asyncio.CancelledError:
+        await asyncio.wait([job])
+        raise
+
+
+def _free_space(path) -> int:
+    return shutil.disk_usage(path).free
+
+
+# room kept free on top of the stream's size when joining it
+JOIN_SPACE_MARGIN = 64 * 1024 * 1024
+
+
+class NotEnoughSpace(Exception):
+    pass
+
+
 def segment_folder(temp) -> pathlib.Path:
     """The folder next to the .part that holds a stream's files until they're joined."""
     temp = pathlib.Path(temp)
@@ -88,12 +113,13 @@ class _Ffmpeg:
         self.proc = None
         self.stopped = False
 
-    def start(self, cmd):
+    def start(self, cmd, cwd=None):
         with self.lock:
             if self.stopped:
                 raise StreamTimeout("download cancelled before ffmpeg started")
             self.proc = subprocess.Popen(
                 cmd,
+                cwd=cwd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
@@ -107,9 +133,9 @@ class _Ffmpeg:
                 self.proc.kill()
 
 
-def _run_process(proc, cmd, timeout):
+def _run_process(proc, cmd, timeout, cwd=None):
     """Run ffmpeg to the end, or kill it after ``timeout`` seconds."""
-    p = proc.start(cmd)
+    p = proc.start(cmd, cwd=cwd)
     try:
         _, stderr = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -236,6 +262,8 @@ class FanslyStreamDownloadManager(DownloadManager):
     async def _parallel_copy(self, c, playlists, temp, cookies, timeout):
         """Fetch every file of the playlists into a folder next to ``temp``,
         then join them with ffmpeg. The folder is removed however this ends."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout  # one limit for the fetch and the join
         folder = segment_folder(temp)
         shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True)
@@ -250,16 +278,35 @@ class FanslyStreamDownloadManager(DownloadManager):
                 raise StreamTimeout(
                     f"the stream's segments took longer than {timeout:.0f}s and were stopped"
                 )
-            video_list = folder / "video.m3u8"
-            video_list.write_text(video.text, encoding="utf-8")
-            audio_list = None
+            self._check_join_space(folder, temp)
+            (folder / "video.m3u8").write_text(video.text, encoding="utf-8")
             if audio:
-                audio_list = folder / "audio.m3u8"
-                audio_list.write_text(audio.text, encoding="utf-8")
-            cmd = fansly_video.local_join_command(get_ffmpeg(), video_list, temp, audio_list)
-            await self._run_cmd(cmd, temp, timeout, "join the stream's segments")
+                (folder / "audio.m3u8").write_text(audio.text, encoding="utf-8")
+            # ffmpeg runs in the folder and gets the playlists by bare name:
+            # its HLS reader resolves segment names against the playlist's
+            # path as a URL, where a "#" in a folder name starts a fragment
+            cmd = fansly_video.local_join_command(
+                get_ffmpeg(), "video.m3u8", pathlib.Path(temp).absolute(),
+                "audio.m3u8" if audio else None,
+            )
+            await self._run_cmd(
+                cmd, temp, max(1.0, deadline - loop.time()),
+                "join the stream's segments", cwd=folder,
+            )
         finally:
             shutil.rmtree(folder, ignore_errors=True)
+
+    def _check_join_space(self, folder, temp):
+        """Fail with a clear message when the .part's drive can't hold the
+        joined copy (about the segments' size) next to the segments."""
+        size = sum(p.stat().st_size for p in folder.iterdir() if p.is_file())
+        need = size + max(JOIN_SPACE_MARGIN, size // 20)
+        free = _free_space(pathlib.Path(temp).parent)
+        if free < need:
+            raise NotEnoughSpace(
+                f"not enough disk space to join the stream: needs about "
+                f"{format_size(need)}, {format_size(free)} free"
+            )
 
     async def _fetch_segments(self, c, jobs, folder, cookies):
         """Fetch (url, name) jobs into ``folder``, at most ``segment_limit()``
@@ -311,12 +358,12 @@ class FanslyStreamDownloadManager(DownloadManager):
                 raise SegmentError(f"status {r.status}")
             expected = r.headers.get("content-length")
             written = 0
-            # a plain file: it is closed before a cancel or error leaves this
-            # block, so the folder can always be removed (an aiofiles close
-            # can still be pending in its thread when the task is cancelled)
+            # writes run in a thread, as aiofiles does for the normal
+            # downloader, but the file is closed here, only once no write is
+            # still running, so the folder can always be removed after a cancel
             with open(path, "wb") as f:
                 async for chunk in r.iter_chunked(get_chunk_size()):
-                    f.write(chunk)
+                    await _off_loop(f.write, chunk)
                     written += len(chunk)
         if not written or (expected and int(expected) != written):
             raise SegmentError(f"got {written} of {expected or 'some'} bytes")
@@ -393,11 +440,11 @@ class FanslyStreamDownloadManager(DownloadManager):
         )
         await self._run_cmd(cmd, temp, timeout, "copy the stream")
 
-    async def _run_cmd(self, cmd, temp, timeout, what):
+    async def _run_cmd(self, cmd, temp, timeout, what, cwd=None):
         # subprocess in a worker thread: the app may run a selector event
         # loop on Windows, which can't start asyncio subprocesses
         proc = _Ffmpeg()
-        job = common_globals.thread.submit(_run_process, proc, cmd, timeout)
+        job = common_globals.thread.submit(_run_process, proc, cmd, timeout, cwd)
         try:
             returncode, stderr = await asyncio.wrap_future(job)
         except BaseException:
