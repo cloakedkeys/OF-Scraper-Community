@@ -2,14 +2,18 @@
 
 Used only for Fansly items whose best delivery is a stream (see
 ``ofscraper.sites.fansly.video.uses_stream``); the direct MP4 still goes
-through the normal downloader. ffmpeg copies the stream into one MP4 without
-re-encoding. The finishing steps (move, collision handling, file time,
-database, hash, after-download script) are the same as the normal downloader's.
+through the normal downloader. An HLS stream's segments are fetched several
+at a time into a folder next to the .part, then ffmpeg joins them into one MP4
+without re-encoding (#292). DASH, and any HLS playlist that parallel fetching
+doesn't handle, is copied by ffmpeg on its own, one segment after another.
+The finishing steps (move, collision handling, file time, database, hash,
+after-download script) are the same as the normal downloader's.
 """
 
 import asyncio
 import contextlib
 import pathlib
+import shutil
 import subprocess
 import threading
 from functools import partial
@@ -20,6 +24,7 @@ import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.commands.scraper.actions.utils.log as common_logs
 import ofscraper.commands.scraper.actions.utils.paths as common_paths
 import ofscraper.utils.dates as dates
+import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 from ofscraper.commands.scraper.actions.download.managers.downloadmanager import (
     DownloadManager,
@@ -32,7 +37,11 @@ from ofscraper.sites.fansly import video as fansly_video
 from ofscraper.utils.cache.profile import set_profile_cache
 from ofscraper.utils.system.ffmpeg import get_ffmpeg, get_ffprobe
 from ofscraper.utils.system.ffprobe import get_media_duration, verify_media_integrity
-from ofscraper.commands.scraper.actions.download.utils.chunk import get_chunk_timeout
+from ofscraper.commands.scraper.actions.download.utils.chunk import (
+    get_chunk_size,
+    get_chunk_timeout,
+)
+from ofscraper.commands.scraper.actions.download.utils.retries import download_retry
 
 # Backstop for the whole ffmpeg run, in seconds: at least the floor, or this
 # many seconds per second of video. A connection that stops sending is caught
@@ -51,6 +60,24 @@ def stream_timeout(duration) -> float:
 
 class StreamTimeout(Exception):
     pass
+
+
+class SegmentError(Exception):
+    """A stream file that couldn't be fetched; the whole download fails."""
+
+
+def segment_limit() -> int:
+    """Files of one HLS stream fetched at once; 0 leaves it all to ffmpeg."""
+    try:
+        return max(0, int(of_env.getattr("FANSLY_STREAM_SEGMENTS")))
+    except (TypeError, ValueError):
+        return 0
+
+
+def segment_folder(temp) -> pathlib.Path:
+    """The folder next to the .part that holds a stream's files until they're joined."""
+    temp = pathlib.Path(temp)
+    return temp.with_name(temp.name + ".segments")
 
 
 class _Ffmpeg:
@@ -154,8 +181,8 @@ class FanslyStreamDownloadManager(DownloadManager):
 
         # BaseException: a cancelled run (Ctrl+C) also removes the .part
         try:
-            await self._run_ffmpeg(
-                url, temp, best.cookies, audio_url, stream_timeout(ele.duration)
+            await self._copy_stream(
+                c, best, url, audio_url, temp, stream_timeout(ele.duration), medialog
             )
             await self._check_complete(temp, ele)
             total = temp.stat().st_size
@@ -172,6 +199,127 @@ class FanslyStreamDownloadManager(DownloadManager):
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
+
+    async def _copy_stream(self, c, best, url, audio_url, temp, timeout, medialog):
+        """Copy the stream into ``temp``: HLS segments fetched in parallel and
+        joined by ffmpeg, or, for DASH and any playlist the parallel
+        downloader doesn't handle, ffmpeg on its own."""
+        playlists = None
+        if best.kind == fansly_video.HLS and segment_limit() > 0:
+            playlists = await self._local_playlists(c, url, audio_url, best.cookies, medialog)
+        if playlists is None:
+            return await self._run_ffmpeg(url, temp, best.cookies, audio_url, timeout)
+        common_globals.log.debug(
+            f"{medialog} Fetching {sum(len(p.files) for p in playlists if p)} stream "
+            f"files, {segment_limit()} at a time"
+        )
+        await self._parallel_copy(c, playlists, temp, best.cookies, timeout)
+
+    async def _local_playlists(self, c, url, audio_url, cookies, medialog):
+        """(video, audio or None) LocalPlaylists, or None to leave it to ffmpeg.
+
+        A playlist that can't be fetched fails the file, as it would in ffmpeg."""
+        try:
+            video = fansly_video.local_playlist(
+                await self._fetch_text(c, url, cookies), url, "v"
+            )
+            audio = None
+            if audio_url:
+                audio = fansly_video.local_playlist(
+                    await self._fetch_text(c, audio_url, cookies), audio_url, "a"
+                )
+            return video, audio
+        except fansly_video.UnexpectedPlaylist as e:
+            common_globals.log.info(f"{medialog} {e}; ffmpeg fetches the stream instead")
+            return None
+
+    async def _parallel_copy(self, c, playlists, temp, cookies, timeout):
+        """Fetch every file of the playlists into a folder next to ``temp``,
+        then join them with ffmpeg. The folder is removed however this ends."""
+        folder = segment_folder(temp)
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir(parents=True)
+        try:
+            video, audio = playlists
+            jobs = video.files + (audio.files if audio else [])
+            try:
+                await asyncio.wait_for(
+                    self._fetch_segments(c, jobs, folder, cookies), timeout
+                )
+            except asyncio.TimeoutError:
+                raise StreamTimeout(
+                    f"the stream's segments took longer than {timeout:.0f}s and were stopped"
+                )
+            video_list = folder / "video.m3u8"
+            video_list.write_text(video.text, encoding="utf-8")
+            audio_list = None
+            if audio:
+                audio_list = folder / "audio.m3u8"
+                audio_list.write_text(audio.text, encoding="utf-8")
+            cmd = fansly_video.local_join_command(get_ffmpeg(), video_list, temp, audio_list)
+            await self._run_cmd(cmd, temp, timeout, "join the stream's segments")
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    async def _fetch_segments(self, c, jobs, folder, cookies):
+        """Fetch (url, name) jobs into ``folder``, at most ``segment_limit()``
+        at once. The first file that fails all its retries stops the rest."""
+        pending = iter(jobs)
+
+        async def worker():
+            for url, name in pending:
+                await self._fetch_segment(c, url, folder / name, cookies)
+
+        workers = [
+            asyncio.ensure_future(worker())
+            for _ in range(min(segment_limit(), len(jobs)))
+        ]
+        try:
+            await asyncio.gather(*workers)
+        except BaseException:
+            # let every worker finish (and close its file) before the folder goes
+            for w in workers:
+                w.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            raise
+
+    async def _fetch_segment(self, c, url, path, cookies):
+        """One file of the stream, with the download retries. Errors name the
+        file, never its URL (it may carry a signature)."""
+        try:
+            async for _ in download_retry():
+                with _:
+                    await self._fetch_segment_once(c, url, path, cookies)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            raise
+        except Exception as e:
+            why = e if isinstance(e, SegmentError) else type(e).__name__
+            raise SegmentError(
+                f"stream file {path.name} failed after its retries: {why}"
+            ) from e
+
+    async def _fetch_segment_once(self, c, url, path, cookies):
+        # HEADERS only, as for the playlists (see _fetch_text)
+        async with c.requests_async(
+            url=url,
+            cookies=cookies or None,
+            actions=[HEADERS],
+            total_timeout=None,
+            read_timeout=get_chunk_timeout(),
+        ) as r:
+            if not r.ok:
+                raise SegmentError(f"status {r.status}")
+            expected = r.headers.get("content-length")
+            written = 0
+            # a plain file: it is closed before a cancel or error leaves this
+            # block, so the folder can always be removed (an aiofiles close
+            # can still be pending in its thread when the task is cancelled)
+            with open(path, "wb") as f:
+                async for chunk in r.iter_chunked(get_chunk_size()):
+                    f.write(chunk)
+                    written += len(chunk)
+        if not written or (expected and int(expected) != written):
+            raise SegmentError(f"got {written} of {expected or 'some'} bytes")
 
     async def _stream_urls(self, c, best):
         """(video url, separate audio url or None) to give ffmpeg."""
@@ -243,6 +391,9 @@ class FanslyStreamDownloadManager(DownloadManager):
             audio_url=audio_url,
             rw_timeout=get_chunk_timeout(),
         )
+        await self._run_cmd(cmd, temp, timeout, "copy the stream")
+
+    async def _run_cmd(self, cmd, temp, timeout, what):
         # subprocess in a worker thread: the app may run a selector event
         # loop on Windows, which can't start asyncio subprocesses
         proc = _Ffmpeg()
@@ -257,7 +408,7 @@ class FanslyStreamDownloadManager(DownloadManager):
             raise
         if returncode != 0 or not temp.exists() or not temp.stat().st_size:
             err = (stderr or b"").decode("utf-8", "replace").strip()[-500:]
-            raise Exception(f"ffmpeg could not copy the stream: {err or 'no output'}")
+            raise Exception(f"ffmpeg could not {what}: {err or 'no output'}")
 
     async def _integrity_check(self, temp, ele):
         if not settings.get_settings().verify_all_integrity:
