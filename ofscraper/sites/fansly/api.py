@@ -100,13 +100,21 @@ async def missing_media(c, response):
 
 
 async def timeline(c, account_id, wall_id="", after=None):
-    """All timeline post dicts, newest first.
+    """All timeline post dicts, newest first."""
+    return [
+        post
+        async for page in timeline_pages(c, account_id, wall_id=wall_id, after=after)
+        for post in page
+    ]
+
+
+async def timeline_pages(c, account_id, wall_id="", after=None):
+    """Timeline post dicts one page at a time, newest first.
 
     ``before`` is the id of the last post of the previous page; paging stops
     on an empty page, or once a page reaches posts older than ``after``
-    (epoch seconds).
+    (epoch seconds). With ``wall_id``, only that wall's posts.
     """
-    out = []
     before = "0"
     for _ in range(MAX_PAGES):
         response = await get_json(
@@ -116,16 +124,21 @@ async def timeline(c, account_id, wall_id="", after=None):
         response = response or {}
         page = response.get("posts") or []
         if not page:
-            break
-        out.extend(normalize.posts(response, await missing_media(c, response)))
+            return
+        yield normalize.posts(response, await missing_media(c, response))
         last = str(page[-1]["id"])
         if last == before:
-            break
+            return
         before = last
         oldest = normalize.to_seconds(page[-1].get("createdAt"))
         if after is not None and oldest is not None and oldest < after:
-            break
-    return out
+            return
+
+
+async def walls(c, account_id):
+    """The walls (profile tabs) of one account, from ``account?ids=``."""
+    accounts = await accounts_by_id(c, [account_id])
+    return list((accounts[0] if accounts else {}).get("walls") or [])
 
 
 async def posts_by_id(c, post_ids):

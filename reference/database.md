@@ -18,7 +18,7 @@ Tables: [`labels`](#labels), [`medias`](#medias), [`messages`](#messages), [`mod
 
 ## `labels`
 
-Links the creator's post labels (collections) to posts. One row per (label, post) pair.
+Links the creator's post labels (collections) to posts. One row per (label, post) pair. On Fansly a label is a wall, a named tab on the creator's profile. The main "Posts" wall holds the whole timeline, so it isn't a label.
 
 **Written by:** `make_label_table_changes` (`ofscraper/db/operations_/labels.py`) runs when the Labels area is scraped (`process_labels` in `ofscraper/data/posts/post.py`). The check command also runs it.
 
@@ -33,9 +33,9 @@ Links the creator's post labels (collections) to posts. One row per (label, post
 | Column | Type | Not null | Default | Description |
 |---|---|---|---|---|
 | `id` (primary key) | INTEGER | yes |  | Row id (`INTEGER PRIMARY KEY`), internal only. |
-| `label_id` | INTEGER |  |  | The site label id. |
-| `name` | VARCHAR |  |  | The label name. |
-| `type` | VARCHAR |  |  | The label type from the API. |
+| `label_id` | INTEGER |  |  | The site label id. On Fansly, the wall id. |
+| `name` | VARCHAR |  |  | The label name. On Fansly, the wall name without trailing spaces. |
+| `type` | VARCHAR |  |  | The label type from the API. `wall` for Fansly walls. |
 | `post_id` | INTEGER |  |  | The id of a post carrying the label. |
 | `model_id` | INTEGER |  |  | The creator account id the row belongs to. |
 
