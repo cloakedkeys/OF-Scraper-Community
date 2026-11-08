@@ -85,6 +85,19 @@ def test_failure_is_counted_and_listed_with_its_reason(monkeypatch):
     )
 
 
+def test_reason_with_markup_prints_literally(monkeypatch):
+    reason = "bad [/] tag [bold]x[/bold]"
+    failed = [("a.db", {"path": "a.db", "reason": Exception(reason)})]
+    output, _ = run_merges(monkeypatch, failed, [False])
+    assert output.endswith(f"Failed: 1 db files\n  a.db: {reason}\n")
+
+
+def test_reason_without_a_message_shows_the_error_type(monkeypatch):
+    failed = [("a.db", {"path": "a.db", "reason": sqlite3.DatabaseError()})]
+    output, _ = run_merges(monkeypatch, failed, [False])
+    assert output.endswith("Failed: 1 db files\n  a.db: DatabaseError\n")
+
+
 def test_no_failures_shows_failed_zero_and_nothing_else(monkeypatch):
     output, merges = run_merges(monkeypatch, [], [False])
     assert merges == 1

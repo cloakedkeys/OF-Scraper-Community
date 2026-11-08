@@ -104,7 +104,7 @@ def confirm_db_continue(completed, skipped, failed) -> bool:
                 """
                     )
                     + "".join(
-                        f"\n  {escape(failure['path'])}: {escape(str(failure['reason']))}"
+                        f"\n  {escape(failure['path'])}: {escape(str(failure['reason']) or type(failure['reason']).__name__)}"
                         for _, failure in failed
                     )
                 ),
