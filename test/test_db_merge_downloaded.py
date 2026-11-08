@@ -1,5 +1,5 @@
 """Merge DB's keeps a media item downloaded if any merged database has it
-downloaded (#296).
+downloaded (#296), and keeps every post the item belongs to (#298).
 
 Each test builds real SQLite databases in a temporary folder with the app's
 own create, migration and write code, then runs the merge.
@@ -80,7 +80,7 @@ def merge_dbs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(merge.log, "traceback_", fail, raising=False)
 
-    def run(sources, target=None, name="run"):
+    def run(sources, target=None, name="run", read=download_rows):
         root = tmp_path / name
         new_db = root / "new" / "user_data.db"
         paths = [root / "old" / f"db{i}" / "user_data.db" for i in range(len(sources))]
@@ -96,7 +96,7 @@ def merge_dbs(tmp_path, monkeypatch):
 
         failures, _, _ = asyncio.run(go())
         assert failures == []
-        return download_rows(new_db)
+        return read(new_db)
 
     return run
 
@@ -124,3 +124,81 @@ def test_target_row_not_downloaded_is_updated(merge_dbs):
 
 def test_first_downloaded_copy_is_kept(merge_dbs):
     assert merge_dbs([[NOT_DOWNLOADED], [DOWNLOADED_B], [DOWNLOADED_C]]) == EXPECTED_B
+
+
+# A media item can belong to more than one post; the table keeps one row per
+# media item per post (#298).
+
+OTHER_POST = 1002
+
+
+def post_rows(db):
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        return sorted(
+            conn.execute(
+                f"SELECT post_id,{','.join(DOWNLOAD_COLS)} FROM medias"
+            ).fetchall()
+        )
+
+
+def on_post(row, post_id=OTHER_POST):
+    return {**row, "post_id": post_id}
+
+
+def both_orders(merge_dbs, first, second, target=None):
+    forward = merge_dbs([first, second], target=target, name="forward", read=post_rows)
+    backward = merge_dbs([second, first], target=target, name="backward",
+                         read=post_rows)
+    assert forward == backward
+    return forward
+
+
+def test_extra_post_link_is_kept_in_either_order(merge_dbs):
+    result = both_orders(merge_dbs, [NOT_DOWNLOADED], [on_post(NOT_DOWNLOADED)])
+    assert result == [
+        (1001, MEDIA_ID, None, None, None, 0, None),
+        (OTHER_POST, MEDIA_ID, None, None, None, 0, None),
+    ]
+
+
+def test_extra_post_link_in_target_is_kept(merge_dbs):
+    result = merge_dbs([[on_post(NOT_DOWNLOADED)]], target=[NOT_DOWNLOADED],
+                       read=post_rows)
+    assert [row[0] for row in result] == [1001, OTHER_POST]
+
+
+def test_same_post_in_both_gives_one_row(merge_dbs):
+    result = both_orders(merge_dbs, [NOT_DOWNLOADED], [NOT_DOWNLOADED])
+    assert result == [(1001, MEDIA_ID, None, None, None, 0, None)]
+
+
+EXPECTED_B_BOTH_POSTS = [
+    (1001, MEDIA_ID, "/dl/b", "b.jpg", 200, 1, "hash-b"),
+    (OTHER_POST, MEDIA_ID, "/dl/b", "b.jpg", 200, 1, "hash-b"),
+]
+
+
+def test_extra_post_row_of_downloaded_item_is_downloaded(merge_dbs):
+    # downloaded under one post, not downloaded under another: every row of
+    # the item carries the download, whichever database is read first
+    result = both_orders(merge_dbs, [DOWNLOADED_B], [on_post(NOT_DOWNLOADED)])
+    assert result == EXPECTED_B_BOTH_POSTS
+
+
+def test_extra_post_row_for_item_downloaded_in_target_is_downloaded(merge_dbs):
+    result = merge_dbs([[on_post(NOT_DOWNLOADED)]], target=[DOWNLOADED_B],
+                       read=post_rows)
+    assert result == EXPECTED_B_BOTH_POSTS
+
+
+def test_downloaded_extra_post_row_updates_target_rows(merge_dbs):
+    result = merge_dbs([[on_post(DOWNLOADED_B)]], target=[NOT_DOWNLOADED],
+                       read=post_rows)
+    assert result == EXPECTED_B_BOTH_POSTS
+
+
+def test_first_downloaded_copy_is_kept_across_posts(merge_dbs):
+    result = merge_dbs(
+        [[DOWNLOADED_B], [on_post(DOWNLOADED_C)]], read=post_rows
+    )
+    assert result == EXPECTED_B_BOTH_POSTS
