@@ -156,6 +156,31 @@ def test_main_posts_wall_is_not_a_label():
     assert [x["id"] for x in normalize.labels(moved)] == [int(WALL_ONE), int(WALL_TWO)]
 
 
+def test_account_without_a_main_wall_keeps_its_first_wall(fansly):
+    # hasMainWall false: the wall at position 0 is a topic wall, not "Posts"
+    topic = [
+        {"id": WALL_ONE, "pos": 0, "name": "Sample wall one"},
+        {"id": WALL_TWO, "pos": 1, "name": "Sample wall two"},
+    ]
+    assert [x["id"] for x in normalize.labels(topic, has_main_wall=False)] == [
+        int(WALL_ONE), int(WALL_TWO)]
+    # unknown or true: position 0 is the main wall
+    assert [x["id"] for x in normalize.labels(topic)] == [int(WALL_TWO)]
+    assert [x["id"] for x in normalize.labels(topic, has_main_wall=True)] == [int(WALL_TWO)]
+
+    def route(path, query):
+        if path == "account":
+            account = load("account_walls.json")
+            account["response"][0]["walls"] = topic
+            account["response"][0]["hasMainWall"] = False
+            return account
+        return make_route()(path, query)
+
+    c = FakeSession(route)
+    found = asyncio.run(fetch_labels(c))
+    assert sorted(x["id"] for x in found) == [int(WALL_ONE), int(WALL_TWO)]
+
+
 def test_each_wall_is_requested_with_its_wall_id(fansly):
     c = FakeSession(make_route())
     found = asyncio.run(fetch_labels(c))
@@ -436,6 +461,27 @@ def test_post_in_timeline_and_wall_is_downloaded_once(fansly, tmp_db, monkeypatc
     assert set(media_ids) == timeline_media
     # the label links are recorded all the same
     assert {r[0] for r in label_rows(tmp_db)} == {int(WALL_ONE), int(WALL_TWO)}
+
+
+@pytest.mark.parametrize("site", ["fansly", "onlyfans"])
+def test_skipped_labels_are_logged_for_inactive_creators(fansly, monkeypatch, site):
+    fansly.site = site
+    called, infos = [], []
+
+    async def fake_labels(*a, **k):
+        called.append("labels")
+        return [], labels_api.API
+
+    monkeypatch.setattr(post, "process_labels", fake_labels)
+    monkeypatch.setattr(post.log, "info", lambda msg, *a, **k: infos.append(str(msg)))
+    monkeypatch.setattr(post, "get_final_posts_area", lambda: {"Labels"})
+    monkeypatch.setattr(post, "get_like_area", lambda: set())
+    monkeypatch.setattr(post, "get_download_area", lambda: {"Labels"})
+    monkeypatch.setattr(post.progress_utils, "setup_live", lambda *a, **k: contextlib.nullcontext())
+    fansly.skip_unavailable_content = False
+    asyncio.run(post.process_tasks(CREATOR_ID, CREATOR, SimpleNamespace(active=False)))
+    assert called == []
+    assert any("Skipping labels" in m and CREATOR in m for m in infos)
 
 
 def test_labels_only_run_downloads_the_wall_posts(fansly, tmp_db, monkeypatch):

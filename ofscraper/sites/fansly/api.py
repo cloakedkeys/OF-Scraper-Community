@@ -136,9 +136,11 @@ async def timeline_pages(c, account_id, wall_id="", after=None):
 
 
 async def walls(c, account_id):
-    """The walls (profile tabs) of one account, from ``account?ids=``."""
+    """The walls (profile tabs) of one account, from ``account?ids=``, and the
+    account's ``hasMainWall`` (None when it isn't given)."""
     accounts = await accounts_by_id(c, [account_id])
-    return list((accounts[0] if accounts else {}).get("walls") or [])
+    account = accounts[0] if accounts else {}
+    return list(account.get("walls") or []), account.get("hasMainWall")
 
 
 async def posts_by_id(c, post_ids):

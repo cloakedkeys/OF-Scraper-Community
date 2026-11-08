@@ -62,7 +62,8 @@ async def get_messages(model_id, username, c=None, post_id=None):
 async def label_names(c, model_id):
     """The creator's walls as labels, in one batch (``labels.scrape_labels``'s form)."""
     async with _session(c) as c:
-        found = normalize.labels(await api.walls(c, model_id))
+        walls, has_main_wall = await api.walls(c, model_id)
+        found = normalize.labels(walls, has_main_wall=has_main_wall)
     log.debug(f"Fansly walls as labels: {[x['id'] for x in found]}")
     yield found
 

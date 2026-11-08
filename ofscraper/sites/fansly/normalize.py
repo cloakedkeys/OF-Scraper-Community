@@ -334,24 +334,28 @@ def purchases(response, account_id, extra_account_media=()):
     return out
 
 
-def _is_main_wall(wall, walls):
+def _is_main_wall(wall, walls, has_main_wall=None):
     """The wall holding every post: flagged ``mainWall``/``defaultWall``, else
-    the one at position 0 when no wall carries those flags."""
+    the one at position 0 when no wall carries those flags. An account whose
+    ``hasMainWall`` is false has none."""
     if any(w.get("mainWall") or w.get("defaultWall") for w in walls):
         return bool(wall.get("mainWall") or wall.get("defaultWall"))
+    if has_main_wall is False:
+        return False
     return str(wall.get("pos")) == "0"
 
 
-def labels(walls):
+def labels(walls, has_main_wall=None):
     """OnlyFans-shaped labels (``id``, ``name``, ``type``) from an account's walls.
 
     A wall is a named tab on the creator's profile. The main "Posts" wall
-    holds the whole timeline, so it isn't a label.
+    holds the whole timeline, so it isn't a label. ``has_main_wall`` is the
+    account's ``hasMainWall``.
     """
     walls = [w for w in walls or [] if isinstance(w, dict) and w.get("id") is not None]
     out = []
     for wall in sorted(walls, key=lambda w: w.get("pos") or 0):
-        if _is_main_wall(wall, walls):
+        if _is_main_wall(wall, walls, has_main_wall):
             continue
         out.append(
             {

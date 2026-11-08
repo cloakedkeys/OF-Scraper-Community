@@ -23,6 +23,7 @@ Links the creator's post labels (collections) to posts. One row per (label, post
 **Written by:** `make_label_table_changes` (`ofscraper/db/operations_/labels.py`) runs when the Labels area is scraped (`process_labels` in `ofscraper/data/posts/post.py`). The check command also runs it.
 
 - **New and existing rows:** for each label, posts not yet recorded under it are inserted. Existing pairs are updated only under the `metadata` command.
+- **Repeat scans:** a label whose last scan finished is paged only until a page whose posts are all recorded. An older post added to a label longer than one page can be missed this way; a full scan (`--after`, or incremental downloads off) picks it up. This applies to OnlyFans labels and Fansly walls alike.
 - **Posts table:** the function then passes the labelled posts to `make_post_table_changes`, so they also land in `posts`.
 - **Migration and merge:** migration rebuilds the table once. It copies every row into the new table in one transaction before the old table is dropped. The Merge Databases menu copies rows in.
 - **Deletes:** the app never deletes rows.
