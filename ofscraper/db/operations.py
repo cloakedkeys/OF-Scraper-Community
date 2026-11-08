@@ -102,7 +102,8 @@ async def table_init_create(model_id=None, username=None, **kwargs):
         .exists()
     )
     await create_tables(model_id=model_id, username=username)
-    create_backup(model_id, username)
+    if not new_db:
+        create_backup(model_id, username)
     await modify_tables(model_id, username, new_db=new_db)
     await write_profile_table(model_id=model_id, username=username)
     await write_models_table(model_id=model_id, username=username)

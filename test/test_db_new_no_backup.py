@@ -1,8 +1,9 @@
-"""A brand-new database gets no old-schema backup of itself (#312).
+"""A brand-new database gets no backup of itself (#312).
 
 New tables are created in an older layout and then upgraded. The upgrade backs
 the database up first, which is right for a database an older version left
-behind, but a database created moments ago has nothing older to keep.
+behind, but a database created moments ago has nothing older to keep. The
+same goes for the periodic backup taken when a model is scraped.
 
 Each test builds a real SQLite database in a temporary folder.
 """
@@ -16,6 +17,7 @@ import ofscraper.classes.placeholder as placeholder
 import ofscraper.db.merge as merge
 import ofscraper.db.operations as operations
 import ofscraper.db.transition as transition
+import ofscraper.utils.cache.cache as cache
 from ofscraper.db.difference import get_group_difference
 from ofscraper.db.operations_.others import get_schema_changes
 
@@ -24,7 +26,7 @@ USERNAME = "newdbmodel"
 
 
 @pytest.fixture
-def scrape_db(monkeypatch, tmp_path):
+def model_db(monkeypatch, tmp_path):
     db = tmp_path / "data" / "user_data.db"
     db.parent.mkdir()
     monkeypatch.setattr(
@@ -32,9 +34,18 @@ def scrape_db(monkeypatch, tmp_path):
         "databasePathHelper",
         lambda self, model_id, model_username: db,
     )
+    # keep the periodic backup's timestamps and counters out of the real cache
+    store = {}
+    monkeypatch.setattr(cache, "get", lambda key, default=None: store.get(key, default))
+    monkeypatch.setattr(cache, "set", lambda key, value, **k: store.update({key: value}))
+    return db
+
+
+@pytest.fixture
+def scrape_db(model_db, monkeypatch):
     # the periodic backup is separate from the transition backup under test
     monkeypatch.setattr(operations, "create_backup", lambda *a, **k: None)
-    return db
+    return model_db
 
 
 def backups(db):
@@ -154,3 +165,21 @@ def test_failed_upgrade_of_an_older_database_restores_the_backup(
     assert backups(db) == ["old_schema_db_backup.db"]
     # the column upgrades that ran before the failure were rolled back
     assert not get_schema_changes(db_path=db)
+
+
+def test_first_scrape_writes_no_periodic_backup(model_db):
+    call(operations.table_init_create, model_id=MODEL_ID, username=USERNAME)
+
+    assert model_db.exists()
+    assert backups(model_db) == []
+
+
+def test_existing_database_still_gets_the_periodic_backup(model_db):
+    call(operations.create_tables, db_path=model_db)
+    call(transition.modify_tables, db_path=model_db)
+    shutil.rmtree(model_db.parent / "backup", ignore_errors=True)
+    (model_db.parent / "backup").mkdir()
+
+    call(operations.table_init_create, model_id=MODEL_ID, username=USERNAME)
+
+    assert backups(model_db) == ["user_data_copy_1.db"]
