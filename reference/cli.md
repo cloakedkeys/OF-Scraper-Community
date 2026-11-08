@@ -107,6 +107,23 @@ Run `python -m ofscraper.commands.recover_collisions DATABASE [OPTIONS]`.
 - `--undo`: Preview restoring flags from a recovery undo file
 - `--path-root`: Original working directory for relative recorded paths
 
+### `stash_sync` (separate entry point)
+
+`python -m ofscraper.commands.stash_sync PATH... [--apply] [--scan] [--path-map LOCAL=STASH]`. It uses argparse and is not part of the CLI (see `STASH.md`). It reads creators' `user_data.db` files offline (a folder such as `<profile>/.data` is searched for them) and, over Stash's GraphQL API, fills empty fields of each downloaded file's scene or image: performer, studio, date, title, details, code, URL and source tags. It never overwrites a value already in Stash, and without `--apply` it only prints a JSON report. Fansly databases (`schema_flags` `site=fansly`) are skipped. It doesn't contact OnlyFans.
+
+Run `python -m ofscraper.commands.stash_sync PATH... [OPTIONS]`.
+
+- `PATHS`: user_data.db files, or folders to search for them (e.g. <profile>/.data)
+- `--apply`: write to Stash; without it, only report
+- `--url`: Stash GraphQL URL (default http://localhost:9999/graphql, or $STASH_URL)
+- `--api-key`: Stash API key, if Stash has a password (default $STASH_API_KEY)
+- `--studio`: studio to set (default OnlyFans)
+- `--tag-prefix`: prefix for the source tags, e.g. 'OnlyFans Paid' (default 'OnlyFans ')
+- `--no-tags`: don't add source tags
+- `--organized`: also mark items as organized
+- `--path-map`: rewrite a path prefix when Stash sees the files elsewhere (e.g. in Docker); repeatable
+- `--scan`: with --apply, have Stash scan the download folders first and wait for it
+
 ### Scripts in `scripts/`
 
 - `scripts/commit_version.sh`: CI helper. Works out the commit-based version string, hashes and push type from git for the build workflows.
