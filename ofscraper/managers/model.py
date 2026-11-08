@@ -12,6 +12,7 @@ import ofscraper.filters.models.sort as sort
 import ofscraper.filters.models.subtype as subtype
 import ofscraper.prompts.prompts as prompts
 import ofscraper.utils.console as console
+import ofscraper.utils.interactive as interactive
 from ofscraper.utils.context.run_async import run
 from ofscraper.classes.of.models import Model
 import ofscraper.utils.settings as settings
@@ -23,6 +24,10 @@ import ofscraper.utils.live.updater as progress_updater
 import ofscraper.utils.live.screens as progress_utils
 
 log = logging.getLogger("shared")
+
+
+class NoCreatorsFound(Exception):
+    """The scan found no creators, and no one can be asked to rescan."""
 
 
 class ModelManager:
@@ -461,6 +466,17 @@ class ModelManager:
             console.get_console().print(
                 "[bold red]No accounts found during last scan[/bold red]"
             )
+            # no one is there to answer the retry prompt (#286)
+            if settings.get_settings().daemon:
+                raise NoCreatorsFound(
+                    "No creators were found, so there's nothing to scrape. "
+                    "Not offering a rescan in daemon mode."
+                )
+            if not interactive.is_interactive():
+                raise NoCreatorsFound(
+                    "No creators were found, so there's nothing to scrape. "
+                    "Not offering a rescan: there's no interactive console."
+                )
             if not prompts.retry_user_scan():
                 break
 

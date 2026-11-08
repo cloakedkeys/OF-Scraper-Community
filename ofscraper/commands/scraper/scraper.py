@@ -23,6 +23,8 @@ from ofscraper.commands.utils.command import CommandManager
 import ofscraper.utils.actions as actions
 import ofscraper.utils.checkers as checkers
 import ofscraper.managers.manager as manager
+from ofscraper.managers.model import NoCreatorsFound
+import ofscraper.utils.interactive as interactive
 from ofscraper.commands.scraper.utils.schedule import DaemonWakeup, set_schedule
 import ofscraper.utils.config.data as data
 import ofscraper.utils.menu as menu
@@ -232,6 +234,10 @@ def daemon_process():
             job_func = jobqueue.get()
             try:
                 job_func()
+            except (NoCreatorsFound, interactive.NoConsoleError):
+                # the next pass can't do better without someone stepping in,
+                # so end the daemon with the error instead (#286)
+                raise
             except Exception as E:
                 log.traceback_(E)
                 log.traceback_(traceback.format_exc())
