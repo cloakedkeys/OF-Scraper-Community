@@ -46,6 +46,15 @@ def old_schema_backups(db):
     return [name for name in backups(db) if name.startswith("old_schema_")]
 
 
+def call(func, *args, **kwargs):
+    # inside a running loop the app's @run functions return a coroutine; calling
+    # them outside one leaves an event loop open
+    async def go():
+        return await func(*args, **kwargs)
+
+    return asyncio.run(go())
+
+
 def merge_into(tmp_path, target):
     source = tmp_path / "source"
     source.mkdir(exist_ok=True)
@@ -54,7 +63,7 @@ def merge_into(tmp_path, target):
 
 def older_layout(db):
     """A database as an older version left it: tables, but no schema flags."""
-    operations.create_tables(db_path=db)
+    call(operations.create_tables, db_path=db)
     assert get_group_difference(db_path=db)
 
 
@@ -71,7 +80,7 @@ def test_merge_into_a_new_folder_writes_no_backup(tmp_path):
 
 
 def test_first_scrape_writes_no_old_schema_backup(scrape_db):
-    operations.table_init_create(model_id=MODEL_ID, username=USERNAME)
+    call(operations.table_init_create, model_id=MODEL_ID, username=USERNAME)
 
     assert scrape_db.exists()
     assert old_schema_backups(scrape_db) == []
@@ -94,7 +103,7 @@ def test_merge_into_an_older_database_backs_it_up_first(tmp_path):
 def test_scrape_of_an_older_database_backs_it_up_first(scrape_db):
     older_layout(scrape_db)
 
-    operations.table_init_create(model_id=MODEL_ID, username=USERNAME)
+    call(operations.table_init_create, model_id=MODEL_ID, username=USERNAME)
 
     assert len(old_schema_backups(scrape_db)) == 1
     assert old_schema_backups(scrape_db)[0].startswith(f"old_schema_{MODEL_ID}_")
@@ -102,12 +111,12 @@ def test_scrape_of_an_older_database_backs_it_up_first(scrape_db):
 
 
 def test_current_database_is_left_alone(scrape_db):
-    operations.create_tables(db_path=scrape_db)
-    transition.modify_tables(db_path=scrape_db)
+    call(operations.create_tables, db_path=scrape_db)
+    call(transition.modify_tables, db_path=scrape_db)
     shutil.rmtree(scrape_db.parent / "backup", ignore_errors=True)
     before = get_schema_changes(db_path=scrape_db)
 
-    operations.table_init_create(model_id=MODEL_ID, username=USERNAME)
+    call(operations.table_init_create, model_id=MODEL_ID, username=USERNAME)
 
     assert backups(scrape_db) == []
     assert get_schema_changes(db_path=scrape_db) == before
@@ -125,10 +134,10 @@ def test_failed_upgrade_of_a_new_database_keeps_the_original_error(
     tmp_path, failing_upgrade
 ):
     db = tmp_path / "user_data.db"
-    operations.create_tables(db_path=db)
+    call(operations.create_tables, db_path=db)
 
     with pytest.raises(RuntimeError, match="upgrade failed"):
-        transition.modify_tables(db_path=db, new_db=True)
+        call(transition.modify_tables, db_path=db, new_db=True)
 
     assert not (tmp_path / "backup").exists()
 
@@ -140,7 +149,7 @@ def test_failed_upgrade_of_an_older_database_restores_the_backup(
     older_layout(db)
 
     with pytest.raises(RuntimeError, match="upgrade failed"):
-        transition.modify_tables(db_path=db)
+        call(transition.modify_tables, db_path=db)
 
     assert backups(db) == ["old_schema_db_backup.db"]
     # the column upgrades that ran before the failure were rolled back
