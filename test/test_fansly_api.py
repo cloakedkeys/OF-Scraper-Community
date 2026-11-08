@@ -382,6 +382,47 @@ def test_models_come_from_fansly_accounts(fansly, monkeypatch):
     assert c.calls("account") == [{"usernames": CREATOR, "ngsw-bypass": "true"}]
 
 
+def _account_route(accounts):
+    # answers account?usernames= and account?ids= from a list of accounts
+    def route(path, query):
+        assert path == "account"
+        if "usernames" in query:
+            wanted = {u.lower() for u in query["usernames"].split(",")}
+            return envelope([a for a in accounts if a["username"].lower() in wanted])
+        wanted = set(query["ids"].split(","))
+        return envelope([a for a in accounts if a["id"] in wanted])
+
+    return route
+
+
+SOME_ID = "100000000000000901"
+OTHER_ID = "100000000000000902"
+ACCOUNTS = [
+    {"id": SOME_ID, "username": "SomeCreator"},
+    {"id": OTHER_ID, "username": "OtherCreator"},
+]
+
+
+def test_account_id_alone_is_looked_up_by_id(monkeypatch):
+    # -u <account id> went to account?usernames= and found nobody (#282)
+    c = FakeSession(_account_route(ACCOUNTS))
+    monkeypatch.setattr(scrape, "_session", lambda _c: _ctx(c))
+    models = asyncio.run(scrape.get_models([SOME_ID]))
+    assert [(str(m["id"]), m["username"]) for m in models] == [(SOME_ID, "SomeCreator")]
+    assert c.calls("account") == [{"ids": SOME_ID, "ngsw-bypass": "true"}]
+
+
+def test_names_and_ids_are_looked_up_separately_and_merged(monkeypatch):
+    c = FakeSession(_account_route(ACCOUNTS))
+    monkeypatch.setattr(scrape, "_session", lambda _c: _ctx(c))
+    # "somecreator" is how -u hands the name over; SOME_ID repeats that creator
+    models = asyncio.run(scrape.get_models(["somecreator", OTHER_ID, SOME_ID]))
+    assert sorted(m["username"] for m in models) == ["OtherCreator", "SomeCreator"]
+    calls = c.calls("account")
+    assert {"usernames": "somecreator", "ngsw-bypass": "true"} in calls
+    assert [q["ids"] for q in calls if "ids" in q] == [f"{OTHER_ID},{SOME_ID}"]
+
+
 def test_followed_accounts_are_paged_then_resolved(fansly, monkeypatch):
     stubs = [{"accountId": str(100000000000000300 + i)} for i in range(7)]
 

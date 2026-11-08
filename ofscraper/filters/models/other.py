@@ -6,15 +6,17 @@ import logging
 
 from ofscraper.filters.models.utils.logs import trace_log_user
 import ofscraper.utils.settings as settings
+from ofscraper.utils.username_match import matches_username, username_keys
 
 
 def otherFilters(filterusername):
     log = logging.getLogger("shared")
     log.debug(f"Excluded usernames: {settings.get_settings().excluded_username}")
     if len(settings.get_settings().excluded_username) > 0:
+        excluded = username_keys(settings.get_settings().excluded_username)
         filterusername = list(
             filter(
-                lambda x: x.name not in settings.get_settings().excluded_username,
+                lambda x: not matches_username(x.name, excluded),
                 filterusername,
             )
         )
@@ -26,10 +28,7 @@ def otherFilters(filterusername):
 
 def is_excluded_username(username):
     """
-    True if --excluded-username names this model.
-
-    The option's callback already lowercases its values, so lowercasing the
-    model's name here makes the match case-insensitive.
+    True if --excluded-username names this model, in any case.
     """
-    excluded = settings.get_settings().excluded_username or []
-    return bool(username) and username.lower() in excluded
+    excluded = username_keys(settings.get_settings().excluded_username)
+    return matches_username(username, excluded)

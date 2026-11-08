@@ -69,15 +69,28 @@ async def get_paid_posts(model_id, username, c=None):
 async def get_models(usernames=None):
     """Creators to scrape, as OnlyFans-shaped model dicts.
 
-    With usernames: ``account?usernames=``. Otherwise every followed
-    account (``account/<me>/following``, then ``account?ids=``).
+    With usernames: names go to ``account?usernames=`` and all-digit values
+    (account ids) to ``account?ids=``. Otherwise every followed account
+    (``account/<me>/following``, then ``account?ids=``).
     """
     import ofscraper.utils.me as me_util
 
-    usernames = [u for u in (usernames or []) if u and u != "ALL"]
+    usernames = [str(u) for u in (usernames or []) if u and u != "ALL"]
+    ids = [u for u in usernames if u.isdigit()]
+    names = [u for u in usernames if not u.isdigit()]
     async with _session(None) as c:
         if usernames:
-            accounts = await api.accounts_by_username(c, usernames)
+            accounts = []
+            if names:
+                accounts.extend(await api.accounts_by_username(c, names))
+            if ids:
+                accounts.extend(await api.accounts_by_id(c, ids))
+            # a name and the id of the same creator return it twice
+            seen = set()
+            accounts = [
+                a for a in accounts
+                if str(a.get("id")) not in seen and not seen.add(str(a.get("id")))
+            ]
         else:
             accounts = await api.accounts_by_id(c, await api.following_ids(c, me_util.get_id()))
     return [normalize.model(a) for a in accounts if a.get("id") and a.get("username")]
