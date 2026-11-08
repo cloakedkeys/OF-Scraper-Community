@@ -195,7 +195,7 @@ class MergeDatabase:
                 list(
                     map(
                         lambda x: str([(key, value) for key, value in x.items()]),
-                        failures,
+                        failures.values(),
                     )
                 )
             )
