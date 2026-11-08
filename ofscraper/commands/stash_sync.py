@@ -103,10 +103,23 @@ def columns(conn, table):
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
+def connect(database):
+    uri = Path(database).resolve().as_uri()
+    return sqlite3.connect(f"{uri}?mode=ro", uri=True)
+
+
+def site_of(database):
+    """The site a database belongs to: Fansly databases carry a site flag."""
+    with closing(connect(database)) as conn:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_flags'").fetchone():
+            return "onlyfans"
+        row = conn.execute("SELECT flag_value FROM schema_flags WHERE flag_name = 'site'").fetchone()
+    return str(row[0]).lower() if row and row[0] else "onlyfans"
+
+
 def read_model(database):
     """Return the model's username and its downloaded media, grouped by file path."""
-    uri = Path(database).resolve().as_uri()
-    with closing(sqlite3.connect(f"{uri}?mode=ro", uri=True)) as conn:
+    with closing(connect(database)) as conn:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         username = None
         if "profiles" in tables:
@@ -273,7 +286,14 @@ def sync(
     sample=10,
 ):
     models = []
+    skipped = []
     for database in find_databases(databases):
+        # Only OnlyFans is supported; Fansly databases sit in the same profile
+        # folder and would otherwise get the OnlyFans studio and links
+        site = site_of(database)
+        if site != "onlyfans":
+            skipped.append({"database": str(database), "skipped": f"{site} database; only OnlyFans is supported"})
+            continue
         username, files = read_model(database)
         models.append((database, username, files))
 
@@ -351,6 +371,9 @@ def sync(
         for key, value in counts.items():
             report["totals"][key] += value
         report["totals"]["files"] += len(files)
+    report["models"].extend(skipped)
+    if skipped:
+        report["totals"]["skipped_databases"] = len(skipped)
     report["totals"] = dict(report["totals"])
     return report
 

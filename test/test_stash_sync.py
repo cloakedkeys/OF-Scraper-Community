@@ -8,6 +8,7 @@ from ofscraper.commands import stash_sync
 from ofscraper.commands.stash_sync import StashError, map_path, read_model, sync
 from ofscraper.db.operations_.media import mediaCreate
 from ofscraper.db.operations_.messages import messagesCreate
+from ofscraper.db.operations_.others import schemaCreate, siteInsert
 from ofscraper.db.operations_.posts import postCreate
 from ofscraper.db.operations_.profile import profilesCreate
 
@@ -196,6 +197,32 @@ def test_map_path_accepts_either_separator():
     assert map_path(r"C:\dl", [("C:\\dl\\", "/data")]) == "/data"
     assert map_path("/srv/dl", [("/srv/dl", "/media")]) == "/media"
     assert map_path("/srv/dlx/b.jpg", [("/srv/dl", "/media")]) == "/srv/dlx/b.jpg"
+
+
+def test_fansly_database_is_skipped(library, tmp_path):
+    db, media_dir = library
+    fansly = db.parent / "Fansly" / "user_data.db"
+    fansly.parent.mkdir()
+    with closing(sqlite3.connect(fansly)) as conn, conn:
+        for create in (mediaCreate, postCreate, profilesCreate, schemaCreate):
+            conn.execute(create)
+        conn.execute(siteInsert, ("fansly",))
+        conn.execute("INSERT INTO profiles (user_id, username) VALUES (456, 'fansly_creator')")
+        conn.execute(
+            "INSERT INTO medias (media_id, post_id, directory, filename, api_type, media_type, downloaded, model_id) "
+            "VALUES (9, 9001, ?, 'fansly.jpg', 'Timeline', 'Images', 1, 456)",
+            (str(media_dir),),
+        )
+    stash = FakeStash(images=[str(media_dir / "post.jpg"), str(media_dir / "fansly.jpg")])
+
+    report = sync([tmp_path / ".data"], stash, apply=True)
+
+    assert report["totals"]["skipped_databases"] == 1
+    assert report["totals"]["updated"] == 1
+    assert {"database": str(fansly), "skipped": "fansly database; only OnlyFans is supported"} in report["models"]
+    assert "fansly_creator" not in stash.entities["performer"]
+    fansly_item = next(i for i in stash.items["image"].values() if i["path"].endswith("fansly.jpg"))
+    assert fansly_item["studio"] is None and fansly_item["performers"] == []
 
 
 def test_no_tags(library):
