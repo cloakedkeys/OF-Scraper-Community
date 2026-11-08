@@ -32,7 +32,7 @@ from ofscraper.classes.of.media import Media
 from ofscraper.classes.of.posts import Post
 from ofscraper.managers.sessionmanager import ofsession
 from ofscraper.sites.fansly import auth as fansly_auth
-from ofscraper.sites.fansly import video
+from ofscraper.sites.fansly import normalize, video
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "fansly"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/140.0"
@@ -904,3 +904,97 @@ def test_skipped_segment_check_tolerances():
     assert "audio" in video.incomplete_reason(ten_min, [t for t in audio if not 300 <= t < 306])
     assert video.incomplete_reason([], [], 600.0) == "the copy has no video or audio"
     assert video.expected_duration(raw_media()["media"]) == pytest.approx(26.566667)
+
+
+# ------------------------------------------------------------------ stream-only videos (#278)
+
+def stream_only(keep_mime):
+    """The fixture's accountMedia with no MP4 location and only one stream variant."""
+    raw = raw_media()
+    other = video.DASH_MIME if keep_mime == video.HLS_MIME else video.HLS_MIME
+    drop_variant(raw, other)
+    raw["media"]["locations"] = []
+    return raw
+
+
+def read_post(account_media):
+    """The Post a timeline read gives for one accountMedia, through normalize."""
+    item = {"id": 100000000000000005, "postedAt": "2026-01-02T03:04:05+00:00", "text": "",
+            "media": normalize.media_for(account_media)}
+    return Post(item, 100000000000000002, "a-creator", responsetype="timeline")
+
+
+def record_downloads(monkeypatch):
+    calls = []
+
+    async def stream_download(self, c, ele, username, model_id):
+        calls.append(("stream", ele.id))
+        return "Videos", 1
+
+    async def main_download(self, c, ele, username, model_id):
+        calls.append(("main", ele.url))
+        return "Videos", 1
+
+    monkeypatch.setattr(run_mod.FanslyStreamDownloadManager, "stream_download", stream_download)
+    monkeypatch.setattr(run_mod.MainDownloadManager, "main_download", main_download)
+    return calls
+
+
+@pytest.mark.parametrize("mime", [video.HLS_MIME, video.DASH_MIME])
+def test_viewable_stream_only_video_is_kept_and_takes_the_stream_path(env, monkeypatch, mime):
+    raw = stream_only(mime)
+    assert raw["access"] is True
+    p = read_post(raw)
+    assert [m.id for m in p.media] == [int(raw["media"]["id"])]
+    assert filters.url_filter(p.media) == p.media
+    calls = record_downloads(monkeypatch)
+    assert asyncio.run(run_download(None, p.media[0])) == ("Videos", 1)
+    assert calls == [("stream", int(raw["media"]["id"]))]
+
+
+@pytest.mark.parametrize("mime", [video.HLS_MIME, video.DASH_MIME])
+def test_unusable_stream_without_an_mp4_is_skipped_not_fetched_as_a_file(env, monkeypatch, mime):
+    raw = stream_only(mime)
+    ele = read_post(raw).media[0]
+    calls = []
+
+    async def main_download(self, c, ele, username, model_id):
+        calls.append(ele.url)
+        return "Videos", 1
+
+    monkeypatch.setattr(run_mod.MainDownloadManager, "main_download", main_download)
+    # the manifest 404s
+    assert asyncio.run(run_download(FakeSession({}), ele)) == ("skipped", 0)
+    assert calls == [] and env.ffmpeg_runs == [] and files_in(env.out, env.temp) == []
+
+
+def test_locked_stream_only_video_stays_locked_and_only_its_preview_is_kept():
+    raw = stream_only(video.HLS_MIME)
+    raw["access"] = False
+    raw["previewId"] = "100000000000000090"
+    raw["preview"] = {
+        "id": "100000000000000090", "mimetype": "image/jpeg",
+        "locations": [{"locationId": "1",
+                       "location": "https://cdn3.fansly.com/100000000000000002/100000000000000090.jpeg"}],
+    }
+    p = read_post(raw)
+    full, preview = p.all_media
+    assert (full.canview, full.url) == (False, None)
+    assert (preview.canview, preview.preview) == (True, 1)
+    assert [m.id for m in p.media] == [100000000000000090]
+
+
+def test_video_with_an_mp4_keeps_the_mp4_as_its_url(env, monkeypatch):
+    raw = raw_media()
+    direct = raw["media"]["locations"][0]["location"]
+    (m,) = normalize.media_for(raw)
+    assert m["files"]["full"]["url"] == direct
+    p = read_post(raw)
+    assert [x.url for x in p.media] == [direct]
+    # streams no larger than the MP4: the normal downloader, with the MP4
+    for v in raw["media"]["variants"]:
+        if v["mimetype"] in (video.HLS_MIME, video.DASH_MIME):
+            v["width"], v["height"], v["metadata"] = 1280, 720, "{}"
+    calls = record_downloads(monkeypatch)
+    assert asyncio.run(run_download(None, read_post(raw).media[0])) == ("Videos", 1)
+    assert calls == [("main", direct)]

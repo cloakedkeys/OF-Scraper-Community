@@ -18,6 +18,8 @@ import re
 
 import arrow
 
+from ofscraper.sites.fansly import video
+
 log = logging.getLogger("shared")
 
 # attachment contentType values
@@ -110,6 +112,20 @@ def direct_url(media):
     return None
 
 
+def file_url(media):
+    """The MP4 (``locationId`` 1), else the best HLS or DASH stream.
+
+    Older videos often have only the streams. Without a URL the item counts
+    as not viewable and is dropped; the stream itself is downloaded by the
+    Fansly stream downloader, which picks it from the raw Media.
+    """
+    url = direct_url(media)
+    if url:
+        return url
+    best = video.select_best(media)
+    return best.url if best else None
+
+
 def duration(media):
     # whole seconds, like OnlyFans (Fansly gives a float)
     value = parse_json(media.get("metadata")).get("duration")
@@ -129,7 +145,7 @@ def media_dict(account_media, media, is_preview, can_view, fallback_date=None):
         or iso(account_media.get("createdAt"))
         or fallback_date,
         "duration": duration(media),
-        "files": {"full": {"url": direct_url(media) if can_view else None}},
+        "files": {"full": {"url": file_url(media) if can_view else None}},
         "fansly": {
             "accountMediaId": str(account_media["id"]),
             "mediaId": str(media["id"]),

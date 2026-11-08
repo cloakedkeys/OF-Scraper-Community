@@ -97,7 +97,8 @@ def candidates(media: dict) -> list:
     """Downloadable deliveries of a raw Fansly Media object.
 
     The direct file is the media's own ``locationId`` 1, the URL the scraper
-    stores as ``files.full.url`` and the normal downloader fetches.
+    stores as ``files.full.url`` and the normal downloader fetches. A video
+    without one stores its best stream there instead.
     """
     out = []
     if not media:
@@ -128,6 +129,11 @@ def select_best(media: dict):
     if not found:
         return None
     return max(found, key=lambda c: (c.area, -_RANK[c.kind]))
+
+
+def has_direct(media) -> bool:
+    """True when the media has a direct MP4 file the normal downloader can fetch."""
+    return any(c.kind == DIRECT for c in candidates(media))
 
 
 def raw_media(ele):
