@@ -405,6 +405,12 @@ class Media(base.base):
         if not base_url:
             return None
 
+        fansly = self._media.get("fansly")
+        if fansly and fansly.get("mediaId"):
+            # the URL may be a variant's or a stream's, named by the variant
+            # id, and which one is chosen can change; the media id does not
+            return str(fansly["mediaId"])
+
         filename_part = (
             base_url.split(".")[-2].split("/")[-1].strip("/,.;!_-@#$%^&*()+\\ ")
         )
@@ -434,6 +440,10 @@ class Media(base.base):
 
     @property
     def preview(self):
+        # Fansly marks previews per item, not per post
+        fansly = self._media.get("fansly")
+        if fansly is not None:
+            return 1 if fansly.get("isPreview") else 0
         return 1 if self.post.preview else 0
 
     @property
@@ -683,7 +693,11 @@ class Media(base.base):
         for prot in adapt_set.content_protections:
             if prot.value is None:
                 kId = prot.pssh[0].pssh
-                sensitive.add_sensitive_pattern(kId, "pssh_code")
+                # escaped: a base64 PSSH can hold "+" and "/", which as a raw
+                # regex would break the pattern and every log line after it
+                sensitive.add_sensitive_pattern(
+                    re.compile(re.escape(str(kId))), "pssh_code"
+                )
                 break
 
         origname = f"{selected_repr.base_urls[0].base_url_value}"

@@ -1,6 +1,8 @@
 import logging
 from typing import Dict, List, Optional, Set, Union, Iterable
 
+from ofscraper.utils.markup import escape_text
+
 import ofscraper.data.models.utils.retriver as retriver
 import ofscraper.filters.models.date as date_
 import ofscraper.filters.models.flags as flags
@@ -10,9 +12,11 @@ import ofscraper.filters.models.sort as sort
 import ofscraper.filters.models.subtype as subtype
 import ofscraper.prompts.prompts as prompts
 import ofscraper.utils.console as console
+import ofscraper.utils.interactive as interactive
 from ofscraper.utils.context.run_async import run
 from ofscraper.classes.of.models import Model
 import ofscraper.utils.settings as settings
+import ofscraper.utils.username_match as username_match
 from ofscraper.utils.args.mutators.user import resetUserFilters
 from ofscraper.managers.utils.state import StateManager, EActivity, string_to_activity
 import ofscraper.utils.of_env.of_env as of_env
@@ -20,6 +24,10 @@ import ofscraper.utils.live.updater as progress_updater
 import ofscraper.utils.live.screens as progress_utils
 
 log = logging.getLogger("shared")
+
+
+class NoCreatorsFound(Exception):
+    """The scan found no creators, and no one can be asked to rescan."""
 
 
 class ModelManager:
@@ -84,7 +92,10 @@ class ModelManager:
         if settings.get_args().daemon:
             # DAEMON MODE: Silent, no prompts.
             log.info("Daemon mode active. Calling select_models to get model list.")
-            final_selection = self._select_models_scraper()
+            # an empty scan skips this pass; without this the empty list would
+            # open the filter menu (#286)
+            if self._all_subs_dict:
+                final_selection = self._select_models_scraper()
         else:
             # INTERACTIVE MODE: Check if we have a leftover queue from a previous run
             existing_queued_users = [x.name for x in self.get_scrape_selected_models()]
@@ -101,7 +112,7 @@ class ModelManager:
                         if prompt_choice == "Selection":
                             self._fetch_all_subs(force_refetch=True)
                     else:
-                        console.get_shared_console().print(existing_queued_users)
+                        console.get_console().print(existing_queued_users)
                         prompts.press_enter_to_continue()
 
             if requires_new_selection:
@@ -226,15 +237,17 @@ class ModelManager:
         usernames = settings.get_settings().usernames or []
         is_daemon = settings.get_settings().daemon
 
-        # Guard Clause 1: Daemon mode with a specific list of users.
-        if is_daemon and usernames and "ALL" not in usernames:
-            allowed_names_and_ids = {str(x) for x in usernames}
-            return [
-                model
-                for model in self.all_subs
-                if str(model.name) in allowed_names_and_ids
-                or str(model.id) in allowed_names_and_ids
-            ]
+        # Guard Clause 1: Daemon mode with a specific list of users. The same
+        # filters as an interactive run, but no prompt if they remove everyone (#285)
+        if is_daemon and usernames:
+            filtered_models = self._filtered_models()
+            if "ALL" in usernames:
+                if not filtered_models:
+                    log.warning("The filters removed every creator, so none were selected.")
+                return list(filtered_models.values())
+            return self._select_by_usernames(
+                filtered_models.values(), usernames, filtered=True
+            )
 
         # Guard Clause 2: Daemon mode with an existing selection and no new instructions.
         existing_selection = self.get_scrape_selected_models()
@@ -249,19 +262,30 @@ class ModelManager:
 
         # This handles interactive mode when a specific username list is provided via CLI.
         if not is_daemon and usernames:
-            allowed_names_and_ids = {str(x) for x in usernames}
-            return [
-                model
-                for model in filtered_models.values()
-                if str(model.name) in allowed_names_and_ids
-                or str(model.id) in allowed_names_and_ids
-            ]
+            return self._select_by_usernames(
+                filtered_models.values(), usernames, filtered=True
+            )
 
         # FINAL CASE: We must prompt for a selection.
         # This is where the interactive terminal UI menu is actually launched.
         return retriver.get_selected_model(
             list(filtered_models.values()), existing_selection
         )
+
+    def _select_by_usernames(self, models, usernames, filtered=False) -> List["Model"]:
+        """
+        Models named by -u (username in any case, or account id).
+        ``filtered`` says whether the filters (and --excluded-username) already ran.
+        """
+        selected, unmatched = username_match.select_models(list(models), usernames)
+        if unmatched:
+            reason = (
+                "The name or id wasn't found, or a filter or --excluded-username removed it."
+                if filtered
+                else "No creator has that name or id."
+            )
+            log.warning(f"Not selected: {', '.join(map(str, unmatched))}. {reason}")
+        return selected
 
     def _filter_and_prompt_for_selection(self):
         """
@@ -270,17 +294,18 @@ class ModelManager:
         to adjust the filters before proceeding.
         """
         while True:
-            filtered_models = self._apply_filters()
-            sorted_models = sort.sort_models_helper(filtered_models)
-            if sorted_models:
-                return {
-                    model.name: self._all_subs_dict[model.name]
-                    for model in sorted_models
-                }
+            filtered_models = self._filtered_models()
+            if filtered_models:
+                return filtered_models
             console.get_console().print(
                 "[bold red]You have filtered the user list to zero.[/bold red]"
             )
             self.setfilter()
+
+    def _filtered_models(self) -> Dict[str, "Model"]:
+        """The models left after the filters, sorted, by name. Never prompts."""
+        sorted_models = sort.sort_models_helper(self._apply_filters())
+        return {model.name: self._all_subs_dict[model.name] for model in sorted_models}
 
     def setfilter(self):
         """Displays the interactive menu to modify filters."""
@@ -329,7 +354,7 @@ class ModelManager:
                         new_args = settings.get_args(copy=True)
 
             except Exception as e:
-                console.get_console().print(f"Exception in menu: {e}")
+                console.get_console().print(f"Exception in menu: {escape_text(e)}")
             settings.update_args(new_args)
 
     def get_models_from_prompt(self):
@@ -453,6 +478,20 @@ class ModelManager:
             console.get_console().print(
                 "[bold red]No accounts found during last scan[/bold red]"
             )
+            # no one is there to answer the retry prompt (#286)
+            if settings.get_settings().daemon:
+                # an empty scan can be a network error the fetch swallowed, so
+                # don't end the daemon: the next pass scans again
+                log.error(
+                    "No creators were found, so there's nothing to scrape this "
+                    "pass. The daemon scans again on its next pass."
+                )
+                break
+            if not interactive.is_interactive():
+                raise NoCreatorsFound(
+                    "No creators were found, so there's nothing to scrape. "
+                    "Not offering a rescan: there's no interactive console."
+                )
             if not prompts.retry_user_scan():
                 break
 

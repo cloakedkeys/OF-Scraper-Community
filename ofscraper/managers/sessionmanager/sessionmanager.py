@@ -16,6 +16,8 @@ import tenacity
 import aiohttp
 from tenacity import AsyncRetrying, Retrying, retry_if_not_exception_type
 
+import ofscraper.sites as sites
+import ofscraper.sites.fansly.headers as fansly_headers
 import ofscraper.utils.auth.request as auth_requests
 import ofscraper.utils.of_env.of_env as of_env
 from ofscraper.utils.auth.utils.warning.print import print_auth_warning
@@ -30,6 +32,9 @@ FORCED_NEW = "get_new_sign"
 SIGN = "get_sign"
 COOKIES = "get_cookies_str"
 HEADERS = "create_header"
+
+# A backoff that decays below this many seconds ends (drops to *_MIN_SLEEP)
+BACKOFF_FLOOR = 0.5
 
 
 def is_provided_exception_number(exception: Exception, *numbers: int) -> bool:
@@ -83,7 +88,7 @@ class SessionSleep:
             sleep if sleep is not None else of_env.getattr("SESSION_SLEEP_INIT")
         )
         self._min_sleep = (
-            min_sleep if min_sleep is not None else of_env.getattr("SESSION_SLEEP_MIN")
+            min_sleep if min_sleep is not None else of_env.getattr("SESSION_MIN_SLEEP")
         )
         self._sleep = self._min_sleep
         self._difmin = (
@@ -116,6 +121,9 @@ class SessionSleep:
             return
         if (arrow.now() - self._last_date).total_seconds() > self._decay_threshold:
             new_sleep = self._sleep / self._decay_factor
+            # Dividing never reaches 0, so end the backoff once it gets small
+            if new_sleep < BACKOFF_FLOOR:
+                new_sleep = self._min_sleep
             self._sleep = max(self._min_sleep, new_sleep)
             self._last_date = arrow.now()
             logging.getLogger("shared").debug(
@@ -132,7 +140,7 @@ class SessionSleep:
                 lock = self._alocks[loop] = asyncio.Lock()
         return lock
 
-    async def async_do_sleep(self):
+    async def async_do_sleep(self, pace=True):
         async with self._alock:
             self._maybe_decay_sleep()
 
@@ -146,7 +154,7 @@ class SessionSleep:
                 return True
 
             # 2. Pacing mode (Ensure we don't hit the API too fast)
-            elif self._min_sleep and self._min_sleep > 0:
+            elif pace and self._min_sleep and self._min_sleep > 0:
                 time_since_last = (
                     arrow.now() - self._last_request_time
                 ).total_seconds()
@@ -164,7 +172,7 @@ class SessionSleep:
             self._last_request_time = arrow.now()
             return False
 
-    def do_sleep(self):
+    def do_sleep(self, pace=True):
         with self._lock:
             self._maybe_decay_sleep()
 
@@ -178,7 +186,7 @@ class SessionSleep:
                 return True
 
             # 2. Pacing mode
-            elif self._min_sleep and self._min_sleep > 0:
+            elif pace and self._min_sleep and self._min_sleep > 0:
                 time_since_last = (
                     arrow.now() - self._last_request_time
                 ).total_seconds()
@@ -282,11 +290,13 @@ class sessionManager:
             if total_timeout is not None
             else of_env.getattr("TOTAL_TIMEOUT")
         )
+        # 0 means no limit (None), wherever it comes from: aiohttp reads 0
+        # that way, but httpx reads 0 as "fail at once"
         self._read_timeout = (
             read_timeout
             if read_timeout is not None
             else of_env.getattr("OF_READ_TIMEOUT")
-        )
+        ) or None
         self._pool_connect_timeout = (
             pool_timeout
             if pool_timeout is not None
@@ -352,6 +362,7 @@ class sessionManager:
                     if forbidden_sleep is not None
                     else of_env.getattr("SESSION_403_SLEEP_INIT")
                 ),
+                min_sleep=of_env.getattr("SESSION_403_MIN_SLEEP"),
                 difmin=(
                     forbidden_difmin
                     if forbidden_difmin is not None
@@ -482,13 +493,30 @@ class sessionManager:
 
     def _create_headers(self, headers, url, sign, forced):
         headers = headers or {}
+        if sites.is_fansly():
+            # Fansly: token and signed bundle on API calls only, never on CDN
+            # files; no OnlyFans headers or signing at all
+            headers.update(fansly_headers.make_headers(url))
+            return headers
         headers.update(auth_requests.make_headers())
         if sign:
             auth_requests.create_sign(url, headers)
         return headers
 
     def _create_cookies(self):
+        if sites.is_fansly():
+            return None
         return auth_requests.add_cookies()
+
+    def _wait_before_request(self):
+        # A 403 backoff applies even when the rate-limit sleeper waited; the
+        # 403 pacing gap only when the rate-limit sleeper didn't pace
+        paced = self._rate_limit_sleeper.do_sleep()
+        self._forbidden_sleeper.do_sleep(pace=not paced)
+
+    async def _async_wait_before_request(self):
+        paced = await self._rate_limit_sleeper.async_do_sleep()
+        await self._forbidden_sleeper.async_do_sleep(pace=not paced)
 
     def reset_sleep(self):
         self._rate_limit_sleeper.reset_sleep()
@@ -519,10 +547,10 @@ class sessionManager:
     ) -> Generator[httpx.Response, None, None]:
         actions = actions or []
         exceptions = exceptions or []
-        log = kwargs.get("log") or self._log
-        retries = kwargs.get("retries") or self._retries
-        wait_min = kwargs.get("wait_min") or self._wait_min
-        wait_max = kwargs.get("wait_max") or self._wait_max
+        log = log or self._log
+        retries = retries if retries is not None else self._retries
+        wait_min = wait_min if wait_min is not None else self._wait_min
+        wait_max = wait_max if wait_max is not None else self._wait_max
 
         for _ in Retrying(
             retry=retry_if_not_exception_type((KeyboardInterrupt, SystemExit)),
@@ -539,10 +567,7 @@ class sessionManager:
             with self._sync_sem:
                 with _:
                     try:
-                        if self._rate_limit_sleeper.do_sleep():
-                            pass
-                        else:
-                            self._forbidden_sleeper.do_sleep()
+                        self._wait_before_request()
 
                         if (
                             SIGN in actions
@@ -566,7 +591,9 @@ class sessionManager:
                             data=data,
                             timeout=httpx.Timeout(
                                 total_timeout or self._total_timeout,
-                                connect=connect_timeout,
+                                # the TLS handshake counts as connect time:
+                                # None here let a stalled handshake hang forever
+                                connect=connect_timeout or self._connect_timeout,
                                 pool=pool_connect_timeout or self._pool_connect_timeout,
                                 read=read_timeout or self._read_timeout,
                             ),
@@ -621,14 +648,24 @@ class sessionManager:
     ) -> AsyncGenerator[httpx.Response, None]:
         actions = actions or []
         exceptions = exceptions or []
-        retries = kwargs.get("retries") or self._retries
-        wait_min = kwargs.get("wait_min") or self._wait_min
-        wait_max = kwargs.get("wait_max") or self._wait_max
+        retries = retries if retries is not None else self._retries
+        wait_min = wait_min if wait_min is not None else self._wait_min
+        wait_max = wait_max if wait_max is not None else self._wait_max
 
+        # The retry loop only gets the response. The caller's code runs after
+        # it, at the yield below: an error there (e.g. a read timeout while
+        # streaming) must not land inside tenacity's attempt, which swallows
+        # every exception and would start a new request and yield again,
+        # leaving both responses' connections open.
+        r = None
         async for _ in AsyncRetrying(
             stop=tenacity.stop.stop_after_attempt(retries),
             wait=tenacity.wait_random(min=wait_min, max=wait_max),
-            retry=retry_if_not_exception_type((KeyboardInterrupt, SystemExit)),
+            # a cancel (Ctrl+C, a timeout around the call) stops the request:
+            # tenacity's attempt swallows it, so it must not count as a failure
+            retry=retry_if_not_exception_type(
+                (KeyboardInterrupt, SystemExit, asyncio.CancelledError)
+            ),
             reraise=True,
             before_sleep=lambda retry_state: (
                 self._log.debug(
@@ -639,10 +676,7 @@ class sessionManager:
             with _:
                 await self._sem.acquire()
                 try:
-                    if await self._rate_limit_sleeper.async_do_sleep():
-                        pass
-                    else:
-                        await self._forbidden_sleeper.async_do_sleep()
+                    await self._async_wait_before_request()
                     if SIGN in actions or FORCED_NEW in actions or HEADERS in actions:
                         headers = self._create_headers(
                             headers, url, SIGN in actions, FORCED_NEW in actions
@@ -670,7 +704,10 @@ class sessionManager:
                         ssl=self._get_ssl_context(),
                     )
 
-                    if not r.ok and r.status_code != 404:
+                    # a 416 to a ranged request is an answer, not a failure:
+                    # the caller decides what to do with the part on disk
+                    range_refused = r.status_code == 416 and "Range" in (headers or {})
+                    if not r.ok and r.status_code != 404 and not range_refused:
                         error_text = await r.text_()
                         self._log.debug(f"[bold]failed: [bold] {r.url}")
                         self._log.debug(f"[bold]status: [bold] {r.status_code}")
@@ -682,13 +719,23 @@ class sessionManager:
                             )
                             raise SystemExit("OnlyFans Maintenance detected.")
                         r.raise_for_status()
-                    self._sem.release()
-                    yield r
-                    return
                 except Exception as E:
+                    if r is not None:
+                        r.close()
+                        r = None
                     await self._async_handle_error(E, exceptions)
-                    self._sem.release()
                     raise E
+                finally:
+                    self._sem.release()
+
+        try:
+            yield r
+        except BaseException:
+            # unread data stays in the socket buffer until the connection closes
+            r.close()
+            raise
+        else:
+            r.release()
 
     @property
     def sleep(self):

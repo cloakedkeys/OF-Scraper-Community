@@ -35,7 +35,7 @@ console = Console()
 
 def funct(prompt_):
     console.print("""
-    For more Details => https://of-scraper.gitbook.io/of-scraper/config-options
+    For more Details => https://cloakedkeys.gitbook.io/ofsc/getting-started/config-options
     
     [General Options]
     main_profile: default profile attached to config
@@ -87,7 +87,7 @@ def funct(prompt_):
     [Performance Options]
     download_sems: number of downloads per processor/worker
     thread_count: number of processors/workers
-    download_limit: max download speed per second for each thread
+    download_limit: max download speed per second, shared by all downloads
     -----------------------------------
     [Content Filter Options]
     block_ads: use common key words to block ads
@@ -418,7 +418,7 @@ def performance_config():
             {
                 "type": "input",
                 "name": "download_limit",
-                "message": "Maximum download speed per second for  each thread: ",
+                "message": "Maximum download speed per second, shared by all downloads: ",
                 "validate": EmptyInputValidator(),
                 "option_instruction": """
                 Input can be int representing bytes
@@ -542,14 +542,28 @@ Enter 0 for no minimum
 
 def advanced_config() -> dict:
     out = {}
+    # select the rule an alias such as "dc" picks, listed by the name the menu
+    # saves (digitalcriminals as "digital"), and offer it even if
+    # OFSC_DYNAMIC_OPTIONS leaves it out (#226)
+    def menu_name(rule):
+        rule = const.DYNAMIC_ALIASES.get(rule, rule)
+        return const.DYNAMIC_MENU_NAMES.get(rule, rule)
+
+    dynamic_rule = menu_name(data.get_dynamic())
+    dynamic_choices = []
+    for rule in of_env.getattr("DYNAMIC_OPTIONS"):
+        if menu_name(rule) not in dynamic_choices:
+            dynamic_choices.append(menu_name(rule))
+    if dynamic_rule not in dynamic_choices:
+        dynamic_choices.append(dynamic_rule)
     new_settings = promptClasses.batchConverter(
         *[
             {
                 "type": "list",
                 "name": "dynamic-mode-default",
                 "message": "What would you like to use for dynamic rules",
-                "default": data.get_dynamic(),
-                "choices": of_env.getattr("DYNAMIC_OPTIONS"),
+                "default": dynamic_rule,
+                "choices": dynamic_choices,
             },
             {
                 "type": "list",

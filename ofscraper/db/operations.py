@@ -16,6 +16,8 @@ import logging
 from rich.console import Console
 
 import ofscraper.classes.labels as labels
+import ofscraper.classes.placeholder as placeholder
+import ofscraper.sites as sites
 from ofscraper.db.backup import create_backup
 from ofscraper.db.operations_.labels import (
     create_labels_table,
@@ -30,6 +32,7 @@ from ofscraper.db.operations_.others import (
     create_others_table,
     create_products_table,
     create_schema_table,
+    write_site_flag,
 )
 from ofscraper.db.operations_.posts import create_post_table, make_post_table_changes
 from ofscraper.db.operations_.profile import (
@@ -93,8 +96,17 @@ async def create_tables(model_id=None, username=None, db_path=None, **kwargs):
 
 @run
 async def table_init_create(model_id=None, username=None, **kwargs):
+    new_db = (
+        not placeholder.databasePlaceholder()
+        .databasePathHelper(model_id, username)
+        .exists()
+    )
     await create_tables(model_id=model_id, username=username)
-    create_backup(model_id, username)
-    await modify_tables(model_id, username)
+    if not new_db:
+        create_backup(model_id, username)
+    await modify_tables(model_id, username, new_db=new_db)
     await write_profile_table(model_id=model_id, username=username)
     await write_models_table(model_id=model_id, username=username)
+    # OnlyFans databases stay exactly as before; other sites are recorded
+    if sites.is_fansly():
+        await write_site_flag(sites.FANSLY, model_id=model_id, username=username)
