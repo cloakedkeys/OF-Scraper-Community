@@ -2,22 +2,35 @@
 
 [Stash](https://stashapp.cc) is a self-hosted media library. It indexes your
 download folders, but on its own it only knows file names. This command copies
-what OF-Scraper recorded about each file into Stash:
+what OF-Scraper recorded about each file into Stash, for OnlyFans and Fansly downloads:
 
-- **Performer:** the creator, created if needed, with a link to their OnlyFans page.
-- **Studio:** `OnlyFans` (change it with `--studio`).
-- **Date:** when the post or message was posted.
-- **Title and details:** the caption's first line, and the full caption.
-- **Code:** the post ID.
-- **URL:** the post's page, for timeline posts. Messages have no public page.
-- **Tags:** where the file came from, e.g. `OnlyFans Timeline`, `OnlyFans Messages` or
-  `OnlyFans Paid` (change the prefix with `--tag-prefix`, or turn them off with `--no-tags`).
+| Field | OnlyFans | Fansly |
+|---|---|---|
+| **Performers** | the creator, with a link to their OnlyFans page | the creator, with a link to their Fansly page, and anyone @mentioned in the caption |
+| **Studio** | `OnlyFans` | `Fansly` |
+| **Date** | when the post or message was posted | the same |
+| **Title and details** | the caption's first line, and the full caption | the same |
+| **Code** | the post ID (none for profile pictures) | the Fansly media ID |
+| **URL** | the post's page, for timeline posts | `https://fansly.com/post/<id>`, for timeline posts |
+| **Tags** | where the file came from, e.g. `OnlyFans Timeline`, `OnlyFans Messages` or `OnlyFans Paid` | the same with `Fansly`, plus `Fansly Preview` for preview media and the caption's #hashtags, lowercased |
+| **Gallery** | none | one per post or message, holding its images and scenes |
 
-It only fills in empty fields and adds the performer, studio and tags. Anything
-you've set in Stash is kept, so running it again changes nothing that's already
-there.
+Each Fansly gallery gets the post's or message's ID as its code, and the same
+studio, performers, date, title, details, URL and tags (without `Fansly Preview`).
+Messages get no URL on either site: a message has no public page, and for Fansly
+the conversation ID its link needs isn't in the database. Fansly purchases aren't
+posts, so their files get no gallery.
 
-It reads OF-Scraper's databases offline and never contacts OnlyFans.
+`--studio` and `--tag-prefix` replace the studio and tag prefix for every site;
+`--no-tags` turns off all of these tags.
+
+It only fills in empty fields and adds performers, the studio, tags and galleries.
+Anything you've set in Stash is kept, so running it again changes nothing that's
+already there.
+
+It reads OF-Scraper's databases offline and never contacts OnlyFans or Fansly.
+A Fansly database is recognised by the site OF-Scraper records in it; Fansly runs
+keep their databases in a `Fansly` folder under `.data` by default.
 
 ## Run it
 
@@ -47,6 +60,7 @@ The report is JSON. For each creator it counts:
 | `up_to_date` | files that already had everything |
 | `not_in_stash` | downloaded files Stash hasn't indexed; scan, or check `--path-map` |
 | `unsupported_type` | audio, which Stash doesn't index |
+| `galleries_to_create` / `galleries_created`, `galleries_to_update` / `galleries_updated`, `galleries_up_to_date` | Fansly galleries, counted the same way |
 
 A few of the missing paths are listed under `not_in_stash_sample`.
 
@@ -83,4 +97,7 @@ files: the report then says so in a `hint`, and nothing is created in Stash.
   purchase) gets one item in Stash with the earliest date and all of its tags.
 - The creator's performer is matched by name, which is their username. A
   performer you created yourself under another name gets a second one; merge them
-  in Stash if so.
+  in Stash if so. The same goes for @mentioned Fansly creators.
+- A Fansly gallery is found again by its code (the post or message ID) within its
+  studio, so changing a gallery's code or studio in Stash makes the next run
+  create a new one.

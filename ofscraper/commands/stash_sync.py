@@ -1,9 +1,10 @@
-"""Copy downloaded media's OnlyFans details into Stash; preview unless --apply.
+"""Copy downloaded media's OnlyFans and Fansly details into Stash; preview unless --apply.
 
 Reads model databases (user_data.db) offline and talks only to Stash's GraphQL
 API. Each downloaded file is looked up in Stash by path; empty fields are filled
-in and the creator, studio and tags are added. Nothing set in Stash is
-overwritten or removed, so running it again changes nothing.
+in and the creator, studio and tags are added. Fansly posts and messages also
+get a gallery each. Nothing set in Stash is overwritten or removed, so running
+it again changes nothing.
 """
 
 import argparse
@@ -20,7 +21,28 @@ from collections import defaultdict
 from contextlib import closing
 from pathlib import Path
 
+from ofscraper.sites.fansly.constants import ORIGIN as FANSLY_ORIGIN
+from ofscraper.sites.fansly.normalize import hashtags
+
 DEFAULT_URL = "http://localhost:9999/graphql"
+ONLYFANS, FANSLY = "onlyfans", "fansly"
+# per site: default studio and tag prefix, and the studio's and a creator's links
+SITES = {
+    ONLYFANS: {
+        "studio": "OnlyFans",
+        "tag_prefix": "OnlyFans ",
+        "studio_url": "https://onlyfans.com",
+        "creator_url": "https://onlyfans.com/{}",
+    },
+    FANSLY: {
+        "studio": "Fansly",
+        "tag_prefix": "Fansly ",
+        "studio_url": FANSLY_ORIGIN,
+        "creator_url": FANSLY_ORIGIN + "/{}",
+    },
+}
+# @username in a Fansly caption; not part of an e-mail address
+MENTION_RE = re.compile(r"(?<![\w.@])@([A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?)")
 # Tables holding a post's text, in order of preference
 TEXT_TABLES = ("posts", "messages", "stories", "others", "products")
 # OnlyFans media types Stash indexes, and the query that finds them
@@ -117,7 +139,7 @@ def site_of(database):
     return str(row[0]).lower() if row and row[0] else "onlyfans"
 
 
-def read_model(database):
+def read_model(database, site=ONLYFANS):
     """Return the model's username and its downloaded media, grouped by file path."""
     with closing(connect(database)) as conn:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -133,25 +155,38 @@ def read_model(database):
                     if text or str(post_id) not in texts:
                         texts[str(post_id)] = (table, text)
 
-        date_col = "posted_at" if "posted_at" in columns(conn, "medias") else "created_at"
+        media_columns = columns(conn, "medias")
+        date_col = "posted_at" if "posted_at" in media_columns else "created_at"
+        preview_col = "preview" if "preview" in media_columns else "0"
         rows = conn.execute(
             f"SELECT media_id, post_id, directory, filename, api_type, media_type, "
-            f"COALESCE({date_col}, created_at) FROM medias "
+            f"COALESCE({date_col}, created_at), {preview_col} FROM medias "
             "WHERE downloaded = 1 AND filename IS NOT NULL AND filename != ''"
         ).fetchall()
 
     files = {}
-    for media_id, post_id, directory, filename, api_type, media_type, posted in rows:
+    for media_id, post_id, directory, filename, api_type, media_type, posted, preview in rows:
         path = os.path.join(directory or "", filename)
         entry = files.setdefault(
-            path, {"path": path, "media_type": media_type, "api_types": set(), "posts": []}
+            path,
+            {"path": path, "media_type": media_type, "api_types": set(), "posts": [],
+             "media_ids": {}, "sources": {}, "preview": False},
         )
         if api_type:
             entry["api_types"].add(api_type)
-        entry["posts"].append((posted or "", str(post_id) if post_id is not None else None))
+        post_id = str(post_id) if post_id is not None else None
+        entry["posts"].append((posted or "", post_id))
+        entry["media_ids"].setdefault(post_id, str(media_id) if media_id is not None else None)
+        if api_type:
+            entry["sources"].setdefault(post_id, set()).add(api_type)
+        entry["preview"] = entry["preview"] or bool(preview)
 
     for entry in files.values():
-        entry["meta"] = describe(entry, texts, username)
+        if site == FANSLY:
+            entry["meta"] = describe_fansly(entry, texts, username)
+            entry["galleries"] = fansly_galleries(entry, texts, username)
+        else:
+            entry["meta"] = describe(entry, texts, username)
     return username, list(files.values())
 
 
@@ -175,9 +210,76 @@ def describe(entry, texts, username):
     return meta
 
 
+def plain_text(text):
+    """Fansly captions are plain text; trim each line."""
+    return "\n".join(line.strip() for line in (text or "").splitlines()).strip()
+
+
+def mentions(text, username=None):
+    """@usernames in a caption, in order, without repeats or the creator."""
+    out = []
+    seen = {(username or "").lower()}
+    for name in MENTION_RE.findall(text or ""):
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            out.append(name)
+    return out
+
+
+def fansly_post_meta(post_id, posted, texts, username):
+    """Fields shared by a Fansly file and its post's gallery."""
+    table, raw = texts.get(post_id, (None, None))
+    text = plain_text(raw)
+    meta = {"details": text or None, "title": make_title(text) or None}
+    if re.match(r"\d{4}-\d{2}-\d{2}", posted or ""):
+        meta["date"] = posted[:10]
+    # A message's page needs its conversation id, which the database doesn't keep
+    if table == "posts" and post_id and post_id.isdigit():
+        meta["url"] = f"{FANSLY_ORIGIN}/post/{post_id}"
+    meta["hashtags"] = hashtags(raw)
+    meta["mentions"] = mentions(raw, username)
+    return meta
+
+
+def describe_fansly(entry, texts, username):
+    """A Fansly file's fields, from its earliest post with text; the code is the media ID."""
+    posts = sorted(entry["posts"])
+    posted, post_id = posts[0]
+    for when, pid in posts:
+        if texts.get(pid, (None, None))[1]:
+            posted, post_id = when, pid
+            break
+    meta = fansly_post_meta(post_id, posted, texts, username)
+    meta["code"] = entry["media_ids"].get(post_id)
+    return meta
+
+
+def fansly_galleries(entry, texts, username):
+    """One gallery per Fansly post or message holding this file, keyed by its ID.
+
+    Purchases aren't posts (their "post ID" is the item's own ID), so they get none.
+    """
+    out = {}
+    for posted, post_id in sorted(entry["posts"]):
+        table = texts.get(post_id, (None, None))[0]
+        if table not in ("posts", "messages") or post_id in out:
+            continue
+        meta = fansly_post_meta(post_id, posted, texts, username)
+        meta["code"] = post_id
+        meta["title"] = meta["title"] or f"Fansly {table[:-1]} {post_id}"
+        meta["sources"] = sorted(entry["sources"].get(post_id, ()))
+        out[post_id] = meta
+    return out
+
+
 # --- Stash -------------------------------------------------------------------
 
-FIELDS = "id title details date code urls organized studio { id } performers { id } tags { id }"
+FIELDS = "id title details date code urls organized studio { id } performers { id } tags { id } galleries { id }"
+GALLERY_FIELDS = "id title details date code urls organized studio { id } performers { id } tags { id }"
+FIND_GALLERY = (
+    "query($code: String!) { findGalleries(gallery_filter: {code: {value: $code, modifier: EQUALS}}, "
+    f"filter: {{per_page: -1}}) {{ galleries {{ {GALLERY_FIELDS} }} }} }}"
+)
 FIND = {
     "scene": f"query($path: String!) {{ findScenes(scene_filter: {{path: {{value: $path, modifier: EQUALS}}}}, filter: {{per_page: -1}}) {{ scenes {{ {FIELDS} files {{ path }} }} }} }}",
     "image": f"query($path: String!) {{ findImages(image_filter: {{path: {{value: $path, modifier: EQUALS}}}}, filter: {{per_page: -1}}) {{ images {{ {FIELDS} visual_files {{ ... on ImageFile {{ path }} ... on VideoFile {{ path }} }} }} }} }}",
@@ -185,7 +287,19 @@ FIND = {
 UPDATE = {
     "scene": "mutation($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }",
     "image": "mutation($input: ImageUpdateInput!) { imageUpdate(input: $input) { id } }",
+    "gallery": "mutation($input: GalleryUpdateInput!) { galleryUpdate(input: $input) { id } }",
 }
+CREATE_GALLERY = "mutation($input: GalleryCreateInput!) { galleryCreate(input: $input) { id } }"
+
+
+def find_gallery(client, code, studio_id):
+    """The gallery with this code in this studio, or None."""
+    if studio_id is None:
+        return None
+    for gallery in client.call(FIND_GALLERY, {"code": code})["findGalleries"]["galleries"]:
+        if gallery.get("code") == code and (gallery.get("studio") or {}).get("id") == studio_id:
+            return gallery
+    return None
 
 
 def find_item(client, kind, path):
@@ -218,7 +332,7 @@ def find_or_create(client, entity, name, apply, extra=None):
     return client.call(mutation, {"input": {"name": name, **(extra or {})}})[f"{entity}Create"]["id"]
 
 
-def plan(item, meta, performer_id, studio_id, tag_ids, organized=False):
+def plan(item, meta, performer_ids, studio_id, tag_ids, organized=False, gallery_ids=()):
     """Changes to make to a Stash item: empty fields filled, IDs added.
 
     An ID of None (not created yet in preview mode) still counts as a change.
@@ -232,13 +346,12 @@ def plan(item, meta, performer_id, studio_id, tag_ids, organized=False):
         changes["urls"] = urls + [meta["url"]]
     if not item.get("studio"):
         changes["studio_id"] = studio_id
-    have = [p["id"] for p in item.get("performers") or []]
-    if performer_id not in have:
-        changes["performer_ids"] = have + [performer_id]
-    have = [t["id"] for t in item.get("tags") or []]
-    new = [t for t in tag_ids if t not in have]
-    if new:
-        changes["tag_ids"] = have + new
+    for field, key, ids in (("performers", "performer_ids", performer_ids), ("tags", "tag_ids", tag_ids),
+                            ("galleries", "gallery_ids", gallery_ids)):
+        have = [x["id"] for x in item.get(field) or []]
+        new = [x for x in dict.fromkeys(ids) if x not in have]
+        if new:
+            changes[key] = have + new
     if organized and not item.get("organized"):
         changes["organized"] = True
     return changes
@@ -291,48 +404,107 @@ def sync(
     databases,
     client,
     apply=False,
-    studio="OnlyFans",
-    tag_prefix="OnlyFans ",
+    studio=None,
+    tag_prefix=None,
     tags=True,
     organized=False,
     mappings=(),
     do_scan=False,
     sample=10,
 ):
+    """Sync every database; studio and tag_prefix, when given, apply to every site."""
     models = []
     skipped = []
     for database in find_databases(databases):
-        # Only OnlyFans is supported; Fansly databases sit in the same profile
-        # folder and would otherwise get the OnlyFans studio and links
         site = site_of(database)
-        if site != "onlyfans":
-            skipped.append({"database": str(database), "skipped": f"{site} database; only OnlyFans is supported"})
+        if site not in SITES:
+            skipped.append({"database": str(database), "skipped": f"{site} database; this site isn't supported"})
             continue
-        username, files = read_model(database)
-        models.append((database, username, files))
+        username, files = read_model(database, site)
+        models.append((database, site, username, files))
 
     if do_scan and apply:
         folders = sorted(
-            {map_path(os.path.commonpath([os.path.dirname(f["path"]) for f in files]), mappings) for _, _, files in models if files}
+            {map_path(os.path.commonpath([os.path.dirname(f["path"]) for f in files]), mappings) for _, _, _, files in models if files}
         )
         if folders:
             scan(client, folders)
 
-    # The studio, performers and tags are looked up (and created) only once a
-    # file is found, so a run that matches nothing leaves Stash unchanged
-    resolved = {}
-
-    def studio_id():
-        if "studio" not in resolved:
-            resolved["studio"] = find_or_create(client, "studio", studio, apply, {"urls": ["https://onlyfans.com"]})
-        return resolved["studio"]
-
+    # The studio, performers, tags and galleries are looked up (and created)
+    # only once a file is found, so a run that matches nothing leaves Stash unchanged
+    studios = {}
     tag_cache = {}
+    performers = {}
+    galleries = {}
+
+    def studio_id(site):
+        name = studio or SITES[site]["studio"]
+        if name not in studios:
+            studios[name] = find_or_create(client, "studio", name, apply, {"urls": [SITES[site]["studio_url"]]})
+        return studios[name]
+
+    def tag_id(tag):
+        if tag not in tag_cache or tag_cache[tag] is None:
+            tag_cache[tag] = find_or_create(client, "tag", tag, apply)
+        return tag_cache[tag]
+
+    def performer_id(site, name):
+        if performers.get(name) is None:
+            performers[name] = find_or_create(
+                client, "performer", name, apply, {"urls": [SITES[site]["creator_url"].format(name)]}
+            )
+        return performers[name]
+
+    def fansly_tags(meta, sources, prefix, preview=False):
+        if not tags:
+            return []
+        names = [f"{prefix}{source}" for source in sorted(sources)]
+        if preview:
+            names.append(f"{prefix}Preview")
+        return [tag_id(name) for name in names + meta["hashtags"]]
+
+    def gallery_id(site, prefix, creator_id, meta, counts):
+        """Find, fill in or create the gallery for one post or message."""
+        key = (studio or SITES[site]["studio"], meta["code"])
+        if key in galleries:
+            return galleries[key]
+        sid = studio_id(site)
+        people = [creator_id] + [performer_id(site, m) for m in meta["mentions"]]
+        tag_ids = fansly_tags(meta, meta["sources"], prefix)
+        existing = find_gallery(client, meta["code"], sid)
+        if existing:
+            changes = plan(existing, meta, people, sid, tag_ids, organized)
+            if changes:
+                counts["galleries_updated" if apply else "galleries_to_update"] += 1
+                if apply:
+                    client.call(UPDATE["gallery"], {"input": {"id": existing["id"], **changes}})
+            else:
+                counts["galleries_up_to_date"] += 1
+            galleries[key] = existing["id"]
+            return existing["id"]
+        counts["galleries_created" if apply else "galleries_to_create"] += 1
+        if not apply:
+            galleries[key] = None
+            return None
+        new = {"title": meta["title"], "code": meta["code"], "studio_id": sid, "performer_ids": people}
+        for field in ("details", "date"):
+            if meta.get(field):
+                new[field] = meta[field]
+        if meta.get("url"):
+            new["urls"] = [meta["url"]]
+        if tag_ids:
+            new["tag_ids"] = list(dict.fromkeys(tag_ids))
+        if organized:
+            new["organized"] = True
+        galleries[key] = client.call(CREATE_GALLERY, {"input": new})["galleryCreate"]["id"]
+        return galleries[key]
+
     report = {"apply": apply, "models": [], "totals": defaultdict(int)}
-    for database, username, files in models:
+    for database, site, username, files in models:
         name = username or Path(database).parent.name
-        extra = {"urls": [f"https://onlyfans.com/{username}"]} if username else {}
-        performer_id = None
+        extra = {"urls": [SITES[site]["creator_url"].format(username)]} if username else {}
+        prefix = SITES[site]["tag_prefix"] if tag_prefix is None else tag_prefix
+        creator_id = None
         performer_checked = False
         counts = defaultdict(int)
         not_found = []
@@ -349,16 +521,18 @@ def sync(
                     not_found.append(stash_path)
                 continue
             if not performer_checked:
-                performer_id = find_or_create(client, "performer", name, apply, extra)
+                creator_id = find_or_create(client, "performer", name, apply, extra)
                 performer_checked = True
-            tag_ids = []
-            if tags:
-                for api_type in sorted(entry["api_types"]):
-                    tag = f"{tag_prefix}{api_type}"
-                    if tag not in tag_cache or tag_cache[tag] is None:
-                        tag_cache[tag] = find_or_create(client, "tag", tag, apply)
-                    tag_ids.append(tag_cache[tag])
-            changes = plan(item, entry["meta"], performer_id, studio_id(), tag_ids, organized)
+            if site == FANSLY:
+                meta = entry["meta"]
+                people = [creator_id] + [performer_id(site, m) for m in meta["mentions"]]
+                tag_ids = fansly_tags(meta, entry["api_types"], prefix, entry["preview"])
+                gallery_ids = [gallery_id(site, prefix, creator_id, g, counts) for g in entry["galleries"].values()]
+            else:
+                people = [creator_id]
+                tag_ids = [tag_id(f"{prefix}{api_type}") for api_type in sorted(entry["api_types"])] if tags else []
+                gallery_ids = []
+            changes = plan(item, entry["meta"], people, studio_id(site), tag_ids, organized, gallery_ids)
             if not changes:
                 counts["up_to_date"] += 1
                 continue
@@ -366,11 +540,11 @@ def sync(
             if apply:
                 client.call(UPDATE[kind], {"input": {"id": item["id"], **changes}})
         if not performer_checked:
-            performer_id = find_or_create(client, "performer", name, False)
+            creator_id = find_or_create(client, "performer", name, False)
         model = {
             "database": str(database),
             "performer": name,
-            "performer_exists": performer_id is not None,
+            "performer_exists": creator_id is not None,
             "files": len(files),
             **counts,
         }
@@ -398,9 +572,9 @@ def main(argv=None):
     parser.add_argument("--apply", action="store_true", help="write to Stash; without it, only report")
     parser.add_argument("--url", default=os.environ.get("STASH_URL", DEFAULT_URL), help=f"Stash GraphQL URL (default {DEFAULT_URL}, or $STASH_URL)")
     parser.add_argument("--api-key", default=os.environ.get("STASH_API_KEY"), help="Stash API key, if Stash has a password (default $STASH_API_KEY)")
-    parser.add_argument("--studio", default="OnlyFans", help="studio to set (default OnlyFans)")
-    parser.add_argument("--tag-prefix", default="OnlyFans ", help="prefix for the source tags, e.g. 'OnlyFans Paid' (default 'OnlyFans ')")
-    parser.add_argument("--no-tags", action="store_true", help="don't add source tags")
+    parser.add_argument("--studio", help="studio to set for every site (default OnlyFans, or Fansly for Fansly databases)")
+    parser.add_argument("--tag-prefix", help="prefix for the source tags for every site, e.g. 'OnlyFans Paid' (default 'OnlyFans ', or 'Fansly ' for Fansly databases)")
+    parser.add_argument("--no-tags", action="store_true", help="don't add tags (source tags, and for Fansly the preview tag and hashtags)")
     parser.add_argument("--organized", action="store_true", help="also mark items as organized")
     parser.add_argument("--path-map", action="append", default=[], metavar="LOCAL=STASH", help="rewrite a path prefix when Stash sees the files elsewhere (e.g. in Docker); repeatable")
     parser.add_argument("--scan", action="store_true", help="with --apply, have Stash scan the download folders first and wait for it")
