@@ -191,6 +191,13 @@ def test_map_path():
     assert map_path("/srv/dl/b.jpg", [("/srv/dl", "/media")]) == "/media/b.jpg"
 
 
+def test_map_path_accepts_either_separator():
+    assert map_path("C:\\dl/a/b.jpg", [(r"C:\dl", "/data")]) == "/data/a/b.jpg"
+    assert map_path(r"C:\dl", [("C:\\dl\\", "/data")]) == "/data"
+    assert map_path("/srv/dl", [("/srv/dl", "/media")]) == "/media"
+    assert map_path("/srv/dlx/b.jpg", [("/srv/dl", "/media")]) == "/srv/dlx/b.jpg"
+
+
 def test_no_tags(library):
     db, media_dir = library
     stash = FakeStash(scenes=[str(media_dir / "post.mp4")])

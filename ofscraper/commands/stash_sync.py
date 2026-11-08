@@ -232,9 +232,13 @@ def plan(item, meta, performer_id, studio_id, tag_ids, organized=False):
 
 
 def map_path(path, mappings):
+    # Either separator ends the prefix, whatever the OS: the database may hold
+    # Windows paths while this runs elsewhere, e.g. beside Stash in Docker
     for local, remote in mappings:
-        if path == local or path.startswith(local.rstrip("\\/") + os.sep) or path.startswith(local.rstrip("\\/") + "/"):
-            mapped = remote.rstrip("\\/") + path[len(local.rstrip("\\/")):]
+        prefix = local.rstrip("\\/")
+        rest = path[len(prefix):]
+        if path.startswith(prefix) and (rest == "" or rest[0] in "\\/"):
+            mapped = remote.rstrip("\\/") + rest
             return mapped.replace("\\", "/") if "/" in remote and "\\" not in remote else mapped
     return path
 
