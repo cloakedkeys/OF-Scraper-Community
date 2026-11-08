@@ -22,6 +22,8 @@ from urllib.parse import urlparse
 
 import pytest
 
+import ofscraper.commands.db as db_command
+import ofscraper.commands.metadata.manager as meta_mod
 import ofscraper.commands.scraper.actions.download.managers.downloadmanager as dm
 import ofscraper.commands.scraper.actions.download.managers.fansly_stream_download as stream_mod
 import ofscraper.commands.scraper.actions.download.run as run_mod
@@ -998,3 +1000,97 @@ def test_video_with_an_mp4_keeps_the_mp4_as_its_url(env, monkeypatch):
     calls = record_downloads(monkeypatch)
     assert asyncio.run(run_download(None, read_post(raw).media[0])) == ("Videos", 1)
     assert calls == [("main", direct)]
+    assert read_post(raw).media[0].filename == raw["media"]["id"]
+
+
+def mp4_variants():
+    """A video with no locations of its own, its file only on MP4 variants (plus PNG thumbnails)."""
+    data = json.loads((FIXTURES / "video_mp4_variants_account_media.json").read_text(encoding="utf-8"))
+    return copy.deepcopy(data["response"][0])
+
+
+def variant_url(raw, variant_id):
+    v = next(v for v in raw["media"]["variants"] if v["id"] == variant_id)
+    return v["locations"][0]["location"]
+
+
+def test_largest_mp4_variant_is_the_best_and_images_are_never_picked():
+    raw = mp4_variants()
+    assert raw["media"]["locations"] == []
+    best = video.select_best(raw["media"])
+    assert (best.kind, best.width, best.height) == (video.DIRECT, 608, 1080)
+    assert best.url == variant_url(raw, "100000000000000033")
+    kinds = {c.kind for c in video.candidates(raw["media"])}
+    assert kinds == {video.DIRECT}
+    assert not any(c.url.endswith(".png") for c in video.candidates(raw["media"]))
+    assert video.has_direct(raw["media"])
+
+
+def test_video_with_only_mp4_variants_is_kept_and_uses_the_normal_downloader(env, monkeypatch):
+    raw = mp4_variants()
+    p = read_post(raw)
+    assert [m.id for m in p.media] == [100000000000000031]
+    ele = p.media[0]
+    assert ele.url == variant_url(raw, "100000000000000033")
+    assert video.uses_stream(ele) is False
+    calls = record_downloads(monkeypatch)
+    assert asyncio.run(run_download(None, ele)) == ("Videos", 1)
+    assert calls == [("main", variant_url(raw, "100000000000000033"))]
+
+
+@pytest.mark.parametrize("case", ["mp4_variant", "hls_only", "dash_only"])
+def test_variant_files_are_named_by_media_id(env, case):
+    raw = {"mp4_variant": mp4_variants, "hls_only": lambda: stream_only(video.HLS_MIME),
+           "dash_only": lambda: stream_only(video.DASH_MIME)}[case]()
+    ele = read_post(raw).media[0]
+    assert ele.url and raw["media"]["id"] not in ele.url
+    assert ele.filename == raw["media"]["id"]
+    assert ele.no_quality_final_filename == raw["media"]["id"]
+    assert ele.mpd is None and ele.protected is False
+
+
+class MetadataSession:
+    def __init__(self):
+        self.urls = []
+
+    def requests_async(self, url=None, **kw):
+        self.urls.append(url)
+        raise AssertionError("metadata mode fetched the stream URL")
+
+
+@pytest.mark.parametrize("case", ["hls_only", "dash_only", "mp4_and_4k_hls"])
+def test_metadata_mode_does_not_fetch_a_stream_and_uses_mp4(env, monkeypatch, case):
+    monkeypatch.setattr(meta_mod.cache, "get", lambda *a, **k: None)
+    raw = {"hls_only": lambda: stream_only(video.HLS_MIME),
+           "dash_only": lambda: stream_only(video.DASH_MIME), "mp4_and_4k_hls": raw_media}[case]()
+    ele = read_post(raw).media[0]
+    assert video.uses_stream(ele)
+    session = MetadataSession()
+    ph = asyncio.run(meta_mod.MetaDataManager()._placeholderObjHelper(session, ele))
+    assert session.urls == [] and ph._ext == "mp4"
+
+
+def test_db_protected_does_not_count_fansly_dash_links(env):
+    dash = {"link": "https://cdn3.fansly.com/new/1/2/2.mpd"}
+    assert db_command.is_protected(dash) is False
+    env.stub.site = "onlyfans"
+    assert db_command.is_protected({"link": "https://cdn3.onlyfans.com/dash/files/a/b.mpd"}) is True
+    assert db_command.is_protected({"link": "https://cdn2.onlyfans.com/files/a/b.mp4"}) is False
+
+
+def test_unusable_stream_falls_back_to_an_mp4_variant(env, monkeypatch):
+    # a 4K HLS stream that 404s, next to a 1080 MP4 variant and no file of its own
+    raw = mp4_variants()
+    hls = copy.deepcopy(variant(raw_media()["media"], video.HLS_MIME))
+    raw["media"]["variants"].append(hls)
+    ele = read_post(raw).media[0]
+    assert video.uses_stream(ele) is True
+    calls = []
+
+    async def main_download(self, c, ele, username, model_id):
+        calls.append(ele.url)
+        return "Videos", 10
+
+    monkeypatch.setattr(run_mod.MainDownloadManager, "main_download", main_download)
+    assert asyncio.run(run_download(FakeSession({}), ele)) == ("Videos", 10)
+    assert calls == [variant_url(raw, "100000000000000033")]

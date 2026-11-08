@@ -113,17 +113,20 @@ def direct_url(media):
 
 
 def file_url(media):
-    """The MP4 (``locationId`` 1), else the best HLS or DASH stream.
+    """The item's URL: for a video, its largest MP4 (its own or a variant's),
+    else its best HLS or DASH stream; for anything else, its own file.
 
-    Older videos often have only the streams. Without a URL the item counts
-    as not viewable and is dropped; the stream itself is downloaded by the
-    Fansly stream downloader, which picks it from the raw Media.
+    Some videos have no file of their own, only variants. Without a URL the
+    item counts as not viewable and is dropped. A stream is downloaded by the
+    Fansly stream downloader, which picks it from the raw Media; the URL is
+    what the normal downloader fetches.
     """
-    url = direct_url(media)
-    if url:
-        return url
+    found = video.candidates(media)
+    direct = [c for c in found if c.kind == video.DIRECT]
+    if direct:
+        return max(direct, key=lambda c: c.area).url
     best = video.select_best(media)
-    return best.url if best else None
+    return best.url if best else direct_url(media)
 
 
 def duration(media):

@@ -1,8 +1,8 @@
 """Choosing and reading Fansly video streams.
 
 A Fansly video offers up to three deliveries:
-- direct: the media's own MP4 file (``locationId`` 1). Fansly caps it at 720
-  on the short side.
+- direct: an MP4 file (``locationId`` 1), the media's own or one of its
+  ``video/*`` variants. Fansly caps the media's own at 720 on the short side.
 - HLS: a ``application/vnd.apple.mpegurl`` variant (``locationId`` 102).
 - DASH: a ``application/dash+xml`` variant (``locationId`` 103).
 
@@ -96,9 +96,9 @@ def _size(obj) -> tuple:
 def candidates(media: dict) -> list:
     """Downloadable deliveries of a raw Fansly Media object.
 
-    The direct file is the media's own ``locationId`` 1, the URL the scraper
-    stores as ``files.full.url`` and the normal downloader fetches. A video
-    without one stores its best stream there instead.
+    A direct file is a ``locationId`` 1 MP4: the media's own, or a ``video/*``
+    variant's (ready-made copies at other sizes; some videos have only
+    these). Image variants are thumbnails and never count.
     """
     out = []
     if not media:
@@ -116,7 +116,9 @@ def candidates(media: dict) -> list:
         add(media, DIRECT)
     for v in media.get("variants") or []:
         mime = (v.get("mimetype") or "").lower()
-        if mime == HLS_MIME:
+        if mime.startswith("video/"):
+            add(v, DIRECT)
+        elif mime == HLS_MIME:
             add(v, HLS)
         elif mime == DASH_MIME:
             add(v, DASH)
