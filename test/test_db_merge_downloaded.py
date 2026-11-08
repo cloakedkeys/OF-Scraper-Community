@@ -197,6 +197,40 @@ def test_downloaded_extra_post_row_updates_target_rows(merge_dbs):
     assert result == EXPECTED_B_BOTH_POSTS
 
 
+def test_failed_source_download_is_not_used_for_later_rows(tmp_path, monkeypatch):
+    # a source whose media writes fail must not leave its download behind for
+    # rows that later sources add
+    new_db = tmp_path / "new" / "user_data.db"
+    first = tmp_path / "old" / "db0" / "user_data.db"
+    second = tmp_path / "old" / "db1" / "user_data.db"
+    real_write = merge.write_media_table_transition
+    calls = []
+
+    async def failing_first_write(rows, **kwargs):
+        calls.append(rows)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("simulated write failure")
+        return await real_write(rows, **kwargs)
+
+    async def go():
+        await make_db(first, [DOWNLOADED_B])
+        await make_db(second, [on_post(DOWNLOADED_C)])
+        await make_db(new_db, [])
+        merger = merge.MergeDatabase()
+        merger._new_db = new_db
+        await merger._data_initializer()
+        monkeypatch.setattr(merge, "write_media_table_transition",
+                            failing_first_write)
+        with pytest.raises(sqlite3.OperationalError):
+            await merger.merge_media_helper(first)
+        await merger.merge_media_helper(second)
+
+    asyncio.run(go())
+    assert post_rows(new_db) == [
+        (OTHER_POST, MEDIA_ID, "/dl/c", "c.jpg", 300, 1, "hash-c")
+    ]
+
+
 def test_first_downloaded_copy_is_kept_across_posts(merge_dbs):
     result = merge_dbs(
         [[DOWNLOADED_B], [on_post(DOWNLOADED_C)]], read=post_rows

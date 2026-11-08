@@ -229,21 +229,21 @@ class MergeDatabase:
         # the first downloaded copy wins and is written to all the item's rows,
         # including rows added for another post
         changed = set(map(self._media_key, new_rows))
+        new_downloads = {}
         for x in inserts_old_db:
             key = self._media_key(x)
             if x["downloaded"] and key not in self._downloaded_medias:
-                self._downloaded_medias[key] = x
+                new_downloads.setdefault(key, x)
                 changed.add(key)
+        downloads = {**new_downloads, **self._downloaded_medias}
         await write_media_table_transition(new_rows, db_path=self._new_db)
         await update_media_table_download_transition(
-            [
-                self._downloaded_medias[key]
-                for key in changed
-                if key in self._downloaded_medias
-            ],
+            [downloads[key] for key in changed if key in downloads],
             db_path=self._new_db,
         )
+        # remember this source only once its writes succeeded
         self._curr_medias.update(map(self._media_row_key, inserts_old_db))
+        self._downloaded_medias.update(new_downloads)
 
     async def merge_label_helper(self, old_db):
         keys = self._label_keys
