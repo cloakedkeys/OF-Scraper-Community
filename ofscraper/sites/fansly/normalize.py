@@ -121,8 +121,10 @@ def file_url(media):
     Fansly stream downloader, which picks it from the raw Media; the URL is
     what the normal downloader fetches.
     """
-    found = video.candidates(media)
-    direct = [c for c in found if c.kind == video.DIRECT]
+    if media_type(media.get("mimetype")) != "video":
+        # e.g. a GIF with an mp4 variant keeps its own .gif
+        return direct_url(media)
+    direct = [c for c in video.candidates(media) if c.kind == video.DIRECT]
     if direct:
         return max(direct, key=lambda c: c.area).url
     best = video.select_best(media)

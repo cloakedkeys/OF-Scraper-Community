@@ -1049,6 +1049,25 @@ def test_variant_files_are_named_by_media_id(env, case):
     assert ele.mpd is None and ele.protected is False
 
 
+@pytest.mark.parametrize("mime,ext", [("image/gif", "gif"), ("image/jpeg", "jpeg")])
+def test_non_video_with_an_mp4_variant_keeps_its_own_file(mime, ext):
+    own = f"https://cdn3.fansly.com/100000000000000002/100000000000000040.{ext}"
+    account_media = {
+        "id": "100000000000000041", "access": True, "previewId": None,
+        "media": {
+            "id": "100000000000000040", "mimetype": mime, "width": 480, "height": 480,
+            "locations": [{"locationId": "1", "location": own}],
+            "variants": [{
+                "id": "100000000000000042", "mimetype": "video/mp4", "width": 960, "height": 960,
+                "locations": [{"locationId": "1", "location":
+                               "https://cdn3.fansly.com/100000000000000002/100000000000000042.mp4"}],
+            }],
+        },
+    }
+    (m,) = normalize.media_for(account_media)
+    assert (m["type"], m["files"]["full"]["url"]) == ("photo", own)
+
+
 class MetadataSession:
     def __init__(self):
         self.urls = []
