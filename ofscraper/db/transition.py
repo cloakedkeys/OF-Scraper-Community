@@ -15,16 +15,24 @@ import logging
 
 from rich.console import Console
 
-from ofscraper.db.backup import create_backup_transition, restore_backup_transition
+import ofscraper.classes.placeholder as placeholder
+from ofscraper.db.backup import (
+    create_backup_transition,
+    media_labelled_in_backups,
+    restore_backup_transition,
+)
 from ofscraper.db.difference import get_group_difference
 from ofscraper.db.operations_.labels import add_column_labels_ID, rebuild_labels_table
 from ofscraper.db.operations_.media import (
+    SIZE_SKIP_LABEL,
+    SIZE_SKIP_REPAIR_FLAG,
     add_column_media_duration,
     add_column_media_hash,
     add_column_media_ID,
     add_column_media_posted_at,
     add_column_media_unlocked,
     rebuild_media_table,
+    repair_size_skipped_media,
 )
 from ofscraper.db.operations_.messages import (
     add_column_messages_ID,
@@ -73,6 +81,7 @@ async def modify_tables(
         await modify_tables_constraints_and_columns(
             model_id=model_id, username=username, db_path=db_path
         )
+        await repair_tables(model_id=model_id, username=username, db_path=db_path)
     except Exception as E:
         if backup:
             restore_backup_transition(backup, model_id, username, db_path=db_path)
@@ -308,3 +317,26 @@ async def modify_tables_constraints_and_columns(
             username=username,
             db_path=db_path,
         )
+
+
+async def repair_tables(model_id=None, username=None, db_path=None, **kwargs):
+    missing = get_group_difference(
+        model_id=model_id, username=username, db_path=db_path
+    )
+    if SIZE_SKIP_REPAIR_FLAG in missing:
+        # files a size limit skipped before #326 were saved as downloaded (#352)
+        database = db_path or placeholder.databasePlaceholder().databasePathHelper(
+            model_id, username
+        )
+        changed = await repair_size_skipped_media(
+            media_labelled_in_backups(database, SIZE_SKIP_LABEL),
+            model_id=model_id,
+            username=username,
+            db_path=db_path,
+        )
+        if changed:
+            log.info(
+                f"set {changed} media rows saved as downloaded by a size limit back"
+                f" to not downloaded in {database}; the backup folder beside it"
+                " has the earlier copy"
+            )
