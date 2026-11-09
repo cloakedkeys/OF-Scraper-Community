@@ -8,13 +8,16 @@ import sqlite3
 import threading
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_fansly_api import DM_CREATOR, DM_CREATOR_ID, FakeSession, both_routes, envelope, fansly, load  # noqa: F401
 
+import ofscraper.classes.of.posts as posts_
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.data.posts.post as post
 import ofscraper.db.operations as operations
+import ofscraper.utils.settings as settings
 from ofscraper.commands import stash_sync
 from ofscraper.commands.stash_sync import StashError, map_path, read_model, sync
 from ofscraper.db.operations_.media import batch_mediainsert, mark_media_as_downloaded, mediaCreate
@@ -573,6 +576,62 @@ def test_fansly_purchase_gets_no_gallery_or_post_link(make_fansly, tmp_path):
     also = named(stash, by_file(stash, "100000000000000150.mp4"))
     assert also["galleries"] == ["100000000000000147"]
     assert "Fansly Paid" in also["tags"]
+
+
+OF_ID, OF_USER = 12345, "ofcreator"
+
+
+def of_item(item_id, media_id, kind="photo", **fields):
+    return {"id": item_id, "text": f"caption {item_id}", "price": 5, "isOpened": True,
+            "postedAt": "2024-05-01T10:00:00+00:00", "createdAt": "2024-05-01T10:00:00+00:00",
+            "media": [{"id": media_id, "type": kind, "canView": True, "createdAt": "2024-05-01T10:00:00+00:00",
+                       "files": {"full": {"url": f"https://cdn.example/{media_id}"}}}], **fields}
+
+
+@pytest.fixture
+def onlyfans_paid(monkeypatch, tmp_path):
+    """An OnlyFans database from the real write path: a timeline post, a
+    message also bought, and a post seen only as a purchase."""
+    real = settings.get_settings()
+
+    class Stub(SimpleNamespace):
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+    monkeypatch.setattr(settings, "get_settings", lambda: Stub(site="onlyfans", after=None, post_id=None))
+    db = tmp_path / ".data" / str(OF_ID) / "user_data.db"
+    db.parent.mkdir(parents=True)
+    monkeypatch.setattr(placeholder.databasePlaceholder, "databasePathHelper", lambda self, mid, name: db)
+    monkeypatch.setattr(operations, "create_backup", lambda *a, **k: None)
+    media_dir = tmp_path / "of"
+    message = of_item(3001, 4001, responseType="message", fromUser={"id": OF_ID})
+
+    async def write():
+        await operations.table_init_create(model_id=OF_ID, username=OF_USER)
+        timeline = posts_.Post(of_item(1001, 2001, responseType="post"), OF_ID, OF_USER, "Timeline")
+        messages = posts_.Post(message, OF_ID, OF_USER)
+        bought = [posts_.Post(copy.deepcopy(message), OF_ID, OF_USER, responsetype="Paid"),
+                  posts_.Post(of_item(5001, 6001, responseType="post"), OF_ID, OF_USER, responsetype="Paid")]
+        await operations.make_post_table_changes([timeline, *bought], model_id=OF_ID, username=OF_USER)
+        await operations.make_messages_table_changes([messages], model_id=OF_ID, username=OF_USER)
+        media = [m for p in (timeline, messages, *bought) for m in p.all_media]
+        await batch_mediainsert(media, model_id=OF_ID, username=OF_USER, downloaded=False)
+        for m in media:
+            await mark_media_as_downloaded(m, model_id=OF_ID, username=OF_USER,
+                                           filepath=media_dir / f"{m.id}.jpg", downloaded=True)
+
+    asyncio.run(write())
+    return db, media_dir
+
+
+def test_onlyfans_bought_message_gets_no_post_link(onlyfans_paid):
+    db, media_dir = onlyfans_paid
+    stash = FakeStash(images=[str(media_dir / f"{m}.jpg") for m in (2001, 4001, 6001)])
+    sync([db], stash, apply=True)
+    assert by_file(stash, "2001.jpg")["urls"] == [f"https://onlyfans.com/1001/{OF_USER}"]
+    assert by_file(stash, "4001.jpg")["urls"] == []  # a message, also bought
+    assert by_file(stash, "6001.jpg")["urls"] == []  # only bought: can't tell a post from a message
+    assert by_file(stash, "4001.jpg")["code"] == "3001"
 
 
 def test_onlyfans_performer_in_another_case_is_reused(library):

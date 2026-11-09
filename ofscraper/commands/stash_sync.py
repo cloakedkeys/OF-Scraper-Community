@@ -148,6 +148,10 @@ def read_model(database, site=ONLYFANS):
             row = conn.execute("SELECT username FROM profiles ORDER BY id DESC LIMIT 1").fetchone()
             username = row[0] if row else None
 
+        # a bought message is saved in posts too, under the message's ID
+        message_ids = (
+            {str(r[0]) for r in conn.execute("SELECT post_id FROM messages")} if "messages" in tables else set()
+        )
         texts = {}
         for table in reversed(TEXT_TABLES):  # earlier tables win
             if table in tables:
@@ -186,11 +190,11 @@ def read_model(database, site=ONLYFANS):
             entry["meta"] = describe_fansly(entry, texts, username)
             entry["galleries"] = fansly_galleries(entry, texts, username)
         else:
-            entry["meta"] = describe(entry, texts, username)
+            entry["meta"] = describe(entry, texts, username, message_ids)
     return username, list(files.values())
 
 
-def describe(entry, texts, username):
+def describe(entry, texts, username, message_ids=frozenset()):
     """The Stash fields this file should have, from its earliest post with text."""
     posts = sorted(entry["posts"])
     posted, post_id = posts[0]
@@ -205,7 +209,10 @@ def describe(entry, texts, username):
     meta = {"code": code, "details": text or None, "title": make_title(text) or None}
     if re.match(r"\d{4}-\d{2}-\d{2}", posted or ""):
         meta["date"] = posted[:10]
-    if table == "posts" and username and code:
+    # A bought message has no public page, and a purchase alone can't be told
+    # apart from one, so neither gets a link
+    is_post = post_id not in message_ids and not bought_only(entry, post_id)
+    if table == "posts" and is_post and username and code:
         meta["url"] = f"https://onlyfans.com/{post_id}/{username}"
     return meta
 
