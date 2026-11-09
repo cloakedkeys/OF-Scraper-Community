@@ -61,11 +61,14 @@ def _database_path(kwargs, read_only):
     (#373); a write makes it, as before."""
     if kwargs.get("db_path", None):
         return pathlib.Path(kwargs["db_path"]).resolve()
-    model_id, username = kwargs.get("model_id"), kwargs.get("username")
-    helper = placeholder.databasePlaceholder().databasePathHelper
-    if read_only:
-        return pathlib.Path(helper(model_id, username, create=False)).resolve()
-    return pathlib.Path(helper(model_id, username)).resolve()
+    holder = (
+        placeholder.databasePlaceholder(create=False)
+        if read_only
+        else placeholder.databasePlaceholder()
+    )
+    return pathlib.Path(
+        holder.databasePathHelper(kwargs.get("model_id"), kwargs.get("username"))
+    ).resolve()
 
 
 def _connect(database_path, read_only, **kwargs):
