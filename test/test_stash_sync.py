@@ -569,6 +569,32 @@ def test_one_site_with_studio_keeps_its_link(library):
     assert [v for kind, v in stash.created if kind == "studio"] == [{"name": "Mine", "urls": ["https://onlyfans.com"]}]
 
 
+@pytest.mark.parametrize(
+    "urls, reused",
+    [
+        ([], True),
+        ([f"https://fansly.com/post/{MENTION_POST}"], True),
+        (["https://FANSLY.com/someone"], True),
+        (["https://example.com/a"], False),
+        (["https://notfansly.com/a"], False),
+        ([f"https://OnlyFans.com/{MENTION_POST}/someone"], False),
+    ],
+)
+def test_gallery_with_the_code_is_reused_only_if_unlinked_or_fansly(fansly_library, tmp_path, urls, reused):
+    _, _, files = fansly_library
+    stash = FakeStash()
+    for path, kind in files:
+        stash.add(kind, path)
+    stash.galleries["mine"] = {"id": "mine", "title": "mine", "details": "", "date": None, "code": str(MENTION_POST),
+                               "urls": list(urls), "organized": False, "studio": None, "performers": [], "tags": []}
+    sync([tmp_path / ".data"], stash, apply=True)
+    item = by_file(stash, "100000000000000026.mp4")
+    assert ({"id": "mine"} in item["galleries"]) is reused
+    assert len(stash.galleries) == (5 if reused else 6)
+    if not reused:
+        assert stash.galleries["mine"]["urls"] == urls and stash.galleries["mine"]["performers"] == []
+
+
 def test_fansly_existing_values_are_kept(fansly_library, tmp_path):
     _, _, fansly_files = fansly_library
     stash = FakeStash()

@@ -16,6 +16,7 @@ import sqlite3
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 from contextlib import closing
@@ -315,13 +316,18 @@ def find_gallery(client, code, url=None):
     """The Fansly gallery with this code (a post or message ID), in any studio, or None.
 
     The user may move a gallery to another studio, or run with another
-    --studio, so the studio isn't checked. Fansly IDs are 18-digit snowflakes,
-    unlike OnlyFans' much shorter ones, and a gallery with an OnlyFans link is
-    skipped all the same. One with this post's link is preferred.
+    --studio, so the studio isn't checked. A gallery is only taken if it has
+    no links or a fansly.com one, so one from another site with the same code
+    is left alone. One with this post's link is preferred.
     """
+
+    def fansly_or_unlinked(gallery):
+        hosts = [urllib.parse.urlsplit(u or "").hostname or "" for u in gallery.get("urls") or []]
+        return not hosts or any(h == "fansly.com" or h.endswith(".fansly.com") for h in hosts)
+
     found = [
         g for g in client.call(FIND_GALLERY, {"code": code})["findGalleries"]["galleries"]
-        if g.get("code") == code and not any("onlyfans.com" in (u or "").lower() for u in g.get("urls") or [])
+        if g.get("code") == code and fansly_or_unlinked(g)
     ]
     return next((g for g in found if url and url in (g.get("urls") or [])), found[0] if found else None)
 

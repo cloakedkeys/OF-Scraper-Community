@@ -107,6 +107,7 @@ files: the report then says so in a `hint`, and nothing is created in Stash.
   name on later runs. A studio has no disambiguation, so a `--studio` name like
   that stops the run with a message; pick another name.
 - A Fansly gallery is found again by its code (the post or message ID), in any
-  studio, so you can move it to another studio. A gallery with an OnlyFans link
-  is never taken for a Fansly one. Changing a gallery's code makes the next run
-  create a new one.
+  studio, so you can move it to another studio. Only a gallery with no links or
+  a fansly.com link is taken; one with the same code but another site's link is
+  left alone and a Fansly gallery is made beside it. Changing a gallery's code
+  makes the next run create a new one.
