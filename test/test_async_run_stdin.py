@@ -687,3 +687,37 @@ def test_cancel_while_writing_input_lets_the_write_finish(monkeypatch):
 
     assert asyncio.run(main()) == []
     assert closed_during_write == [False]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_second_cancel_during_scan_still_stops_programs(
+    background_script, monkeypatch
+):
+    """A second cancel while checking for leftover programs, before they
+    are stopped, still leaves none running."""
+    cmd, pid_file = background_script
+    real_scan = process_tree._live_member
+
+    def slow_scan(pgid):
+        time.sleep(0.5)  # a scan with many zombies is slow
+        return real_scan(pgid)
+
+    monkeypatch.setattr(process_tree, "_live_member", slow_scan)
+
+    async def main():
+        task = asyncio.create_task(async_run(cmd, level=0, timeout=60))
+        await _wait_for_file(pid_file)
+        task.cancel()
+        await asyncio.sleep(0.1)  # now scanning
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+    _assert_gone(int(pid_file.read_text()))
+
+
+def test_caller_creationflags_are_kept(monkeypatch):
+    monkeypatch.setattr(process_tree.sys, "platform", "win32")
+    kwargs = process_tree.ProcessTree().popen_kwargs({"creationflags": 0x10})
+    assert kwargs["creationflags"] == 0x10 | process_tree._CREATE_SUSPENDED

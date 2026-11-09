@@ -43,11 +43,15 @@ class ProcessTree:
     def __init__(self):
         self._pgid = None
         self._job = None
+        # POSIX: True once the group is known to be empty or has been killed.
+        self._settled = False
 
-    def popen_kwargs(self):
+    def popen_kwargs(self, kwargs):
+        """kwargs for starting the command, with what tracking needs added."""
         if sys.platform == "win32":
-            return {"creationflags": _CREATE_SUSPENDED}
-        return {"start_new_session": True}
+            flags = kwargs.get("creationflags", 0) | _CREATE_SUSPENDED
+            return {**kwargs, "creationflags": flags}
+        return {**kwargs, "start_new_session": True}
 
     def attach(self, pid):
         """Start tracking the command, which was started with popen_kwargs().
@@ -68,14 +72,20 @@ class ProcessTree:
         """Whether any program in the tree is still running."""
         if self._job is not None:
             return _windows_job_active(self._job)
-        if self._pgid is None or not _signal_group(self._pgid, 0):
+        if self._pgid is None:
+            return False
+        if not _signal_group(self._pgid, 0):
             # The usual case: the group is empty, which the signal settles.
+            self._settled = True
             return False
         # A program that exited but wasn't reaped (a zombie) stays in the
         # group: in Docker, ofscraper is PID 1 and inherits orphans it never
         # reaps. Look for a live member, off the event loop: it scans every
         # process.
-        return await asyncio.to_thread(_live_member, self._pgid)
+        if await asyncio.to_thread(_live_member, self._pgid):
+            return True
+        self._settled = True
+        return False
 
     async def stop(self):
         """Stop every program still running in the tree.
@@ -97,12 +107,17 @@ class ProcessTree:
         finally:
             # Also on a cancel during the wait: don't leave anything running.
             _signal_group(self._pgid, signal.SIGKILL)
+            self._settled = True
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         if self._pgid is not None:
+            # Cleanup was cut short (a second cancel before stop() ran): the
+            # group may still have programs, so kill them before forgetting it.
+            if not self._settled:
+                _signal_group(self._pgid, signal.SIGKILL)
             _live_groups.discard(self._pgid)
         if self._job is not None:
             _windows_close(self._job)
@@ -280,16 +295,19 @@ if sys.platform == "win32":
                 pid,
             )
         )
+        job = error = None
         try:
-            try:
-                return _new_job(process), None
-            except OSError as error:
-                return None, error
+            job = _new_job(process)
+        except OSError as job_error:
+            error = job_error
         finally:
             status = _ntdll.NtResumeProcess(process)
             _kernel32.CloseHandle(process)
-            if status != 0:
-                raise OSError(f"NtResumeProcess failed with status {status:#010x}")
+        if status != 0:
+            if job is not None:
+                _kernel32.CloseHandle(job)  # KILL_ON_JOB_CLOSE kills it too
+            raise OSError(f"NtResumeProcess failed with status {status:#010x}")
+        return job, error
 
     def _windows_job_active(job):
         info = _Accounting()

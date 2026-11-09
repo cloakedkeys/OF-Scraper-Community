@@ -165,7 +165,7 @@ async def async_run(
 
     with contextlib.ExitStack() as files:
         tree = files.enter_context(ProcessTree())
-        kwargs.update(tree.popen_kwargs())
+        kwargs = tree.popen_kwargs(kwargs)
         if input is not None:
             kwargs["stdin"] = files.enter_context(tempfile.TemporaryFile())
             await _write_input_async(kwargs["stdin"], input)
