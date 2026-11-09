@@ -328,7 +328,7 @@ def test_background_program_output_wait_stays_within_timeout(
         result = await async_run(exiting_background_script(), level=0, timeout=3)
         return result, time.monotonic() - start
 
-    monkeypatch.setattr(subprocess_module, "OUTPUT_GRACE", 30, raising=False)
+    monkeypatch.setattr(subprocess_module, "OUTPUT_GRACE", 30)
     result, elapsed = asyncio.run(main())
     assert result.returncode == 0
     assert result.stdout.strip() == b"script output"
@@ -351,6 +351,65 @@ def test_cancel_after_script_exit_closes_pipes(exiting_background_script, spawne
     process, elapsed, pending = asyncio.run(main())
     assert elapsed < PROMPT
     assert process._transport.is_closing()
+    assert pending == []
+
+
+# More than a pipe buffer holds, on Windows and Linux: writing it never
+# finishes, because the script exits without reading it and the background
+# program holds the pipe open without reading it either.
+UNREAD_INPUT = b"x" * 1_000_000
+
+
+def _assert_stdin_closed(process):
+    # A graceful close() waits for the unsent input to be written, which never
+    # happens; the pipe must be aborted, dropping that input.
+    assert process.stdin.transport.is_closing()
+    assert process.stdin.transport.get_write_buffer_size() == 0
+
+
+def test_unread_input_does_not_hold_stdin_open(
+    exiting_background_script, spawned
+):
+    async def main():
+        start = time.monotonic()
+        result = await async_run(
+            exiting_background_script(),
+            level=0,
+            timeout=60,
+            input=UNREAD_INPUT,
+        )
+        return result, time.monotonic() - start, _pending_tasks()
+
+    result, elapsed, pending = asyncio.run(main())
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"script output"
+    _assert_stdin_closed(spawned[0])
+    # The output grace period, without KILL_WAIT on top for the stdin pipe.
+    assert elapsed < subprocess_module.OUTPUT_GRACE + 1.5
+    assert pending == []
+
+
+def test_cancel_with_unread_input_closes_stdin(exiting_background_script, spawned):
+    async def main():
+        task = asyncio.create_task(
+            async_run(
+                exiting_background_script(),
+                level=0,
+                timeout=60,
+                input=UNREAD_INPUT,
+            )
+        )
+        while not spawned or spawned[0].returncode is None:
+            await asyncio.sleep(0.01)
+        start = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return time.monotonic() - start, _pending_tasks()
+
+    elapsed, pending = asyncio.run(main())
+    _assert_stdin_closed(spawned[0])
+    assert elapsed < subprocess_module.KILL_WAIT
     assert pending == []
 
 

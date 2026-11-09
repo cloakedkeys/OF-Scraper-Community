@@ -97,6 +97,14 @@ async def _kill(process):
             process.kill()
         except ProcessLookupError:
             pass
+    # The background program can hold stdin open without reading it. A
+    # graceful close waits for unsent input to be written, which then never
+    # happens, so drop that input. Only abort with input still unsent:
+    # abort() on a stdin pipe that has already closed raises AttributeError
+    # on Linux.
+    stdin = process.stdin
+    if stdin is not None and stdin.transport.get_write_buffer_size():
+        stdin.transport.abort()
     process._transport.close()
     try:
         await asyncio.wait_for(process.wait(), timeout=KILL_WAIT)
