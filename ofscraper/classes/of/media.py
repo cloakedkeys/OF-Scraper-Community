@@ -68,9 +68,6 @@ class Media(base.base):
         """Sets the flags to represent a skipped download."""
         self.download_attempted = False
         self.download_succeeded = None
-        # the download is over: give the item its own type back (#332)
-        if str(self._media.get("type")).lower() == "forced_skipped":
-            self._media["type"] = self._type
         self.update_download_status()
 
     def update_download_status(self):
@@ -78,6 +75,9 @@ class Media(base.base):
         Updates the download status string in the internal media dictionary
         based on the two download flags.
         """
+        # the download is over: give the item its own type back (#332, #341)
+        if str(self._media.get("type")).lower() == "forced_skipped":
+            self._media["type"] = self._type
         if self.download_attempted and self.download_succeeded:
             self.media["download_status"] = "succeeded"
         elif self.download_attempted and not self.download_succeeded:
