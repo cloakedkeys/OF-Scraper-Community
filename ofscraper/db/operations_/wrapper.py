@@ -17,11 +17,18 @@ log = logging.getLogger("shared")
 _DB_POOL = ThreadPoolExecutor(max_workers=1)
 
 
+class DatabaseMissing(FileNotFoundError):
+    """A read-only read found no database file. Not an sqlite error, so it
+    isn't retried."""
+
+
 def _connect(database_path, read_only, **kwargs):
     """Open the database. A caller that only reads passes read_only=True
     (#373): the file is opened read-only, so it isn't created, its journal
     mode isn't changed, and a read-only file can be read."""
     if read_only:
+        if not database_path.is_file():
+            raise DatabaseMissing(f"no database at {database_path}")
         return sqlite3.connect(
             f"{database_path.as_uri()}?mode=ro", uri=True, **kwargs
         )

@@ -24,6 +24,7 @@ from ofscraper.db.operations_.media import (
     get_permanent_skip_media_ids,
     unmark_permanent_skips,
 )
+from ofscraper.db.operations_.wrapper import DatabaseMissing
 from ofscraper.utils.logs.other import add_other_handler
 from ofscraper.utils.context.run_async import run as run_async
 import ofscraper.utils.of_env.of_env as of_env
@@ -411,7 +412,14 @@ def db():
     rows = []
     for model in manager.Manager.current_model_manager.all_subs:
         db_manager = DBManager(model.name, model.id)
-        db_manager.print_media()
+        try:
+            db_manager.print_media()
+        except DatabaseMissing:
+            # nothing scraped for this creator yet: not an error (#373)
+            logging.getLogger("shared").warning(
+                f"{model.name} has no database yet, skipping"
+            )
+            continue
         rows.extend(db_manager.media)
     write_csv(rows)
 

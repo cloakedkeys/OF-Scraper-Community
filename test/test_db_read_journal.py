@@ -65,46 +65,54 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def patch_command(monkeypatch, path_for, areas=ALL_AREAS, unmark=False):
+    """Settings for `ofscraper db`, and its readers reading
+    path_for(model_id)."""
+    args = SimpleNamespace(
+        download_area=areas,
+        downloaded=None,
+        protected=False,
+        normal=False,
+        unlocked=None,
+        preview=None,
+        post_id=None,
+        media_id=None,
+        unmark_permanent_skips=unmark,
+    )
+    options = SimpleNamespace(
+        size_max=None,
+        size_min=None,
+        length_max=None,
+        length_min=None,
+        posted_before=None,
+        posted_after=None,
+        created_after=None,
+        created_before=None,
+        mediatypes=["Audios", "Videos", "Images"],
+        max_post_count=None,
+        db_asc=True,
+        db_sort="mediaid",
+        export=None,
+    )
+    monkeypatch.setattr(db_command.settings, "get_args", lambda: args)
+    monkeypatch.setattr(db_command.settings, "get_settings", lambda: options)
+    for name in READERS:
+        reader = getattr(db_command, name)
+        monkeypatch.setattr(
+            db_command,
+            name,
+            lambda reader=reader, **kwargs: reader(
+                **kwargs, db_path=path_for(kwargs["model_id"])
+            ),
+        )
+
+
 @pytest.fixture
 def run_db(monkeypatch):
     """Run `ofscraper db`'s reads on one database; returns its rows."""
 
     def run(path, areas=ALL_AREAS, unmark=False):
-        args = SimpleNamespace(
-            download_area=areas,
-            downloaded=None,
-            protected=False,
-            normal=False,
-            unlocked=None,
-            preview=None,
-            post_id=None,
-            media_id=None,
-            unmark_permanent_skips=unmark,
-        )
-        options = SimpleNamespace(
-            size_max=None,
-            size_min=None,
-            length_max=None,
-            length_min=None,
-            posted_before=None,
-            posted_after=None,
-            created_after=None,
-            created_before=None,
-            mediatypes=["Audios", "Videos", "Images"],
-            max_post_count=None,
-            db_asc=True,
-            db_sort="mediaid",
-            export=None,
-        )
-        monkeypatch.setattr(db_command.settings, "get_args", lambda: args)
-        monkeypatch.setattr(db_command.settings, "get_settings", lambda: options)
-        for name in READERS:
-            reader = getattr(db_command, name)
-            monkeypatch.setattr(
-                db_command,
-                name,
-                lambda reader=reader, **kwargs: reader(**kwargs, db_path=path),
-            )
+        patch_command(monkeypatch, lambda model_id: path, areas, unmark)
         manager = db_command.DBManager("a creator", 5)
         # the command's run() keeps the current loop open; close it after
         loop = asyncio.new_event_loop()
@@ -194,6 +202,66 @@ def test_sync_wrapper_reads_read_only_file(tmp_path, connections):
     assert len(connections) == 1
     assert digest(path) == before
     assert journal_mode(path) == "delete"
+
+
+@pytest.mark.parametrize(
+    "areas", [ALL_AREAS, ["Timeline", "Messages"]], ids=["all areas", "some areas"]
+)
+def test_db_skips_creator_without_database(tmp_path, monkeypatch, caplog, areas):
+    # Given two creators, one with no database file yet
+    make_db(tmp_path / "5.db")
+    missing = tmp_path / "6.db"
+    patch_command(monkeypatch, lambda model_id: tmp_path / f"{model_id}.db", areas)
+    creators = [
+        SimpleNamespace(name="new creator", id=6),
+        SimpleNamespace(name="a creator", id=5),
+    ]
+    monkeypatch.setattr(
+        db_command,
+        "manager",
+        SimpleNamespace(
+            Manager=SimpleNamespace(
+                current_model_manager=SimpleNamespace(
+                    sync_models=lambda **kwargs: None, all_subs=creators
+                )
+            )
+        ),
+    )
+    monkeypatch.setattr(db_command.actions, "select_areas", lambda: None)
+    monkeypatch.setattr(db_command.time, "sleep", lambda seconds: None)
+    # the table's printing sets up log handlers; the rows are checked below
+    monkeypatch.setattr(
+        db_command.DBManager, "print_dictionary_table", lambda self: None
+    )
+    exported = []
+    monkeypatch.setattr(db_command, "write_csv", exported.extend)
+    attempts = []
+    real_connect = wrapper._connect
+
+    def connect(database_path, read_only, **kwargs):
+        attempts.append(database_path.name)
+        return real_connect(database_path, read_only, **kwargs)
+
+    monkeypatch.setattr(wrapper, "_connect", connect)
+
+    # When ofscraper db runs
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        with caplog.at_level("WARNING", logger="shared"):
+            db_command.db()
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
+    # Then a plain message says the creator has no database yet, and the
+    # command goes on to the next creator
+    assert "new creator has no database yet, skipping" in caplog.text
+    assert "Traceback" not in caplog.text
+    assert sorted(row["media_id"] for row in exported) == [1, 2]
+    # with one attempt only (no retries), and no file created
+    assert attempts.count("6.db") == 1
+    assert not missing.exists()
 
 
 def test_write_still_uses_wal(tmp_path, run_db):
