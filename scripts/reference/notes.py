@@ -365,7 +365,7 @@ TABLES = {
             "created_at": "The post date (`postedAt`, else `createdAt`).",
             "model_id": "The creator account id the row belongs to.",
             "is_deleted": "1 when a scan decided the post no longer exists on the site. Such posts are left out of the date lookups that drive later scans. Default 0.",
-            "purchase_type": "For an OnlyFans purchase, whether the bought item was a `post` or a `message` (the purchase's `responseType`). `NULL` for rows not saved from the Purchased area, for Fansly purchases, and for rows saved before the column existed. A later timeline or messages scan never clears it, and a purchase scan fills it in for a row that already exists.",
+            "purchase_type": "For an OnlyFans purchase, whether the bought item was a `post` or a `message` (the purchase's `responseType`). `NULL` for rows not saved from a purchases list (the Purchased area, `paid_check`, or the purchases `msg_check` fetches); a bought message saved by those two commands goes to `messages` as before, without a purchase type, for Fansly purchases, and for rows saved before the column existed. A later timeline or messages scan never clears it, and a purchase scan fills it in for a row that already exists.",
             "mentions": "Fansly only: the post's `accountMentions` list as JSON text, exactly as the API sent it (`[]` when the post tags nobody). `NULL` for OnlyFans posts, Fansly purchases, and rows saved before the column existed; the next scan that sees the post fills it in.",
         },
     },

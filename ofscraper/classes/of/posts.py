@@ -18,7 +18,14 @@ class Post(base.base):
     """
 
     def __init__(
-        self, post, model_id, username, responsetype=None, label=None, mode="download"
+        self,
+        post,
+        model_id,
+        username,
+        responsetype=None,
+        label=None,
+        mode="download",
+        purchased=False,
     ):
         super().__init__()
         self._post = post
@@ -26,6 +33,8 @@ class Post(base.base):
         self._username = username
         self._responsetype = responsetype
         self._label = label
+        # from the purchases list, for a caller that keeps the post's own type
+        self._purchased = purchased
 
         self.is_download_candidate = False
         self.is_like_candidate = False
@@ -245,9 +254,11 @@ class Post(base.base):
         """``post`` or ``message`` for an OnlyFans purchase, from its ``responseType``.
 
         None for anything not scraped as a purchase, and for Fansly purchases,
-        which are bought media items rather than posts or messages.
+        which are bought media items rather than posts or messages. The check
+        command builds purchases with their own type (Timeline, Messages) and
+        ``purchased=True``.
         """
-        if str(self._responsetype or "").lower() != "paid":
+        if not self._purchased and str(self._responsetype or "").lower() != "paid":
             return None
         raw = str(self.post.get("responseType") or "").lower()
         return raw if raw in {"post", "message"} else None
