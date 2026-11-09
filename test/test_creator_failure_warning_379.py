@@ -130,7 +130,8 @@ def test_user_first_gather_warns_and_goes_on(logs):
 def test_user_first_actions_warn_and_go_on(logs):
     done = []
     data = {
-        n: {"ele": creator(n), "postcollection": None} for n in ("first", "second")
+        n: {"ele": creator(n), "postcollection": SimpleNamespace()}
+        for n in ("first", "second")
     }
     asyncio.run(
         command.CommandManager()._execute_user_first_actions(data, fail_first(done))
@@ -206,7 +207,10 @@ def test_ctrl_c_still_stops_every_loop(logs, monkeypatch):
     monkeypatch.setattr(command, "post_media_process", posts)
     manager = command.CommandManager()
     users = [creator("first"), creator("second")]
-    data = {n: {"ele": creator(n), "postcollection": None} for n in ("first", "second")}
+    data = {
+        n: {"ele": creator(n), "postcollection": SimpleNamespace()}
+        for n in ("first", "second")
+    }
     done = []
     runs = [
         manager._process_users_normal(users, Session(), interrupt_first(done)),
@@ -263,8 +267,12 @@ def test_daemon_pass_failure_warns_and_goes_on(logs, monkeypatch):
     assert any("Traceback" in m for m in logs.traces.messages())
 
 
-def test_scheduler_failure_warns_and_goes_on(logs, monkeypatch):
+@pytest.mark.parametrize("wakeup_installed", [False, True])
+def test_scheduler_failure_warns_and_goes_on(logs, monkeypatch, wakeup_installed):
+    # with the wake-up signal the loop polls every 0.1 s, but an error still
+    # waits the normal interval
     wakeup = daemon_schedule.DaemonWakeup()
+    wakeup.installed = wakeup_installed  # a flag only; no real handler is set
     joins = []
 
     class Jobs:
@@ -282,17 +290,18 @@ def test_scheduler_failure_warns_and_goes_on(logs, monkeypatch):
     )
     daemon_schedule.set_schedule(lambda: None, wakeup=wakeup)
     assert joins == [1, 1]
-    assert sleeps == [12]  # waited its usual interval before going round
+    assert sleeps == [12]  # daemon 60 / 5: the normal interval, not 0.1 s
     warnings = [r.getMessage() for r in logs.normal.records if r.levelno == logging.WARNING]
     assert warnings == ["Daemon scheduler failed: ValueError: boom"]
     assert any("Traceback" in m for m in logs.traces.messages())
 
 
 def test_repeating_scheduler_error_warns_once_per_interval(logs, monkeypatch):
-    # an error on every round: the loop must wait between rounds, so a
-    # short run gives a handful of warnings, not thousands
+    # an error on every round, with the wake-up signal's fast poll on: the
+    # loop must wait the normal interval (1 s here) between rounds, so half a
+    # second gives one warning, not thousands
     wakeup = daemon_schedule.DaemonWakeup()
-    wakeup.installed = True  # the 0.1 s interval; no real handler is set
+    wakeup.installed = True  # a flag only; no real handler is set
 
     class Jobs:
         def join(self):
@@ -300,7 +309,7 @@ def test_repeating_scheduler_error_warns_once_per_interval(logs, monkeypatch):
 
     monkeypatch.setattr(daemon_schedule, "jobqueue", Jobs())
     monkeypatch.setattr(
-        daemon_schedule.settings, "get_settings", lambda: SimpleNamespace(daemon=60)
+        daemon_schedule.settings, "get_settings", lambda: SimpleNamespace(daemon=5)
     )
     worker = threading.Thread(
         target=daemon_schedule.set_schedule, args=[lambda: None], kwargs={"wakeup": wakeup}
@@ -311,10 +320,9 @@ def test_repeating_scheduler_error_warns_once_per_interval(logs, monkeypatch):
     worker.join(5)
     assert not worker.is_alive()
     warnings = [r for r in logs.normal.records if r.levelno == logging.WARNING]
-    assert 1 <= len(warnings) <= 8
-    assert {r.getMessage() for r in warnings} == {
+    assert [r.getMessage() for r in warnings] == [
         "Daemon scheduler failed: ValueError: queue broken"
-    }
+    ]
 
 
 # --- one area of a creator's scrape ------------------------------------------
@@ -432,6 +440,60 @@ def test_a_failed_save_of_the_scrape_is_shown(logs, monkeypatch):
         return await post.process_areas(SimpleNamespace(name="first"), 1, "first")
 
     assert asyncio.run(run()) is None
+    assert warning_messages(logs) == ["[first] scrape failed: ValueError: save failed"]
+
+
+@pytest.mark.parametrize("user_first", [False, True])
+def test_a_failed_scrape_gives_one_warning_and_the_next_creator_runs(
+    logs, monkeypatch, user_first
+):
+    # the real post_media_process: the scrape fails for the first creator, so
+    # there's no collection to compare for strays or to act on
+    async def no_tables(*_, **__):
+        return None
+
+    async def areas(model_id, username, ele, c=None):
+        if username == "first":
+            raise ValueError("save failed")
+        return SimpleNamespace(all_unique_media=[], posts=[], all_media=[])
+
+    async def no_media(*_, **__):
+        return None
+
+    async def no_unlocked(*_, **__):
+        return []
+
+    monkeypatch.setattr(post.operations, "table_init_create", no_tables)
+    monkeypatch.setattr(post, "process_tasks", areas)
+    monkeypatch.setattr(post, "batch_mediainsert", no_media)
+    monkeypatch.setattr(post, "get_unlocked_media_ids", no_unlocked)
+    monkeypatch.setattr(command, "post_media_process", post.post_media_process)
+
+    done = []
+
+    async def action(ele=None, postcollection=None):
+        done.append(ele.name)
+
+    manager = command.CommandManager()
+    users = [creator("first"), creator("second")]
+    if user_first:
+
+        async def gather(c, ele):
+            return {
+                ele.id: {
+                    "ele": ele,
+                    "postcollection": await post.post_media_process(ele, c),
+                }
+            }
+
+        async def run():
+            data = await manager._gather_user_first_data(users, Session(), gather)
+            await manager._execute_user_first_actions(data, action)
+
+        asyncio.run(run())
+    else:
+        asyncio.run(manager._process_users_normal(users, Session(), action))
+    assert done == ["second"]
     assert warning_messages(logs) == ["[first] scrape failed: ValueError: save failed"]
 
 

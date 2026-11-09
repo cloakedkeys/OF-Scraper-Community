@@ -75,6 +75,9 @@ async def post_media_process(ele, c=None) -> PostCollection:
     model_id = ele.id
     await operations.table_init_create(model_id=model_id, username=username)
     postcollection = await process_areas(ele, model_id, username, c=c)
+    if postcollection is None:
+        # the scrape failed and has said so; there's nothing to compare
+        return None
     await clean_stray_media(username, model_id, postcollection)
     return postcollection
 

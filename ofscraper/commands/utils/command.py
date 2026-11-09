@@ -40,6 +40,8 @@ class CommandManager:
                     # reset user activity to initiial
                     self._data_helper(ele)
                     postcollection = await post_media_process(ele, c=c)
+                    if postcollection is None:
+                        continue  # the scrape failed and has said so
                     self._avatar_helper(ele)
                     # show progress bars/set string in action function
                     await action_func(ele=ele, postcollection=postcollection)
@@ -89,6 +91,8 @@ class CommandManager:
 
         for _, val in userdata.items():
             try:
+                if val["postcollection"] is None:
+                    continue  # the scrape failed and has said so
                 self._avatar_helper(val["ele"])
                 await action_func(
                     postcollection=val["postcollection"],
