@@ -29,12 +29,14 @@ ONLYFANS, FANSLY = "onlyfans", "fansly"
 # per site: default studio and tag prefix, and the studio's and a creator's links
 SITES = {
     ONLYFANS: {
+        "label": "OnlyFans",  # disambiguation for a performer whose name Stash would refuse
         "studio": "OnlyFans",
         "tag_prefix": "OnlyFans ",
         "studio_url": "https://onlyfans.com",
         "creator_url": "https://onlyfans.com/{}",
     },
     FANSLY: {
+        "label": "Fansly",
         "studio": "Fansly",
         "tag_prefix": "Fansly ",
         "studio_url": FANSLY_ORIGIN,
@@ -334,10 +336,12 @@ def find_item(client, kind, path):
     return None
 
 
-def find_or_create(client, entity, name, apply, extra=None):
+def find_or_create(client, entity, name, apply, extra=None, disambiguation=None):
     """Return the ID of the studio, tag or performer with this exact name.
 
     In preview mode a missing one isn't created and None is returned.
+    disambiguation is given to a new performer whose name Stash would
+    otherwise refuse (see below).
     """
     plural = {"studio": "Studios", "tag": "Tags", "performer": "Performers"}[entity]
     alias_field = "alias_list" if entity == "performer" else "aliases"
@@ -360,14 +364,28 @@ def find_or_create(client, entity, name, apply, extra=None):
     for match in found:
         if (match.get("name") or "").lower() == key:
             return match["id"]
-    for match in lookup("aliases"):
+    aliased = lookup("aliases")
+    for match in aliased:
         if key in [(a or "").lower() for a in match.get(alias_field) or []]:
             return match["id"]
     if not apply:
         return None
+    extra = dict(extra or {})
+    # Stash's EQUALS is SQL LIKE, so "_" and "%" in a name match any character,
+    # and it checks a new performer's or studio's name that way: "pal_one" is
+    # refused while "Pal One" exists. A performer can be told apart with a
+    # disambiguation, and is then found again by its exact name; a studio can't.
+    if entity == "performer" and found and disambiguation:
+        extra["disambiguation"] = disambiguation
+    elif entity == "studio" and (found or aliased):
+        clash = ", ".join(repr(m["name"]) for m in found + aliased)
+        raise StashError(
+            f"Stash won't create the studio {name!r}: it reads '_' and '%' in a name as wildcards, "
+            f"so the name clashes with {clash}. Use another --studio, or that studio's name."
+        )
     kind = entity[0].upper() + entity[1:]
     mutation = f"mutation($input: {kind}CreateInput!) {{ {entity}Create(input: $input) {{ id }} }}"
-    return client.call(mutation, {"input": {"name": name, **(extra or {})}})[f"{entity}Create"]["id"]
+    return client.call(mutation, {"input": {"name": name, **extra}})[f"{entity}Create"]["id"]
 
 
 def plan(item, meta, performer_ids, studio_id, tag_ids, organized=False, gallery_ids=()):
@@ -494,7 +512,8 @@ def sync(
     def performer_id(site, name):
         if performers.get(name.lower()) is None:
             performers[name.lower()] = find_or_create(
-                client, "performer", name, apply, {"urls": [SITES[site]["creator_url"].format(name)]}
+                client, "performer", name, apply, {"urls": [SITES[site]["creator_url"].format(name)]},
+                SITES[site]["label"],
             )
         return performers[name.lower()]
 
@@ -564,7 +583,7 @@ def sync(
                     not_found.append(stash_path)
                 continue
             if not performer_checked:
-                creator_id = find_or_create(client, "performer", name, apply, extra)
+                creator_id = find_or_create(client, "performer", name, apply, extra, SITES[site]["label"])
                 performer_checked = True
             if site == FANSLY:
                 meta = entry["meta"]

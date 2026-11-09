@@ -4,6 +4,7 @@ import http.server
 import itertools
 import json
 import os
+import re
 import sqlite3
 import threading
 from contextlib import closing
@@ -27,6 +28,12 @@ from ofscraper.db.operations_.posts import postCreate
 from ofscraper.db.operations_.profile import profilesCreate
 
 
+def like(value, pattern):
+    """SQLite LIKE without ESCAPE, as Stash uses it: ASCII case ignored, _ is one character, % any."""
+    rx = "".join("." if c == "_" else ".*" if c == "%" else re.escape(c) for c in pattern)
+    return re.fullmatch(rx, value or "", flags=re.I | re.S) is not None
+
+
 class FakeStash:
     """Just enough of Stash's GraphQL API for stash_sync."""
 
@@ -39,6 +46,7 @@ class FakeStash:
                 self.add(kind, path)
         self.entities = {"studio": {}, "tag": {}, "performer": {}}
         self.aliases = {"studio": {}, "tag": {}, "performer": {}}  # id -> aliases
+        self.disambiguation = {}  # performer id -> disambiguation
         self.galleries = {}
         self.created = []
         self.updates = []
@@ -94,24 +102,33 @@ class FakeStash:
         for entity, plural in (("studio", "Studios"), ("tag", "Tags"), ("performer", "Performers")):
             alias_field = "alias_list" if entity == "performer" else "aliases"
             if f"find{plural}" in query:
-                # like Stash, EQUALS ignores case
-                want = variables["name"].lower()
+                # like Stash v0.31.1, EQUALS on name or aliases is SQL LIKE:
+                # it ignores case, and "_" and "%" are wildcards
+                want = variables["name"]
                 by_alias = "aliases: {" in query
                 found = [
                     {"id": i, "name": n, alias_field: self.aliases[entity].get(i, [])}
                     for n, i in self.entities[entity].items()
-                    if (want in [a.lower() for a in self.aliases[entity].get(i, [])] if by_alias else n.lower() == want)
+                    if any(like(v, want) for v in (self.aliases[entity].get(i, []) if by_alias else [n]))
                 ]
                 return {f"find{plural}": {plural.lower(): found}}
             if f"{entity}Create" in query:
-                name = variables["input"]["name"]
-                # like Stash, names are unique ignoring case, and aliases count
+                new_input = variables["input"]
+                name = new_input["name"]
                 for n, i in self.entities[entity].items():
-                    if name.lower() in [n.lower()] + [a.lower() for a in self.aliases[entity].get(i, [])]:
+                    aliases = self.aliases[entity].get(i, [])
+                    if entity == "tag":  # name or alias, ignoring case
+                        clash = name.lower() in [n.lower()] + [a.lower() for a in aliases]
+                    elif entity == "studio":  # name LIKE, then aliases LIKE
+                        clash = like(n, name) or any(like(a, name) for a in aliases)
+                    else:  # name LIKE, with the same disambiguation (or none)
+                        clash = like(n, name) and self.disambiguation.get(i) == new_input.get("disambiguation")
+                    if clash:
                         raise StashError(f"{entity} with name '{name}' already exists")
                 new = self.next_id()
                 self.entities[entity][name] = new
-                self.created.append((entity, variables["input"]))
+                self.disambiguation[new] = new_input.get("disambiguation")
+                self.created.append((entity, new_input))
                 return {f"{entity}Create": {"id": new}}
         raise AssertionError(f"unexpected query: {query}")
 
@@ -673,6 +690,52 @@ def test_onlyfans_bought_message_gets_no_post_link(onlyfans_paid):
     assert by_file(stash, "4001.jpg")["urls"] == []  # a message, also bought
     assert by_file(stash, "6001.jpg")["urls"] == []  # only bought: can't tell a post from a message
     assert by_file(stash, "4001.jpg")["code"] == "3001"
+
+
+def test_mention_with_underscore_gets_its_own_performer(make_fansly, tmp_path):
+    # Stash would take "pal_one" for the existing "Pal One", a different person
+    _, _, files = make_fansly(edits={MENTION_POST: "{} @pal_one"})
+    stash = FakeStash()
+    for path, kind in files:
+        stash.add(kind, path)
+    other = stash.entity("performer", "Pal One")
+
+    sync([tmp_path / ".data"], stash, apply=True)
+    created = [v for kind, v in stash.created if kind == "performer" and v["name"] == "pal_one"]
+    assert created == [{"name": "pal_one", "urls": ["https://fansly.com/pal_one"], "disambiguation": "Fansly"}]
+    pal = stash.entities["performer"]["pal_one"]
+    item = by_file(stash, "100000000000000026.mp4")
+    assert {"id": pal} in item["performers"] and {"id": other} not in item["performers"]
+
+    # found again by its exact name: nothing new
+    before = len(stash.created)
+    report = sync([tmp_path / ".data"], stash, apply=True)
+    assert len(stash.created) == before and "updated" not in report["totals"]
+
+
+def test_onlyfans_creator_with_underscore_gets_its_own_performer(library):
+    db, media_dir = library
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute("UPDATE profiles SET username = 'the_creator'")
+    stash = FakeStash(scenes=[str(media_dir / "post.mp4")])
+    other = stash.entity("performer", "The Creator")
+    sync([db], stash, apply=True)
+    created = [v for kind, v in stash.created if kind == "performer"]
+    assert created == [{"name": "the_creator", "urls": ["https://onlyfans.com/the_creator"], "disambiguation": "OnlyFans"}]
+    assert next(iter(stash.items["scene"].values()))["performers"] == [{"id": stash.entities["performer"]["the_creator"]}]
+    assert other != stash.entities["performer"]["the_creator"]
+    before = len(stash.created)
+    sync([db], stash, apply=True)
+    assert len(stash.created) == before
+
+
+def test_studio_name_stash_would_refuse_is_reported(library):
+    db, media_dir = library
+    stash = FakeStash(scenes=[str(media_dir / "post.mp4")])
+    stash.entity("studio", "My Studio")
+    with pytest.raises(StashError, match="wildcards"):
+        sync([db], stash, apply=True, studio="My_Studio")
+    assert "studio" not in [kind for kind, _ in stash.created]
 
 
 def test_onlyfans_performer_in_another_case_is_reused(library):
