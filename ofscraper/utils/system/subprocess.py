@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import tempfile
 import ofscraper.utils.of_env.of_env as of_env
+from ofscraper.utils.system.process_tree import ProcessTree
 
 
 def _format_subprocess_output(text_output):
@@ -128,8 +129,10 @@ async def async_run(
     program the command starts in the background inherits them, and with
     pipes it kept them open, so we waited for that program long after the
     command had exited (#389, #391). A file has no reader to wait for: we wait
-    for the command itself, then read everything it wrote. The background
-    program is left running.
+    for the command itself, then read everything it wrote.
+
+    Programs the command started are stopped once it exits, is killed or is
+    cancelled, so none are left running (see ProcessTree).
     """
     log = log or logging.getLogger("shared")
     cmd_args = list(args[0])
@@ -150,6 +153,8 @@ async def async_run(
         input = input.encode("utf-8")
 
     with contextlib.ExitStack() as files:
+        tree = files.enter_context(ProcessTree())
+        kwargs.update(tree.popen_kwargs())
         if input is not None:
             kwargs["stdin"] = files.enter_context(tempfile.TemporaryFile())
             await asyncio.to_thread(_write_input, kwargs["stdin"], input)
@@ -159,8 +164,17 @@ async def async_run(
 
         process = await asyncio.create_subprocess_exec(*cmd_args, **kwargs)
         try:
+            tree.attach(process.pid)
+        except OSError as error:
+            log.warning(
+                f"Programs started by subprocess {name} can't be tracked, so "
+                f"they won't be stopped when it exits: {error}"
+            )
+        exited = False
+        try:
             async with asyncio.timeout(timeout):
                 await process.wait()
+            exited = True
         except TimeoutError:
             await _kill(process)
             raise TimeoutError(
@@ -170,6 +184,15 @@ async def async_run(
             # Cancelled (or failed): don't leave the command running.
             await _kill(process)
             raise
+        finally:
+            # Don't leave anything it started running either.
+            if tree.running():
+                if exited:
+                    log.warning(
+                        f"Subprocess {name} exited but left programs running; "
+                        "stopping them."
+                    )
+                await tree.stop()
 
         if capture_output:
             stdout, stderr = await asyncio.to_thread(

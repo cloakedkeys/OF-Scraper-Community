@@ -1,15 +1,19 @@
 """async_run: input, output, timeouts and cancels, and scripts that start a
-program in the background (#381, #387, #389, #391)."""
+program in the background (#381, #387, #389, #391): those programs are
+stopped once the script stops."""
 
 import asyncio
+import logging
 import os
 import signal
 import subprocess
 import sys
 import time
 
+import psutil
 import pytest
 
+import ofscraper.utils.system.process_tree as process_tree
 import ofscraper.utils.system.subprocess as subprocess_module
 from ofscraper.utils.system.subprocess import async_run
 
@@ -414,3 +418,140 @@ def test_kill_wait_is_bounded(monkeypatch):
     start = time.monotonic()
     asyncio.run(subprocess_module._kill(Unreaped()))
     assert time.monotonic() - start < 5
+
+
+def _gone(pid):
+    try:
+        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True
+
+
+def _assert_gone(pid):
+    # The program may take a moment to exit, or to be reaped by its new parent.
+    for _ in range(100):
+        if _gone(pid):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"program {pid} is still running")
+
+
+def test_background_program_stopped_after_script_exit(
+    exiting_background_script, tmp_path, caplog
+):
+    log = logging.getLogger("test_async_run_tree")
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        result = asyncio.run(
+            async_run(exiting_background_script(), log=log, level=0, timeout=60)
+        )
+    assert result.stdout.strip() == b"script output"
+    _assert_gone(int((tmp_path / "background.pid").read_text()))
+    assert "left programs running" in caplog.text
+
+
+def test_no_warning_without_leftover_programs(caplog):
+    log = logging.getLogger("test_async_run_no_tree")
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        asyncio.run(async_run([sys.executable, "-c", "pass"], log=log, level=0))
+    assert caplog.text == ""
+
+
+def test_background_program_stopped_on_timeout(background_script):
+    cmd, pid_file = background_script
+    with pytest.raises(TimeoutError):
+        asyncio.run(async_run(cmd, level=0, timeout=2))
+    _assert_gone(int(pid_file.read_text()))
+
+
+def test_background_program_stopped_on_cancel(background_script):
+    cmd, pid_file = background_script
+
+    async def main():
+        task = asyncio.create_task(async_run(cmd, level=0, timeout=60))
+        await _wait_for_file(pid_file)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+    _assert_gone(int(pid_file.read_text()))
+
+
+def _nested_script(pid_file, program):
+    """A script that starts `program` in the background, which starts a
+    second program; both pids go to pid_file. The script then exits."""
+    inner = (
+        "import subprocess, sys, time; "
+        "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+        f"open({str(pid_file)!r}, 'a').write(f' {{c.pid}}'); "
+        f"{program}"
+    )
+    return [
+        sys.executable,
+        "-c",
+        "import subprocess, sys, time\n"
+        f"c = subprocess.Popen([sys.executable, '-c', {inner!r}])\n"
+        f"open({str(pid_file)!r}, 'a').write(f' {{c.pid}}')\n"
+        "while len(open(" + repr(str(pid_file)) + ").read().split()) < 2:\n"
+        "    time.sleep(0.05)\n",
+    ]
+
+
+def test_programs_started_by_background_programs_are_stopped(tmp_path):
+    pid_file = tmp_path / "pids"
+    cmd = _nested_script(pid_file, "time.sleep(30)")
+    asyncio.run(async_run(cmd, level=0, timeout=60))
+    pids = [int(pid) for pid in pid_file.read_text().split()]
+    assert len(pids) == 2
+    for pid in pids:
+        _assert_gone(pid)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_program_ignoring_sigterm_is_killed(tmp_path, monkeypatch):
+    monkeypatch.setattr(process_tree, "STOP_WAIT", 0.5)
+    pid_file = tmp_path / "pids"
+    ignore = "import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+    cmd = _nested_script(pid_file, ignore)
+    start = time.monotonic()
+    asyncio.run(async_run(cmd, level=0, timeout=60))
+    assert time.monotonic() - start < 5
+    for pid in pid_file.read_text().split():
+        _assert_gone(int(pid))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_cancel_while_stopping_still_kills(tmp_path, monkeypatch, spawned):
+    """A cancel during the wait after SIGTERM still sends SIGKILL."""
+    monkeypatch.setattr(process_tree, "STOP_WAIT", 30)
+    pid_file = tmp_path / "pids"
+    ignore = "import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+    cmd = _nested_script(pid_file, ignore)
+
+    async def main():
+        task = asyncio.create_task(async_run(cmd, level=0, timeout=60))
+        while not spawned or spawned[0].returncode is None:
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.3)  # now waiting for the programs to exit
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(main())
+    for pid in pid_file.read_text().split():
+        _assert_gone(int(pid))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_zombie_does_not_count_as_running():
+    """A program that exited but wasn't reaped isn't waited for: in Docker,
+    ofscraper is PID 1 and inherits orphans it never reaps."""
+    child = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    try:
+        while psutil.Process(child.pid).status() != psutil.STATUS_ZOMBIE:
+            time.sleep(0.01)
+        tree = process_tree.ProcessTree()
+        tree.attach(child.pid)
+        assert not tree.running()
+    finally:
+        child.wait()
