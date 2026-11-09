@@ -19,7 +19,13 @@ def parse_ids(value, option):
         # ("١٢٣" is 123). isdigit() also takes "²", which int() can't read
         if not part.isdecimal():
             raise BadParameter(f"{part!r} is not an id", param_hint=option)
-        ids.add(int(part))
+        try:
+            ids.add(int(part))
+        except ValueError:
+            # longer than int()'s digit limit (sys.get_int_max_str_digits)
+            raise BadParameter(
+                f"{part[:20]!r}... is not an id", param_hint=option
+            ) from None
     if not ids:
         raise BadParameter("no id given", param_hint=option)
     return ids

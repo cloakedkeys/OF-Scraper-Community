@@ -92,7 +92,7 @@ Accepts 85 options. Its `--help` summary: Uses API to modify db files without th
 
 ### `db`
 
-`ofscraper db`, with user selection, area (`-o`) and media filters (type, size, length, downloaded, locked, preview, protected, post and media ids, dates). `--post-id` and `--media-id` take one id, or several separated by commas or spaces. An id is decimal digits, from any script. A value with no id in it, or with anything else (such as `²` or `-4`), is a usage error, sorting and a hard limit. It reads media rows from each selected creator's `user_data.db` and prints them as a table. `-ep`/`--export PATH` also writes a `.csv`. It makes no API calls for the media itself. With several creators, every selected creator's rows go into the one CSV. `--unmark-permanent-skips` narrows the rows to the permanent `skip_download_script` skips and sets them back to not downloaded after printing them.
+`ofscraper db`, with user selection, area (`-o`) and media filters (type, size, length, downloaded, locked, preview, protected, post and media ids, dates), sorting and a hard limit. `--post-id` and `--media-id` take one id, or several separated by commas or spaces. An id is decimal digits, from any script. A value with no id in it, or with anything else (such as `²` or `-4`), is a usage error. It reads media rows from each selected creator's `user_data.db` and prints them as a table. `-ep`/`--export PATH` also writes a `.csv`. It makes no API calls for the media itself. With several creators, every selected creator's rows go into the one CSV. `--unmark-permanent-skips` narrows the rows to the permanent `skip_download_script` skips and sets them back to not downloaded after printing them.
 
 Accepts 61 options. Its `--help` summary: Print information from the database.
 
