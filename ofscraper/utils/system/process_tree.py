@@ -19,13 +19,17 @@ group the operating system tracks:
 
 import asyncio
 import atexit
+import contextlib
 import os
 import signal
 import sys
+import threading
+import time
 
 import psutil
 
 STOP_WAIT = 2  # seconds a program gets to exit after it is asked to stop
+HOLD_LIMIT = 5  # seconds; a start takes milliseconds, so a hold this old was abandoned
 STOP_POLL = 0.05  # seconds between checks that the programs have exited
 
 # POSIX process groups not yet stopped, to kill if ofscraper exits first
@@ -52,6 +56,16 @@ class ProcessTree:
             flags = kwargs.get("creationflags", 0) | _CREATE_SUSPENDED
             return {**kwargs, "creationflags": flags}
         return {**kwargs, "start_new_session": True}
+
+    def starting(self):
+        """Context manager to start and attach() the command in.
+
+        Ctrl+C (SIGINT) and SIGTERM are held until it exits, then delivered.
+        Otherwise one could stop ofscraper after the command has started but
+        before it is tracked, leaving it, and anything it starts, running
+        (on Windows, suspended and outside any job).
+        """
+        return _hold_interrupts()
 
     def attach(self, pid):
         """Start tracking the command, which was started with popen_kwargs().
@@ -155,6 +169,63 @@ def _live_member(pgid):
         except OSError:
             continue  # it exited meanwhile, or can't be inspected
     return False
+
+
+_HELD_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+# One hold is shared by every command starting at the same time: handlers are
+# swapped when the first starts and restored when the last is tracked.
+_hold_depth = 0
+_hold_generation = 0
+_hold_since = 0.0
+_hold_handlers = {}
+_held = []
+
+
+@contextlib.contextmanager
+def _hold_interrupts():
+    global _hold_depth, _hold_generation, _hold_since
+    if threading.current_thread() is not threading.main_thread():
+        # Python runs signal handlers, and so raises KeyboardInterrupt, only
+        # in the main thread: code elsewhere can't be interrupted by them.
+        yield
+        return
+    if _hold_depth == 0:
+        _hold_generation += 1
+        _hold_since = time.monotonic()
+        for sig in _HELD_SIGNALS:
+            _hold_handlers[sig] = signal.signal(sig, _hold_signal)
+    _hold_depth += 1
+    generation = _hold_generation
+    try:
+        yield
+    finally:
+        # A hold released early (see _hold_signal) is no longer counted.
+        if generation == _hold_generation and _hold_depth:
+            _hold_depth -= 1
+            if _hold_depth == 0:
+                _release_interrupts()
+
+
+def _hold_signal(signum, frame):
+    _held.append(signum)
+    if time.monotonic() - _hold_since > HOLD_LIMIT:
+        # No start takes this long: one was abandoned mid-way (its task never
+        # resumed). Don't hold interrupts for good.
+        _release_interrupts()
+
+
+def _release_interrupts():
+    global _hold_depth, _hold_generation
+    _hold_depth = 0
+    _hold_generation += 1
+    for sig, handler in _hold_handlers.items():
+        # None: the handler was set outside Python; fall back to the default.
+        signal.signal(sig, signal.SIG_DFL if handler is None else handler)
+    _hold_handlers.clear()
+    held = list(dict.fromkeys(_held))
+    _held.clear()
+    for sig in held:
+        signal.raise_signal(sig)  # now handled as it would have been
 
 
 @atexit.register

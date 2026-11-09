@@ -198,12 +198,13 @@ async def async_run(
             kwargs["stdout"] = files.enter_context(tempfile.TemporaryFile())
             kwargs["stderr"] = files.enter_context(tempfile.TemporaryFile())
 
-        process, cancelled = await _start(cmd_args, kwargs)
-        try:
-            untracked = tree.attach(process.pid)
-        except BaseException:
-            await _kill(process)
-            raise
+        with tree.starting():
+            process, cancelled = await _start(cmd_args, kwargs)
+            try:
+                untracked = tree.attach(process.pid)
+            except BaseException:
+                await _kill(process)
+                raise
         if untracked:
             log.warning(
                 f"Programs started by subprocess {name} can't be tracked, so "

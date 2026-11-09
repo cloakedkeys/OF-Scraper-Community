@@ -829,3 +829,131 @@ def test_cancel_during_failed_start_logs_nothing(monkeypatch):
 
     assert asyncio.run(main()) == []
     assert reported == []
+
+
+# Like CTRL_C_WRAPPER, but the start is stretched (as in
+# test_cancel_while_starting_stops_script_and_its_programs) so Ctrl+C lands
+# after the script has started a program and before it is tracked.
+CTRL_C_DURING_START_WRAPPER = """
+import sys
+sys.argv = sys.argv[:1]
+import ofscraper.__main__  # noqa: F401  (import order, see AGENTS.md)
+import asyncio
+from ofscraper.utils.context import run_async
+from ofscraper.utils.system.subprocess import async_run
+
+real_exec = asyncio.create_subprocess_exec
+
+async def slow_start(*args, **kwargs):
+    process = await real_exec(*args, **kwargs)
+    await asyncio.sleep(2)
+    return process
+
+asyncio.create_subprocess_exec = slow_start
+
+pid_file = {pid_file!r}
+script = (
+    "import os, subprocess, sys, time\\n"
+    "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\\n"
+    f"open({{pid_file!r}}, 'w').write(f'{{{{os.getpid()}}}} {{{{c.pid}}}}')\\n"
+    "time.sleep(30)\\n"
+)
+
+@run_async.run
+async def main():
+    await async_run([sys.executable, "-c", script], level=0, timeout=60)
+
+main()
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_ctrl_c_while_starting_stops_script_and_its_programs(tmp_path):
+    """Ctrl+C after the script has started a program, before the script is
+    tracked: it is held until the script is tracked, so neither is left."""
+    pid_file = tmp_path / "pids"
+    wrapper = tmp_path / "wrapper.py"
+    wrapper.write_text(CTRL_C_DURING_START_WRAPPER.format(pid_file=str(pid_file)))
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app = subprocess.Popen(
+        [sys.executable, str(wrapper)],
+        env={**os.environ, "PYTHONPATH": repo},
+        start_new_session=True,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        for _ in range(200):
+            if pid_file.exists() and len(pid_file.read_text().split()) == 2:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("script did not start")
+        os.killpg(app.pid, signal.SIGINT)  # still inside the 2 s start
+        app.wait(timeout=30)
+        assert app.returncode != 0  # stopped by the interrupt
+        for pid in pid_file.read_text().split():
+            _assert_gone(int(pid))
+    finally:
+        if app.poll() is None:
+            app.kill()
+            app.wait()
+        if pid_file.exists():
+            for pid in pid_file.read_text().split():
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                except OSError:
+                    pass
+
+
+def test_interrupt_held_until_last_overlapping_start_is_tracked():
+    original = signal.getsignal(signal.SIGINT)
+    first = process_tree._hold_interrupts()
+    second = process_tree._hold_interrupts()
+    first.__enter__()
+    second.__enter__()
+    signal.raise_signal(signal.SIGINT)
+    first.__exit__(None, None, None)  # the other start isn't tracked yet
+    with pytest.raises(KeyboardInterrupt):
+        second.__exit__(None, None, None)
+    assert signal.getsignal(signal.SIGINT) is original
+
+
+def test_no_interrupt_no_change():
+    original = signal.getsignal(signal.SIGINT)
+    with process_tree._hold_interrupts():
+        pass
+    assert signal.getsignal(signal.SIGINT) is original
+
+
+def test_abandoned_hold_is_released(monkeypatch):
+    """A start abandoned mid-way doesn't hold Ctrl+C for good."""
+    monkeypatch.setattr(process_tree, "HOLD_LIMIT", 0)
+    original = signal.getsignal(signal.SIGINT)
+    abandoned = process_tree._hold_interrupts()
+    abandoned.__enter__()
+    time.sleep(0.01)
+    with pytest.raises(KeyboardInterrupt):
+        signal.raise_signal(signal.SIGINT)
+    assert signal.getsignal(signal.SIGINT) is original
+    # If its task ever resumes, it changes nothing.
+    abandoned.__exit__(None, None, None)
+    assert signal.getsignal(signal.SIGINT) is original
+    with process_tree._hold_interrupts():
+        assert signal.getsignal(signal.SIGINT) is process_tree._hold_signal
+    assert signal.getsignal(signal.SIGINT) is original
+
+
+def test_hold_outside_main_thread_changes_nothing():
+    import threading
+
+    seen = []
+
+    def run():
+        with process_tree._hold_interrupts():
+            seen.append(signal.getsignal(signal.SIGINT))
+
+    original = signal.getsignal(signal.SIGINT)
+    thread = threading.Thread(target=run)
+    thread.start()
+    thread.join()
+    assert seen == [original]
