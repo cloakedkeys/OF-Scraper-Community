@@ -1,13 +1,16 @@
 """async_run keeps its stdin/stdout/stderr tasks and leaves none running (#381)."""
 
 import asyncio
+import logging
 import os
 import signal
+import subprocess
 import sys
 import time
 
 import pytest
 
+import ofscraper.utils.system.subprocess as subprocess_module
 from ofscraper.utils.system.subprocess import async_run
 
 
@@ -246,6 +249,108 @@ def test_cancel_does_not_wait_for_background_program(background_script):
 
     elapsed, pending = asyncio.run(main())
     assert elapsed < PROMPT
+    assert pending == []
+
+
+@pytest.fixture
+def exiting_background_script(tmp_path):
+    """A script that starts a background program, prints, and exits.
+
+    The background program keeps the script's stdout/stderr open (#391).
+    """
+    pid_file = tmp_path / "background.pid"
+
+    def make(returncode=0):
+        script = (
+            "import subprocess, sys\n"
+            "child = subprocess.Popen([sys.executable, '-c', "
+            f"'import time; time.sleep({BACKGROUND_SLEEP})'])\n"
+            f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+            "print('script output')\n"
+            "print('script error', file=sys.stderr)\n"
+            f"sys.exit({returncode})\n"
+        )
+        return [sys.executable, "-c", script]
+
+    yield make
+    if pid_file.exists():
+        try:
+            os.kill(int(pid_file.read_text()), signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def test_script_exit_returns_despite_background_program(
+    exiting_background_script, caplog
+):
+    log = logging.getLogger("test_async_run_391")
+
+    async def main():
+        start = time.monotonic()
+        result = await async_run(
+            exiting_background_script(3), log=log, level=0, timeout=60
+        )
+        return result, time.monotonic() - start, _pending_tasks()
+
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        result, elapsed, pending = asyncio.run(main())
+    assert elapsed < PROMPT
+    assert result.returncode == 3
+    assert result.stdout.strip() == b"script output"
+    assert result.stderr.strip() == b"script error"
+    assert "still running" in caplog.text
+    assert pending == []
+
+
+def test_script_exit_check_raises_despite_background_program(
+    exiting_background_script,
+):
+    async def main():
+        start = time.monotonic()
+        with pytest.raises(subprocess.CalledProcessError) as error:
+            await async_run(
+                exiting_background_script(2), level=0, timeout=60, check=True
+            )
+        return error.value, time.monotonic() - start
+
+    error, elapsed = asyncio.run(main())
+    assert elapsed < PROMPT
+    assert error.returncode == 2
+    assert error.output.strip() == b"script output"
+
+
+def test_background_program_output_wait_stays_within_timeout(
+    exiting_background_script, monkeypatch
+):
+    async def main():
+        start = time.monotonic()
+        # A grace period longer than the time left: the wait is cut short.
+        result = await async_run(exiting_background_script(), level=0, timeout=3)
+        return result, time.monotonic() - start
+
+    monkeypatch.setattr(subprocess_module, "OUTPUT_GRACE", 30, raising=False)
+    result, elapsed = asyncio.run(main())
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"script output"
+    assert elapsed < 3 + 1  # timeout, plus closing the pipes
+
+
+def test_cancel_after_script_exit_closes_pipes(exiting_background_script, spawned):
+    async def main():
+        task = asyncio.create_task(
+            async_run(exiting_background_script(), level=0, timeout=60)
+        )
+        while not spawned or spawned[0].returncode is None:
+            await asyncio.sleep(0.01)
+        start = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return spawned[0], time.monotonic() - start, _pending_tasks()
+
+    process, elapsed, pending = asyncio.run(main())
+    assert elapsed < PROMPT
+    assert process._transport.is_closing()
     assert pending == []
 
 
