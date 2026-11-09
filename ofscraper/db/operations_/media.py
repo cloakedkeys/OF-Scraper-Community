@@ -240,6 +240,11 @@ WHERE media_id = ? AND model_id IS ?
 AND (filename IS NOT NULL OR directory IS NOT NULL OR size IS NOT NULL OR hash IS NOT NULL)
 LIMIT 1
 """
+# a permanent skip_download_script skip (#351) is saved as downloaded with no
+# file on purpose: it counts as a file, so the repair leaves its media alone
+mediaHasFileOrPermanentSkip = mediaHasFile.replace(
+    "OR hash IS NOT NULL)", "OR hash IS NOT NULL OR skip_permanent = 1)"
+)
 # NULL, as a size skip leaves the row now
 sizeSkipUnmark = """
 UPDATE medias SET downloaded = NULL
@@ -884,9 +889,19 @@ def repair_size_skipped_media(
                 for row in cur.execute(sizeSkipLabelled, [SIZE_SKIP_LABEL])
             }
             media.update(pair for pair in from_backups if pair[0] is not None)
+            # the column is added before the repair runs; checked anyway, so
+            # the repair also works on a table without it
+            has_file = (
+                mediaHasFileOrPermanentSkip
+                if any(
+                    col[1] == "skip_permanent"
+                    for col in cur.execute("PRAGMA table_info('medias')").fetchall()
+                )
+                else mediaHasFile
+            )
             changed = 0
             for pair in sorted(media, key=str):
-                if cur.execute(mediaHasFile, pair).fetchone():
+                if cur.execute(has_file, pair).fetchone():
                     continue
                 changed += cur.execute(sizeSkipUnmark, pair).rowcount
             cur.execute(
