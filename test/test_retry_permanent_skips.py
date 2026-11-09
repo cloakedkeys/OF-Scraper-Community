@@ -374,16 +374,53 @@ def test_db_command_id_filters_parse_whole_ids():
     args = parse_db("--post-id", "123", "--media-id", "45, 46")
     assert args.post_id == {123}
     assert args.media_id == {45, 46}
+    # not given: no filter
     args = parse_db()
-    assert not args.post_id and not args.media_id
+    assert args.post_id is None and args.media_id is None
 
 
-@pytest.mark.parametrize("cli", [["--post-id", "abc"], ["--media-id", "4,x"]])
-def test_db_command_id_filters_reject_non_ids(cli):
+# values that aren't ids, and values with no id in them: a usage error, never
+# "no filter" (with --unmark-permanent-skips that would un-mark every row).
+# Only ASCII digits are ids: "²" and "１" pass str.isdigit() but int() can't
+# read the first
+BAD_IDS = [",", " ", "", " , ", "abc", "4,x", "²", "4,²", "１"]
+
+
+@pytest.mark.parametrize("option", ["--post-id", "--media-id"])
+@pytest.mark.parametrize("value", BAD_IDS)
+def test_db_command_id_filters_reject_bad_values(option, value):
     import click
 
     with pytest.raises(click.BadParameter):
-        parse_db(*cli)
+        parse_db(option, value)
+
+
+@pytest.mark.parametrize("option", ["--post-id", "-pd", "--media-id"])
+@pytest.mark.parametrize("value", [",", "", "²"])
+def test_unmark_with_a_bad_id_filter_changes_nothing(env, table, option, value):
+    import click
+
+    before = all_rows(env)
+    with pytest.raises(click.BadParameter):
+        table.run("--unmark-permanent-skips", option, value)
+    assert all_rows(env) == before
+
+
+@pytest.mark.parametrize("value, message", [(",", "no id given"), ("²", "is not an id")])
+def test_bad_id_filter_is_a_usage_error_from_the_command_line(capsys, value, message):
+    # run as click runs a command line: a usage error (exit code 2) with the
+    # option named, not a traceback
+    from ofscraper.utils.args.parse.commands.db import db
+
+    with pytest.raises(SystemExit) as exit_:
+        db.main(
+            ["--unmark-permanent-skips", "--post-id", value],
+            prog_name="ofscraper db", standalone_mode=True,
+        )
+    assert exit_.value.code == 2
+    err = capsys.readouterr().err
+    assert "Usage:" in err and "--post-id" in err and message in err
+    assert "Traceback" not in err
 
 
 def test_after_the_db_command_the_next_run_asks_again(env, monkeypatch):
