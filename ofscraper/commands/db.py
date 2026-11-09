@@ -316,9 +316,10 @@ class DBManager:
                     )
                 else:
                     dictionary[key] = ""
+            # size_human, then size, last: the order the export has always had
             size = dictionary.pop("size", None)
-            dictionary["size"] = size
             dictionary["size_human"] = format_size(size or 0)
+            dictionary["size"] = size
             dictionaries[i] = dictionary
 
     def print_dictionary_table(self):

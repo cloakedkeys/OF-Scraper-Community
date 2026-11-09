@@ -269,6 +269,33 @@ def test_export_with_custom_date_format(run_db, monkeypatch):
     ]
 
 
+# the export's columns on main before #366, for a dated row
+MAIN_HEADER_ALL_AREAS = [
+    "media_id", "post_id", "directory", "filename", "api_type", "media_type",
+    "preview", "downloaded", "created_at", "unlocked", "model_id", "posted_at",
+    "hash", "duration", "skip_permanent", "size_human", "size",
+]
+MAIN_HEADER_ONE_AREA = [
+    "media_id", "post_id", "directory", "filename", "api_type", "media_type",
+    "preview", "downloaded", "created_at", "posted_at", "hash", "model_id",
+    "unlocked", "duration", "size_human", "size",
+]
+
+
+@pytest.mark.parametrize(
+    "areas,api_type,expected",
+    [
+        (ALL_AREAS, "timeline", MAIN_HEADER_ALL_AREAS),
+        (["Timeline"], "timeline", MAIN_HEADER_ONE_AREA),
+        (["Messages"], "messages", MAIN_HEADER_ONE_AREA),
+    ],
+)
+def test_export_columns_unchanged(run_db, areas, api_type, expected):
+    # anything reading the CSV by position keeps working
+    written, _ = run_db([dict(ROWS[0], api_type=api_type)], areas=areas)
+    assert list(written[0]) == expected
+
+
 def test_table_columns_follow_the_export(run_db):
     # The printed table's columns are in the same order as the CSV's (#368)
     written, table = run_db(ROWS)
