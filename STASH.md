@@ -96,6 +96,15 @@ files: the report then says so in a `hint`, and nothing is created in Stash.
   Files you've moved or renamed since won't be found.
 - A file posted more than once (for example in a message and again as a
   purchase) gets one item in Stash with the earliest date and all of its tags.
+- An OnlyFans file recorded only as a purchase, or as a bought message, gets no
+  URL. The database doesn't record whether a purchase was a post or a message,
+  and a message has no public page.
+  A bought post that's also on the timeline gets its link only if OnlyFans
+  recorded the timeline copy, which depends on which area a run read first.
+  Otherwise it gets no link until the purchase type is saved
+  ([#315](https://github.com/cloakedkeys/OF-Scraper-Community/issues/315)) and
+  this command uses it. Since nothing is overwritten, a later run fills the link
+  in once the database has it.
 - The creator's performer is matched by name, which is their username. A
   performer you created yourself under another name gets a second one; merge them
   in Stash if so. The same goes for @mentioned Fansly creators.
