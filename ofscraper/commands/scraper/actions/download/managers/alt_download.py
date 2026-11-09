@@ -103,6 +103,9 @@ class AltDownloadManager(DownloadManager):
                 for track in (audio, video):
                     if track:
                         pathlib.Path(track["path"]).unlink(missing_ok=True)
+                if self._skipped_by_script(ele):
+                    # saved as done only when the script skips it for good
+                    return await self._script_skip_result(ele, username, model_id)
                 return "forced_skipped", 0
 
             # Safely calculate total size

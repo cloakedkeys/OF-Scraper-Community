@@ -38,6 +38,7 @@ from ofscraper.classes.of.media import Media
 from ofscraper.classes.of.posts import Post
 from ofscraper.db.operations_.media import batch_mediainsert
 from ofscraper.managers.sessionmanager.sessionmanager import sessionManager
+from ofscraper.scripts.skip_download_script import SKIP_PERMANENT
 from ofscraper.sites.fansly import auth as fansly_auth
 from ofscraper.sites.fansly import video as fansly_video
 
@@ -299,24 +300,102 @@ def test_limit_the_file_is_inside_downloads_it(env, chunked):
     assert first.files == [BODY]
 
 
-@REPLIES
-def test_skip_download_script_still_saves_the_item_as_done(env, monkeypatch, chunked):
-    # unchanged: a skip by the skip_download_script is a lasting choice; the
-    # item is saved as downloaded (with no file) and counted under its type.
-    # It's asked once, with the file's real size, whether the reply gave it
+# ------------------------------------------------------------- skip_download_script (#351)
+
+def marker(env, media_id):
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        return conn.execute(
+            "SELECT skip_permanent FROM medias WHERE media_id = ?", [media_id]
+        ).fetchone()[0]
+
+
+def script_runs(env, monkeypatch, *answers, chunked=False):
+    """Run the normal downloader once per answer, skip_download_script
+    giving that answer, each run with a new Media as a new scrape makes.
+    Each run's result also has the sizes the script was asked about."""
     asked = []
+    answer = {}
 
-    async def skip(total, ele):
+    async def script(total, ele):
         asked.append(total)
-        return True
+        return answer["now"]
 
-    monkeypatch.setattr(dm, "skip_download_script", skip)
-    first, second = normal_runs(env, (0, 0), (0, 0), chunked=chunked)
-    assert asked == [len(BODY)]
+    monkeypatch.setattr(dm, "skip_download_script", script)
+    results = []
+
+    async def runs():
+        async with Server(chunked) as srv:
+            async with sessionManager(
+                retries=1, wait_min=0, wait_max=0, log=logging.getLogger("test")
+            ) as c:
+                for now in answers:
+                    answer["now"] = now
+                    asked.clear()
+                    counted, todo = await run_async(env, [photo(srv.base)], c)
+                    results.append(SimpleNamespace(
+                        counted=counted, todo=[ele.id for ele in todo], items=todo,
+                        downloaded=downloaded(env, 7), marker=marker(env, 7),
+                        files=files(env), asked=list(asked),
+                    ))
+
+    asyncio.run(runs())
+    return results
+
+
+@REPLIES
+def test_script_skip_is_counted_as_skipped_and_asked_again(env, monkeypatch, chunked):
+    # a skip by the script (`false` or nothing) is for this run only. It's
+    # asked once, with the file's real size, whether the reply gave it
+    skip, keep = script_runs(env, monkeypatch, True, False, chunked=chunked)
+    assert skip.asked == [len(BODY)]
+    assert skip.counted == counts(forced_skipped=1)
+    assert not skip.downloaded
+    assert skip.files == []
+    # the next run asks again; the script now keeps it, and it downloads
+    assert keep.todo == [7]
+    assert keep.asked == [len(BODY)]
+    assert keep.counted == counts(photo_count=1)
+    assert keep.downloaded == 1
+    assert keep.files == [BODY]
+
+
+@REPLIES
+def test_permanent_script_skip_is_saved_as_done_and_not_asked_again(
+    env, monkeypatch, chunked
+):
+    skip, later = script_runs(
+        env, monkeypatch, SKIP_PERMANENT, False, chunked=chunked
+    )
+    assert skip.asked == [len(BODY)]
+    assert skip.counted == counts(forced_skipped=1)
+    # saved as downloaded with no file, and marked as a permanent skip
+    assert skip.downloaded == 1
+    assert skip.marker == 1
+    assert skip.files == []
+    assert later.todo == [] and later.asked == [] and later.counted == counts()
+
+
+@REPLIES
+def test_file_the_script_keeps_downloads_as_before(env, monkeypatch, chunked):
+    first, second = script_runs(env, monkeypatch, False, False, chunked=chunked)
+    assert first.asked == [len(BODY)]
     assert first.counted == counts(photo_count=1)
     assert first.downloaded == 1
-    assert first.files == []
-    assert second.todo == [] and second.counted == counts()
+    # a real download isn't marked
+    assert first.marker is None
+    assert first.files == [BODY]
+    assert second.todo == [] and second.asked == []
+
+
+@pytest.mark.parametrize("answer", [True, SKIP_PERMANENT], ids=["skip", "skip-permanent"])
+def test_script_skip_reaches_action_script_as_skipped(
+    env, monkeypatch, action_script, answer
+):
+    (run,) = script_runs(env, monkeypatch, answer)
+    assert run.counted == counts(forced_skipped=1)
+    (media,) = action_script(run.items)
+    assert media["download_status"] == "skipped"
+    assert media["type"] == "photo"
 
 
 # ------------------------------------------------------------- Fansly stream
