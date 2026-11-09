@@ -10,8 +10,10 @@ import asyncio
 import contextlib
 import hashlib
 import os
+import pathlib
 import sqlite3
 import stat
+from pathlib import PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 
 import pytest
@@ -204,13 +206,35 @@ def test_sync_wrapper_reads_read_only_file(tmp_path, connections):
     assert journal_mode(path) == "delete"
 
 
+def make_empty(path):
+    """The empty file older `ofscraper db` runs left for a new creator."""
+    path.touch()
+
+
+def make_without_medias(path):
+    with contextlib.closing(sqlite3.connect(path)) as conn:
+        conn.execute("CREATE TABLE other (x)")
+        conn.commit()
+
+
 @pytest.mark.parametrize(
     "areas", [ALL_AREAS, ["Timeline", "Messages"]], ids=["all areas", "some areas"]
 )
-def test_db_skips_creator_without_database(tmp_path, monkeypatch, caplog, areas):
-    # Given two creators, one with no database file yet
+@pytest.mark.parametrize(
+    "make_new",
+    [None, make_empty, make_without_medias],
+    ids=["no file", "empty file", "no medias table"],
+)
+def test_db_skips_creator_without_database(
+    tmp_path, monkeypatch, caplog, areas, make_new
+):
+    # Given two creators, one with no database yet: no file, the empty file
+    # an older run left, or a file without the medias table
     make_db(tmp_path / "5.db")
     missing = tmp_path / "6.db"
+    if make_new:
+        make_new(missing)
+        before = digest(missing)
     patch_command(monkeypatch, lambda model_id: tmp_path / f"{model_id}.db", areas)
     creators = [
         SimpleNamespace(name="new creator", id=6),
@@ -259,9 +283,86 @@ def test_db_skips_creator_without_database(tmp_path, monkeypatch, caplog, areas)
     assert "new creator has no database yet, skipping" in caplog.text
     assert "Traceback" not in caplog.text
     assert sorted(row["media_id"] for row in exported) == [1, 2]
-    # with one attempt only (no retries), and no file created
+    # with one attempt only (no retries), and no file created or changed
     assert attempts.count("6.db") == 1
-    assert not missing.exists()
+    if make_new:
+        assert digest(missing) == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["5.db", "6.db"]
+    else:
+        assert not missing.exists()
+
+
+def test_read_only_open_failure_is_not_retried(tmp_path, monkeypatch):
+    # an existing file SQLite can't open: a retry can't fix that
+    path = tmp_path / "user_data.db"
+    make_db(path)
+    attempts = []
+
+    def connect(*args, **kwargs):
+        attempts.append(args[0])
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(wrapper.sqlite3, "connect", connect)
+    with pytest.raises(wrapper.DatabaseUnreadable):
+        asyncio.run(media_ops.get_all_medias(db_path=path, read_only=True))
+    with pytest.raises(wrapper.DatabaseUnreadable):
+        media_ops.get_media_post_ids(db_path=path, read_only=True)
+    assert len(attempts) == 2
+
+
+@pytest.mark.parametrize(
+    "path,uri",
+    [
+        (
+            PureWindowsPath(r"C:\data dir\#1 100%\é.db"),
+            "file:///C:/data%20dir/%231%20100%25/%C3%A9.db?mode=ro",
+        ),
+        (
+            PureWindowsPath(r"\\server\share\a b\user_data.db"),
+            "file:////server/share/a%20b/user_data.db?mode=ro",
+        ),
+        (
+            PurePosixPath("/home/a b/#1 100%/é.db"),
+            "file:///home/a%20b/%231%20100%25/%C3%A9.db?mode=ro",
+        ),
+    ],
+    ids=["drive", "unc", "posix"],
+)
+def test_read_only_uri(path, uri):
+    assert wrapper._read_only_uri(path) == uri
+
+
+def test_read_only_reads_unusual_folder_name(tmp_path):
+    folder = tmp_path / "a b #1 100% é"
+    folder.mkdir()
+    path = folder / "user_data.db"
+    make_db(path)
+    rows = asyncio.run(
+        media_ops.get_all_medias(model_id=5, db_path=path, read_only=True)
+    )
+    assert sorted(row["media_id"] for row in rows) == [1, 2]
+
+
+def test_read_only_reads_unc_path(tmp_path):
+    # a database on a network share, reached through the admin share
+    if os.name != "nt" or not tmp_path.drive.endswith(":"):
+        pytest.skip("UNC paths are Windows paths")
+    unc = pathlib.Path(
+        rf"\\localhost\{tmp_path.drive[0]}$" + str(tmp_path)[2:]
+    ) / "user_data.db"
+    try:
+        reachable = unc.parent.is_dir()
+    except OSError:
+        reachable = False
+    if not reachable:
+        pytest.skip("the localhost admin share isn't reachable")
+    make_db(tmp_path / "user_data.db")
+    before = digest(tmp_path / "user_data.db")
+    rows = asyncio.run(
+        media_ops.get_all_medias(model_id=5, db_path=unc, read_only=True)
+    )
+    assert sorted(row["media_id"] for row in rows) == [1, 2]
+    assert digest(tmp_path / "user_data.db") == before
 
 
 def test_write_still_uses_wal(tmp_path, run_db):

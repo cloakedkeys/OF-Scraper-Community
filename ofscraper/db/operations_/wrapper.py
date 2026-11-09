@@ -2,6 +2,7 @@ import asyncio
 import logging
 import pathlib
 import sqlite3
+import urllib.parse
 from collections import abc
 from concurrent.futures import ThreadPoolExecutor
 
@@ -18,8 +19,34 @@ _DB_POOL = ThreadPoolExecutor(max_workers=1)
 
 
 class DatabaseMissing(FileNotFoundError):
-    """A read-only read found no database file. Not an sqlite error, so it
-    isn't retried."""
+    """A read-only read found no database: no file, or a file without the
+    table (older `ofscraper db` runs left empty files). Not an sqlite error,
+    so it isn't retried."""
+
+
+class DatabaseUnreadable(sqlite3.DatabaseError):
+    """A read-only read can't open the database file. A retry can't fix
+    that, and only OperationalError is retried."""
+
+
+def _read_only_failure(error):
+    """The error to raise instead of `error` on the read-only path when a
+    retry can't fix it (#373), or None to keep it (and retry)."""
+    message = str(error)
+    if message.startswith("no such table"):
+        return DatabaseMissing(message)
+    if message.startswith("unable to open database file"):
+        return DatabaseUnreadable(message)
+    return None
+
+
+def _read_only_uri(database_path):
+    """The file: URI that opens the database read-only, for a drive path, a
+    UNC path or a POSIX path. Path.as_uri() puts a UNC path's server in the
+    URI's host part, which SQLite can't open; SQLite takes //server/share
+    after file:// (file:////server/share/...)."""
+    path = urllib.parse.quote(database_path.as_posix(), safe="/:")
+    return f"file://{'' if path.startswith('/') else '/'}{path}?mode=ro"
 
 
 def _connect(database_path, read_only, **kwargs):
@@ -29,9 +56,7 @@ def _connect(database_path, read_only, **kwargs):
     if read_only:
         if not database_path.is_file():
             raise DatabaseMissing(f"no database at {database_path}")
-        return sqlite3.connect(
-            f"{database_path.as_uri()}?mode=ro", uri=True, **kwargs
-        )
+        return sqlite3.connect(_read_only_uri(database_path), uri=True, **kwargs)
     database_path.parent.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(database_path, **kwargs)
 
@@ -40,6 +65,7 @@ def operation_wrapper_async(func: abc.Callable):
     async def inner(*args, **kwargs):
         loop = asyncio.get_event_loop()
         db_timeout = of_env.getattr("DATABASE_TIMEOUT")
+        read_only = kwargs.get("read_only", False)
 
         # Wrap the inner DB work with Tenacity to handle async/thread collisions gracefully
         @tenacity.retry(
@@ -57,7 +83,6 @@ def operation_wrapper_async(func: abc.Callable):
                         kwargs.get("model_id"), kwargs.get("username")
                     )
                 ).resolve()
-                read_only = kwargs.get("read_only", False)
 
                 conn = _connect(
                     database_path,
@@ -83,6 +108,13 @@ def operation_wrapper_async(func: abc.Callable):
 
             except Exception as E:
                 log.debug(f"Database operation failed: {E}")
+                failure = (
+                    _read_only_failure(E)
+                    if read_only and isinstance(E, sqlite3.OperationalError)
+                    else None
+                )
+                if failure:
+                    raise failure from E
                 raise E
             finally:
                 if conn:
@@ -108,6 +140,7 @@ def operation_wrapper(func: abc.Callable):
     def inner(*args, **kwargs):
         conn = None
         db_timeout = of_env.getattr("DATABASE_TIMEOUT")
+        read_only = kwargs.get("read_only", False)
         try:
             database_path = pathlib.Path(
                 kwargs.get("db_path", None)
@@ -115,7 +148,6 @@ def operation_wrapper(func: abc.Callable):
                     kwargs.get("model_id"), kwargs.get("username")
                 )
             ).resolve()
-            read_only = kwargs.get("read_only", False)
 
             # Apply the user-configurable timeout for synchronous calls
             conn = _connect(
@@ -141,6 +173,9 @@ def operation_wrapper(func: abc.Callable):
             return func(*args, **kwargs, conn=conn)
 
         except sqlite3.OperationalError as E:
+            failure = _read_only_failure(E) if read_only else None
+            if failure:
+                raise failure from E
             log.info(f"Database is busy. Current timeout is {db_timeout}s.")
             raise E
         except KeyboardInterrupt as E:
