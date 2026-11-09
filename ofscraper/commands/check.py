@@ -506,7 +506,7 @@ async def message_check_retriver(forced=False):
             if not item:
                 continue
             num_match = re.search(
-                f"chats/chat/({of_env.getattr('NUMBER_REGEX')}+)", item
+                f"chats/(?:chat/)?({of_env.getattr('NUMBER_REGEX')}+)", item
             ) or re.search(f"^({of_env.getattr('NUMBER_REGEX')}+)$", item)
             name_match = re.search(f"^{of_env.getattr('USERNAME_REGEX')}+$", item)
             model_id = None

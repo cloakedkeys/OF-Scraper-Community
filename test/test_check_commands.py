@@ -277,6 +277,17 @@ def test_msg_check_reads_chat_link_and_bare_id_as_model_id(monkeypatch):
     assert checked == [("a_creator", "111"), ("user123", "222")]
 
 
+def test_msg_check_reads_message_link_without_chat_part_as_model_id(monkeypatch):
+    # the app's own message link format, my/chats/<id>/?id=<message id>
+    checked, looked_up, warned = _run_msg_check(
+        monkeypatch,
+        ["https://onlyfans.com/my/chats/111/?id=999", "https://onlyfans.com/my/chats/a_creator/?id=999"],
+    )
+    assert looked_up == [("id", "111")]
+    assert checked == [("a_creator", "111")]
+    assert len(warned) == 1 and "my/chats/a_creator" in warned[0]
+
+
 def test_msg_check_unmatched_input_does_not_recheck_previous_creator(monkeypatch):
     checked, _, _ = _run_msg_check(monkeypatch, ["a_creator", "onlyfans.com/my/chats"])
     assert checked == [("a_creator", "111")]
