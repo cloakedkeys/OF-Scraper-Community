@@ -263,12 +263,14 @@ class DBManager:
         # modify dictionary
         for i, dictionary in enumerate(dictionaries):
             dictionary = OrderedDict(dictionary)
-            dictionary["posted_at"] = arrow.get(dictionary["posted_at"]).format(
-                of_env.getattr("API_DATE_FORMAT")
-            )
-            dictionary["created_at"] = arrow.get(dictionary["created_at"]).format(
-                of_env.getattr("API_DATE_FORMAT")
-            )
+            # a row with no date shows an empty one
+            for key in ("posted_at", "created_at"):
+                if dictionary[key] not in (None, ""):
+                    dictionary[key] = arrow.get(dictionary[key]).format(
+                        of_env.getattr("API_DATE_FORMAT")
+                    )
+                else:
+                    dictionary[key] = ""
             size = dictionary.pop("size", None)
             dictionary["size"] = size
             dictionary["size_human"] = format_size(size or 0)
