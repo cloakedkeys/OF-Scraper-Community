@@ -68,10 +68,33 @@ console = Console()
 log = logging.getLogger("shared")
 
 
+def size_skip_labels_in_backups(model_id=None, username=None, db_path=None):
+    """The media the backups list as saved by the size-skip bug, while the
+    repair is still to run. Read it before any backup is written: a new copy
+    can replace the one that still has the label."""
+    if SIZE_SKIP_REPAIR_FLAG not in get_group_difference(
+        model_id=model_id, username=username, db_path=db_path
+    ):
+        return set()
+    database = db_path or placeholder.databasePlaceholder().databasePathHelper(
+        model_id, username
+    )
+    return media_labelled_in_backups(database, SIZE_SKIP_LABEL)
+
+
 @run
 async def modify_tables(
-    model_id=None, username=None, db_path=None, new_db=False, **kwargs
+    model_id=None,
+    username=None,
+    db_path=None,
+    new_db=False,
+    backup_labels=None,
+    **kwargs,
 ):
+    if backup_labels is None:
+        backup_labels = size_skip_labels_in_backups(
+            model_id=model_id, username=username, db_path=db_path
+        )
     # a database created just now has no older layout worth backing up
     backup = (
         None if new_db else create_backup_transition(model_id, username, db_path=db_path)
@@ -81,7 +104,12 @@ async def modify_tables(
         await modify_tables_constraints_and_columns(
             model_id=model_id, username=username, db_path=db_path
         )
-        await repair_tables(model_id=model_id, username=username, db_path=db_path)
+        await repair_tables(
+            model_id=model_id,
+            username=username,
+            db_path=db_path,
+            backup_labels=backup_labels,
+        )
     except Exception as E:
         if backup:
             restore_backup_transition(backup, model_id, username, db_path=db_path)
@@ -319,7 +347,9 @@ async def modify_tables_constraints_and_columns(
         )
 
 
-async def repair_tables(model_id=None, username=None, db_path=None, **kwargs):
+async def repair_tables(
+    model_id=None, username=None, db_path=None, backup_labels=None, **kwargs
+):
     missing = get_group_difference(
         model_id=model_id, username=username, db_path=db_path
     )
@@ -328,8 +358,10 @@ async def repair_tables(model_id=None, username=None, db_path=None, **kwargs):
         database = db_path or placeholder.databasePlaceholder().databasePathHelper(
             model_id, username
         )
+        if backup_labels is None:
+            backup_labels = media_labelled_in_backups(database, SIZE_SKIP_LABEL)
         changed = await repair_size_skipped_media(
-            media_labelled_in_backups(database, SIZE_SKIP_LABEL),
+            backup_labels,
             model_id=model_id,
             username=username,
             db_path=db_path,

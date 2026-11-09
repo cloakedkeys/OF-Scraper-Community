@@ -15,11 +15,13 @@ per-creator start-up (`table_init_create`).
 
 import asyncio
 import contextlib
+import shutil
 import sqlite3
 
 import pytest
 
 import ofscraper.classes.placeholder as placeholder
+import ofscraper.db.merge as merge
 import ofscraper.db.operations as operations
 import ofscraper.db.transition as transition
 import ofscraper.utils.cache.cache as cache
@@ -244,6 +246,48 @@ def test_second_run_changes_nothing(old_db):
     assert backups(old_db) == files
     assert downloaded(old_db)[(1, 10, MODEL_ID)] == 1
     assert [r for r in medias(old_db) if r[0] != 1] == [r for r in rows if r[0] != 1]
+
+
+def labelled_only_in_a_backup(db, name):
+    """Media 2 downloaded with no file; only backup/`name` still has its label."""
+    layout_before_the_repair(db)
+    add(db, 2, 20, "Forced_skippeds", 1)
+    add(db, 2, 21, "Videos", 1)
+    (db.parent / "backup").mkdir(exist_ok=True)
+    shutil.copy(db, db.parent / "backup" / name)
+    set_type(db, 2, "Videos")
+
+
+def test_backup_replaced_by_the_periodic_copy_is_read_first(model_db):
+    labelled_only_in_a_backup(model_db, "user_data_copy_2.db")
+    # the periodic copy is due, and goes to user_data_copy_2.db
+    cache.set(f"{USERNAME}_{MODEL_ID}_db_backup", 0)
+    cache.set(f"{USERNAME}_{MODEL_ID}_dbcounter", 1)
+
+    start_run()
+
+    copy = model_db.parent / "backup" / "user_data_copy_2.db"
+    assert downloaded(copy)[(2, 20, MODEL_ID)] == 1
+    assert "Forced_skippeds" not in {row[3] for row in medias(copy)}
+    assert downloaded(model_db)[(2, 20, MODEL_ID)] is None
+    assert downloaded(model_db)[(2, 21, MODEL_ID)] is None
+
+
+def test_merge_target_backup_replaced_by_the_upgrade_is_read_first(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    db = target / "user_data.db"
+    # a merge target's upgrade backup has a fixed name, so it's replaced each time
+    labelled_only_in_a_backup(db, "old_schema_db_backup.db")
+    source = tmp_path / "source"
+    source.mkdir()
+
+    asyncio.run(merge.MergeDatabase()(source, target))
+
+    copy = target / "backup" / "old_schema_db_backup.db"
+    assert "Forced_skippeds" not in {row[3] for row in medias(copy)}
+    assert downloaded(db)[(2, 20, MODEL_ID)] is None
+    assert downloaded(db)[(2, 21, MODEL_ID)] is None
 
 
 def test_database_without_such_rows_is_unchanged(model_db):
