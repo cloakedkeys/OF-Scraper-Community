@@ -482,7 +482,9 @@ class InputApp(App):
         for row in self.table_data:
             if str(row["index"]) == str(row_key):
                 row["download_cart"] = new_state
-                if new_state in {"[downloaded]", "[skipped]"}:
+                # A skip (size limits or a script) isn't recorded as
+                # downloaded in the database (#326), so it isn't here either
+                if new_state == "[downloaded]":
                     row["downloaded"] = True
                 break
 
