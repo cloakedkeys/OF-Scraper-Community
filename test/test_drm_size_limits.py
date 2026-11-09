@@ -630,13 +630,35 @@ def test_error_without_a_size_skip_still_retries_and_fails(
     assert counts == {"videos": 0, "forced_skipped": 0, "failed": 1}
     assert merged == {}
     if drm:
-        # the retry resumes the audio part from the size the first try got;
-        # the whole track is on disk, so the reply is empty and that fails
-        # without more tries, as before
+        # the retry resumes the audio part from the size the first try got.
+        # The test server sends the whole track in one chunk, so it's all on
+        # disk and the test server answers the resume with an empty 206,
+        # which fails without more tries, as before
         assert seen == ["audio.mp4", "audio.mp4 bytes=1000-"]
     else:
         assert seen == ["file.mp4"] * 3
     assert len(parts) == 1
+    assert media["download_status"] == "failed"
+    assert media["type"] == "video"
+
+
+def test_size_skipped_video_that_fails_reaches_the_script_with_its_type(
+    tmp_path, monkeypatch
+):
+    # the size check labels the video Forced_skipped, then removing the
+    # tracks' parts fails. That's outside the retries, so the item ends
+    # failed: the script still gets its own type, not the label (#341)
+    class _Path(type(pathlib.Path())):
+        def unlink(self, missing_ok=False):
+            raise PermissionError("the file is in use")
+
+    monkeypatch.setattr(ad, "pathlib", SimpleNamespace(Path=_Path))
+    counts, merged, seen, parts, media = _run_with_payload(
+        tmp_path, monkeypatch, size_min=WHOLE + 1
+    )
+    assert counts == {"videos": 0, "forced_skipped": 0, "failed": 1}
+    assert merged == {}
+    assert seen == ["audio.mp4", "video.mp4"]
     assert media["download_status"] == "failed"
     assert media["type"] == "video"
 
