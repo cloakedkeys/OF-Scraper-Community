@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import arrow
 import pytest
 
+import ofscraper.commands.check as check
 import ofscraper.classes.of.media as media_
 import ofscraper.classes.of.posts as posts_
 import ofscraper.data.api.messages as messages
@@ -235,6 +236,38 @@ def test_previous_download_filter_with_undated_media(monkeypatch):
 def test_dated_media_order_unchanged():
     dated = [m for m in MIXED if m.post.date]
     assert filters.sort_by_date(dated) == sorted(dated, key=lambda x: x.date)
+
+
+# ---------------------------------------------------------------- check table
+
+
+def check_rows(monkeypatch, media):
+    collection = SimpleNamespace(all_media=media, posts_with_media_id=lambda _id: [])
+    log = Log()
+    monkeypatch.setattr(check, "log", log)
+    monkeypatch.setattr(check, "get_media_post_ids_downloaded", lambda **kw: [])
+    monkeypatch.setattr(check, "check_user_dict", {"1": {"collection": collection}})
+    monkeypatch.setattr(check, "ROWS", [])
+    asyncio.run(check.row_gather("u", 1))
+    return check.ROWS, log
+
+
+def test_check_table_with_undated_media(monkeypatch):
+    rows, log = check_rows(monkeypatch, MIXED)
+    # newest first, undated last as the oldest
+    assert [row["post_id"] for row in rows] == [1, 3, 2]
+    assert rows[2]["post_date"] == "Probably Deleted"
+    assert any("media 20 in post 2 has no date" in w for w in log.warnings)
+
+
+def test_check_table_dated_order_unchanged(monkeypatch):
+    rows, log = check_rows(monkeypatch, [m for m in MIXED if m.post.date])
+    assert [row["post_id"] for row in rows] == [1, 3]
+    assert [row["post_date"] for row in rows] == [
+        "2024-03-01 00:00:00",
+        "2024-01-01 00:00:00",
+    ]
+    assert log.warnings == []
 
 
 # ---------------------------------------------------------------- timeline after
