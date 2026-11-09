@@ -370,6 +370,9 @@ def test_db_per_area_up_to_date_gives_same_output(tmp_path, run_db, monkeypatch)
     monkeypatch.setattr(media_ops, "execute_area_media", execute_before)
     expected = run_db(path, areas)
     assert rows == expected
+    # same keys in the same order too: skip_permanent is added after the
+    # columns there were, and they keep their places
+    assert [list(row) for row in rows] == [list(row) for row in expected]
     assert sorted(row["api_type"] for row in rows) == [
         "messages",
         "pinned",
@@ -598,7 +601,8 @@ def test_db_all_areas_and_per_area_give_same_columns(tmp_path, run_db, create, a
     every = run_db(path)
     one = run_db(path, [area])
 
-    # Then both give the same columns, in the same order
+    # Then both give the same columns (each path keeps its own order, so
+    # existing CSV columns don't move)
     assert len(one) == 1
-    assert list(one[0]) == list(every[0])
+    assert set(one[0]) == set(every[0])
     assert "skip_permanent" in one[0]
