@@ -535,6 +535,23 @@ def test_fansly_gallery_is_found_in_any_studio(fansly_library, tmp_path):
     assert all(g["studio"] == {"id": own} for k, g in stash.galleries.items() if k != "of")
 
 
+def test_one_studio_for_both_sites_gets_no_site_link(library, fansly_library, tmp_path):
+    _, of_dir = library
+    _, _, files = fansly_library
+    stash = FakeStash(scenes=[str(of_dir / "post.mp4")])
+    for path, kind in files:
+        stash.add(kind, path)
+    sync([tmp_path / ".data"], stash, apply=True, studio="Everything")
+    assert [v for kind, v in stash.created if kind == "studio"] == [{"name": "Everything"}]
+
+
+def test_one_site_with_studio_keeps_its_link(library):
+    db, media_dir = library
+    stash = FakeStash(scenes=[str(media_dir / "post.mp4")])
+    sync([db], stash, apply=True, studio="Mine")
+    assert [v for kind, v in stash.created if kind == "studio"] == [{"name": "Mine", "urls": ["https://onlyfans.com"]}]
+
+
 def test_fansly_existing_values_are_kept(fansly_library, tmp_path):
     _, _, fansly_files = fansly_library
     stash = FakeStash()

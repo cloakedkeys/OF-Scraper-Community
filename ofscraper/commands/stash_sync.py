@@ -476,10 +476,14 @@ def sync(
     galleries = {}
 
     # caches are keyed ignoring case, as Stash's names are
+    # One --studio for several sites belongs to none of them, so it gets no site link
+    mixed = studio is not None and len({site for _, site, _, _ in models}) > 1
+
     def studio_id(site):
         name = studio or SITES[site]["studio"]
         if name.lower() not in studios:
-            studios[name.lower()] = find_or_create(client, "studio", name, apply, {"urls": [SITES[site]["studio_url"]]})
+            extra = {} if mixed else {"urls": [SITES[site]["studio_url"]]}
+            studios[name.lower()] = find_or_create(client, "studio", name, apply, extra)
         return studios[name.lower()]
 
     def tag_id(tag):

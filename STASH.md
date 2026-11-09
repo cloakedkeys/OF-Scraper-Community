@@ -22,7 +22,8 @@ the conversation ID its link needs isn't in the database. Fansly purchases aren'
 posts, so their files get no gallery.
 
 `--studio` and `--tag-prefix` replace the studio and tag prefix for every site;
-`--no-tags` turns off all of these tags.
+`--no-tags` turns off all of these tags. A `--studio` used for both sites in one
+run is created without a site link.
 
 It only fills in empty fields and adds performers, the studio, tags and galleries.
 Anything you've set in Stash is kept, so running it again changes nothing that's
