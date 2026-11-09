@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 import time
 import datetime
 from collections import OrderedDict
@@ -418,6 +419,14 @@ def db():
             # nothing scraped for this creator yet: not an error (#373)
             logging.getLogger("shared").warning(
                 f"{model.name} has no database yet, skipping"
+            )
+            continue
+        except sqlite3.DatabaseError as error:
+            # one creator's broken database doesn't stop the others
+            logging.getLogger("shared").warning(
+                f"{model.name}: can't read the database at "
+                f"{getattr(error, 'database_path', None) or 'an unknown path'}"
+                f" ({error}), skipping"
             )
             continue
         rows.extend(db_manager.media)

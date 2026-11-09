@@ -25,19 +25,25 @@ class DatabaseMissing(FileNotFoundError):
 
 
 class DatabaseUnreadable(sqlite3.DatabaseError):
-    """A read-only read can't open the database file. A retry can't fix
-    that, and only OperationalError is retried."""
+    """The database file can't be opened. A retry can't fix that, and only
+    OperationalError is retried."""
 
 
-def _read_only_failure(error):
-    """The error to raise instead of `error` on the read-only path when a
-    retry can't fix it (#373), or None to keep it (and retry)."""
+def _final_error(error, read_only, database_path):
+    """The error to raise for `error` (#373). One a retry can't fix is
+    replaced by one that isn't an OperationalError, so it isn't retried:
+    "unable to open database file" always, and "no such table" on the
+    read-only path. Busy and locked errors are kept, and retried. An sqlite
+    error carries the database's path (database_path) for messages."""
     message = str(error)
-    if message.startswith("no such table"):
-        return DatabaseMissing(message)
-    if message.startswith("unable to open database file"):
-        return DatabaseUnreadable(message)
-    return None
+    if isinstance(error, sqlite3.OperationalError):
+        if message.startswith("unable to open database file"):
+            error = DatabaseUnreadable(message)
+        elif read_only and message.startswith("no such table"):
+            error = DatabaseMissing(message)
+    if isinstance(error, sqlite3.DatabaseError):
+        error.database_path = database_path
+    return error
 
 
 def _read_only_uri(database_path):
@@ -76,6 +82,7 @@ def operation_wrapper_async(func: abc.Callable):
         )
         def _db_work():
             conn = None
+            database_path = None
             try:
                 database_path = pathlib.Path(
                     kwargs.get("db_path", None)
@@ -108,12 +115,8 @@ def operation_wrapper_async(func: abc.Callable):
 
             except Exception as E:
                 log.debug(f"Database operation failed: {E}")
-                failure = (
-                    _read_only_failure(E)
-                    if read_only and isinstance(E, sqlite3.OperationalError)
-                    else None
-                )
-                if failure:
+                failure = _final_error(E, read_only, database_path)
+                if failure is not E:
                     raise failure from E
                 raise E
             finally:
@@ -139,6 +142,7 @@ def operation_wrapper(func: abc.Callable):
     )
     def inner(*args, **kwargs):
         conn = None
+        database_path = None
         db_timeout = of_env.getattr("DATABASE_TIMEOUT")
         read_only = kwargs.get("read_only", False)
         try:
@@ -173,8 +177,8 @@ def operation_wrapper(func: abc.Callable):
             return func(*args, **kwargs, conn=conn)
 
         except sqlite3.OperationalError as E:
-            failure = _read_only_failure(E) if read_only else None
-            if failure:
+            failure = _final_error(E, read_only, database_path)
+            if failure is not E:
                 raise failure from E
             log.info(f"Database is busy. Current timeout is {db_timeout}s.")
             raise E
@@ -182,7 +186,7 @@ def operation_wrapper(func: abc.Callable):
             with exit.DelayedKeyboardInterrupt():
                 raise E
         except Exception as E:
-            raise E
+            raise _final_error(E, read_only, database_path)
         finally:
             if conn:
                 try:

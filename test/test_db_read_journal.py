@@ -217,6 +217,56 @@ def make_without_medias(path):
         conn.commit()
 
 
+@pytest.fixture
+def run_command(tmp_path, monkeypatch, caplog):
+    """Run the whole `ofscraper db` command over creators whose databases
+    are tmp_path/<id>.db. Returns the exported rows and the files the
+    wrapper tried to open, one entry per try."""
+
+    def run(creators, areas=ALL_AREAS):
+        patch_command(
+            monkeypatch, lambda model_id: tmp_path / f"{model_id}.db", areas
+        )
+        monkeypatch.setattr(
+            db_command,
+            "manager",
+            SimpleNamespace(
+                Manager=SimpleNamespace(
+                    current_model_manager=SimpleNamespace(
+                        sync_models=lambda **kwargs: None, all_subs=creators
+                    )
+                )
+            ),
+        )
+        monkeypatch.setattr(db_command.actions, "select_areas", lambda: None)
+        monkeypatch.setattr(db_command.time, "sleep", lambda seconds: None)
+        # the table's printing sets up log handlers; the rows are checked
+        monkeypatch.setattr(
+            db_command.DBManager, "print_dictionary_table", lambda self: None
+        )
+        exported = []
+        monkeypatch.setattr(db_command, "write_csv", exported.extend)
+        attempts = []
+        real_connect = wrapper._connect
+
+        def connect(database_path, read_only, **kwargs):
+            attempts.append(database_path.name)
+            return real_connect(database_path, read_only, **kwargs)
+
+        monkeypatch.setattr(wrapper, "_connect", connect)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            with caplog.at_level("WARNING", logger="shared"):
+                db_command.db()
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+        return exported, attempts
+
+    return run
+
+
 @pytest.mark.parametrize(
     "areas", [ALL_AREAS, ["Timeline", "Messages"]], ids=["all areas", "some areas"]
 )
@@ -226,7 +276,7 @@ def make_without_medias(path):
     ids=["no file", "empty file", "no medias table"],
 )
 def test_db_skips_creator_without_database(
-    tmp_path, monkeypatch, caplog, areas, make_new
+    tmp_path, caplog, run_command, areas, make_new
 ):
     # Given two creators, one with no database yet: no file, the empty file
     # an older run left, or a file without the medias table
@@ -235,48 +285,15 @@ def test_db_skips_creator_without_database(
     if make_new:
         make_new(missing)
         before = digest(missing)
-    patch_command(monkeypatch, lambda model_id: tmp_path / f"{model_id}.db", areas)
-    creators = [
-        SimpleNamespace(name="new creator", id=6),
-        SimpleNamespace(name="a creator", id=5),
-    ]
-    monkeypatch.setattr(
-        db_command,
-        "manager",
-        SimpleNamespace(
-            Manager=SimpleNamespace(
-                current_model_manager=SimpleNamespace(
-                    sync_models=lambda **kwargs: None, all_subs=creators
-                )
-            )
-        ),
-    )
-    monkeypatch.setattr(db_command.actions, "select_areas", lambda: None)
-    monkeypatch.setattr(db_command.time, "sleep", lambda seconds: None)
-    # the table's printing sets up log handlers; the rows are checked below
-    monkeypatch.setattr(
-        db_command.DBManager, "print_dictionary_table", lambda self: None
-    )
-    exported = []
-    monkeypatch.setattr(db_command, "write_csv", exported.extend)
-    attempts = []
-    real_connect = wrapper._connect
-
-    def connect(database_path, read_only, **kwargs):
-        attempts.append(database_path.name)
-        return real_connect(database_path, read_only, **kwargs)
-
-    monkeypatch.setattr(wrapper, "_connect", connect)
 
     # When ofscraper db runs
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        with caplog.at_level("WARNING", logger="shared"):
-            db_command.db()
-    finally:
-        loop.close()
-        asyncio.set_event_loop(None)
+    exported, attempts = run_command(
+        [
+            SimpleNamespace(name="new creator", id=6),
+            SimpleNamespace(name="a creator", id=5),
+        ],
+        areas,
+    )
 
     # Then a plain message says the creator has no database yet, and the
     # command goes on to the next creator
@@ -292,8 +309,49 @@ def test_db_skips_creator_without_database(
         assert not missing.exists()
 
 
-def test_read_only_open_failure_is_not_retried(tmp_path, monkeypatch):
-    # an existing file SQLite can't open: a retry can't fix that
+def test_db_skips_unreadable_databases(tmp_path, caplog, monkeypatch, run_command):
+    # Given three creators: one whose database SQLite can't open, one whose
+    # file isn't a database, and one that's fine
+    make_db(tmp_path / "5.db")
+    make_db(tmp_path / "7.db")
+    (tmp_path / "8.db").write_bytes(b"not a database, " * 256)
+    real_connect = sqlite3.connect
+
+    def connect(target, *args, **kwargs):
+        if "7.db" in str(target):
+            raise sqlite3.OperationalError("unable to open database file")
+        return real_connect(target, *args, **kwargs)
+
+    monkeypatch.setattr(wrapper.sqlite3, "connect", connect)
+
+    # When ofscraper db runs
+    exported, attempts = run_command(
+        [
+            SimpleNamespace(name="locked out creator", id=7),
+            SimpleNamespace(name="broken creator", id=8),
+            SimpleNamespace(name="a creator", id=5),
+        ]
+    )
+
+    # Then each bad one is named, with its path and the reason, and skipped
+    # after one try, and the other creator is still exported
+    assert (
+        f"locked out creator: can't read the database at {tmp_path / '7.db'}"
+        " (unable to open database file), skipping"
+    ) in caplog.text
+    assert (
+        f"broken creator: can't read the database at {tmp_path / '8.db'}"
+        " (file is not a database), skipping"
+    ) in caplog.text
+    assert attempts.count("7.db") == 1
+    assert attempts.count("8.db") == 1
+    assert sorted(row["media_id"] for row in exported) == [1, 2]
+
+
+@pytest.mark.parametrize("read_only", [True, False], ids=["read", "write"])
+def test_open_failure_is_not_retried(tmp_path, monkeypatch, read_only):
+    # an existing file SQLite can't open: a retry can't fix that, on the
+    # read path or the write path, async or sync
     path = tmp_path / "user_data.db"
     make_db(path)
     attempts = []
@@ -303,10 +361,67 @@ def test_read_only_open_failure_is_not_retried(tmp_path, monkeypatch):
         raise sqlite3.OperationalError("unable to open database file")
 
     monkeypatch.setattr(wrapper.sqlite3, "connect", connect)
-    with pytest.raises(wrapper.DatabaseUnreadable):
-        asyncio.run(media_ops.get_all_medias(db_path=path, read_only=True))
-    with pytest.raises(wrapper.DatabaseUnreadable):
-        media_ops.get_media_post_ids(db_path=path, read_only=True)
+    if read_only:
+        calls = [
+            lambda: asyncio.run(
+                media_ops.get_all_medias(db_path=path, read_only=True)
+            ),
+            lambda: media_ops.get_media_post_ids(db_path=path, read_only=True),
+        ]
+    else:
+        calls = [
+            lambda: asyncio.run(media_ops.create_media_table(db_path=path)),
+            lambda: media_ops.batch_set_media_downloaded(
+                [], model_id=5, db_path=path
+            ),
+        ]
+    for call in calls:
+        with pytest.raises(wrapper.DatabaseUnreadable) as raised:
+            call()
+        assert raised.value.database_path == path.resolve()
+    assert len(attempts) == 2
+
+
+def test_not_a_database_is_not_retried_on_write(tmp_path, monkeypatch):
+    path = tmp_path / "user_data.db"
+    path.write_bytes(b"not a database, " * 256)
+    attempts = []
+    real_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        attempts.append(args[0])
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(wrapper.sqlite3, "connect", connect)
+    with pytest.raises(sqlite3.DatabaseError, match="file is not a database"):
+        asyncio.run(media_ops.create_media_table(db_path=path))
+    with pytest.raises(sqlite3.DatabaseError, match="file is not a database"):
+        media_ops.batch_set_media_downloaded([], model_id=5, db_path=path)
+    assert len(attempts) == 2
+
+
+@pytest.mark.parametrize("read_only", [True, False], ids=["read", "write"])
+def test_busy_database_is_still_retried(tmp_path, monkeypatch, read_only):
+    # a locked database can free up, so it's tried again
+    path = tmp_path / "user_data.db"
+    make_db(path)
+    attempts = []
+    real_connect = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        attempts.append(args[0])
+        if len(attempts) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(wrapper.sqlite3, "connect", connect)
+    if read_only:
+        rows = asyncio.run(
+            media_ops.get_all_medias(model_id=5, db_path=path, read_only=True)
+        )
+        assert len(rows) == 2
+    else:
+        asyncio.run(media_ops.create_media_table(db_path=path))
     assert len(attempts) == 2
 
 
