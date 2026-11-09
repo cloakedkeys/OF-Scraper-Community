@@ -206,16 +206,17 @@ class DownloadManager:
             return 0
         return resume_size
 
-    async def _check_forced_skip(self, ele, total, before=0):
+    async def _check_forced_skip(self, ele, total, before=0, track=None):
         """0 if the file isn't downloaded. before is the size of the item's
         parts already downloaded (a DRM video's audio track), which the size
-        limits add to total; None checks no size limits."""
+        limits add to total; None checks no size limits. track names a DRM
+        video's track, for skip_download_script's answer."""
         if total is None:
             return
         total = int(total)
         if total == 0:
             return 0
-        if await skip_download_script(total, ele):
+        if await self._script_skips(ele, total, track):
             return 0
         if before is None:
             return
@@ -234,6 +235,18 @@ class DownloadManager:
                 f"{get_medialog(ele)} {format_size(size)} under size min"
             )
             return 0
+
+    async def _script_skips(self, ele, total, track=None):
+        """skip_download_script's answer for the file (or a DRM video's
+        track) at this size. It's asked once per run: the check on the saved
+        size, the one on the reply and those of retries get the answer it
+        gave (#350). The next run's scrape makes a new Media, which asks
+        again."""
+        answers = ele.skip_script_answers
+        key = (track, total)
+        if key not in answers:
+            answers[key] = bool(await skip_download_script(total, ele))
+        return answers[key]
 
     def _skipped_by_size(self, ele, error):
         """True if the size limits have already skipped the item in this

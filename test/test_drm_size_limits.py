@@ -95,6 +95,7 @@ def _run(
     cache_error_times=1,
     cache_error_always=False,
     file_part=None,
+    ignore_range=False,
 ):
     """Download one item through the consumer: a DRM video, or with
     drm=False a non-DRM file. With chunked the server sends each whole file
@@ -108,7 +109,8 @@ def _run(
     size check decided. Returns (counters, the tracks the merge got, the
     requests the server saw, the .part files left). A non-DRM file's merge
     is under "file", and "marked" is set when it's saved as downloaded
-    without a file."""
+    without a file. With ignore_range the server answers a range request
+    as one without it."""
     monkeypatch.setattr(
         settings,
         "get_settings",
@@ -280,6 +282,8 @@ def _run(
         name = request.match_info["name"]
         rng = request.headers.get("Range")
         seen.append(f"{name} {rng}" if rng else name)
+        if ignore_range:
+            rng = None
         body = TRACKS[name]
         if not rng and chunked:
             resp = web.StreamResponse(headers={"Content-Type": "video/mp4"})
@@ -752,5 +756,95 @@ def test_resumed_video_skipped_by_a_size_limit_is_unchanged(
     assert merged == {}
     assert seen == ["audio.mp4"]
     assert parts == []
+
+
+# ------------------------------------- skip_download_script asked once (#350)
+
+def _keep_script():
+    calls = []
+
+    def script(total):
+        calls.append(total)
+        return False
+
+    return calls, script
+
+
+def test_resumed_file_the_script_keeps_is_asked_once(tmp_path, monkeypatch):
+    # asked on the saved size; the reply's size is the same, so it isn't
+    # asked again
+    calls, script = _keep_script()
+    counts, merged, seen, parts = _run(
+        tmp_path, monkeypatch, drm=False, file_part=1_000, script=script
+    )
+    assert calls == [len(FILE)]
+    assert seen == ["file.mp4 bytes=1000-"]
+    assert counts == DOWNLOADED
+    assert merged == {"file": FILE}
+
+
+def test_resumed_video_the_script_keeps_is_asked_once_per_track(
+    tmp_path, monkeypatch
+):
+    calls, script = _keep_script()
+    counts, merged, seen, parts = _run(
+        tmp_path, monkeypatch, video_part=2_000, script=script
+    )
+    assert calls == [len(AUDIO), len(VIDEO)]
+    assert seen == ["audio.mp4", "video.mp4 bytes=2000-"]
+    assert counts == DOWNLOADED
+    assert merged == {"audio": AUDIO, "video": VIDEO}
+
+
+def test_retry_doesnt_ask_the_script_again(tmp_path, monkeypatch):
+    # the first try's header save fails once the reply's first bytes are
+    # written; the retry asks for the file again, but not the script
+    calls, script = _keep_script()
+    counts, merged, seen, parts = _run(
+        tmp_path,
+        monkeypatch,
+        drm=False,
+        script=script,
+        cache_error=LOCKED,
+        cache_error_always=True,
+    )
+    assert seen == ["file.mp4", "file.mp4"]
+    assert calls == [len(FILE)]
+    assert counts == DOWNLOADED
+    assert merged == {"file": FILE}
+
+
+def test_resumed_file_with_a_no_size_reply_is_asked_once(tmp_path, monkeypatch):
+    # asked on the saved size; the server ignores the range and sends the
+    # whole file chunked, without its size. Its size, known once it's
+    # written, is the one already answered
+    calls, script = _keep_script()
+    counts, merged, seen, parts = _run(
+        tmp_path,
+        monkeypatch,
+        drm=False,
+        file_part=1_000,
+        script=script,
+        chunked=True,
+        ignore_range=True,
+    )
+    assert seen == ["file.mp4 bytes=1000-"]
+    assert calls == [len(FILE)]
+    assert counts == DOWNLOADED
+    assert merged == {"file": FILE}
+
+
+@REPLIES
+def test_file_the_script_keeps_is_asked_once_with_its_size(
+    tmp_path, monkeypatch, chunked
+):
+    # no saved size: asked once, on the reply's size or, with no size in
+    # the reply, on the size written
+    calls, script = _keep_script()
+    counts, merged, seen, parts = _run(
+        tmp_path, monkeypatch, drm=False, script=script, chunked=chunked
+    )
+    assert calls == [len(FILE)]
+    assert counts == DOWNLOADED
 
 
