@@ -226,7 +226,17 @@ def mentions(text, username=None):
     return out
 
 
-def fansly_post_meta(post_id, posted, texts, username):
+def bought_only(entry, post_id):
+    """Whether this file was recorded under this ID only as a purchase.
+
+    Purchases are saved in the posts table, with responsetype Paid; on
+    Fansly their ID is the bought item's own, and on OnlyFans a bought
+    message keeps the message's ID. Neither is a post with a page.
+    """
+    return entry["sources"].get(post_id) == {"Paid"}
+
+
+def fansly_post_meta(post_id, posted, texts, username, bought=False):
     """Fields shared by a Fansly file and its post's gallery."""
     table, raw = texts.get(post_id, (None, None))
     text = plain_text(raw)
@@ -234,7 +244,7 @@ def fansly_post_meta(post_id, posted, texts, username):
     if re.match(r"\d{4}-\d{2}-\d{2}", posted or ""):
         meta["date"] = posted[:10]
     # A message's page needs its conversation id, which the database doesn't keep
-    if table == "posts" and post_id and post_id.isdigit():
+    if table == "posts" and not bought and post_id and post_id.isdigit():
         meta["url"] = f"{FANSLY_ORIGIN}/post/{post_id}"
     meta["hashtags"] = hashtags(raw)
     meta["mentions"] = mentions(raw, username)
@@ -249,7 +259,7 @@ def describe_fansly(entry, texts, username):
         if texts.get(pid, (None, None))[1]:
             posted, post_id = when, pid
             break
-    meta = fansly_post_meta(post_id, posted, texts, username)
+    meta = fansly_post_meta(post_id, posted, texts, username, bought_only(entry, post_id))
     meta["code"] = entry["media_ids"].get(post_id)
     return meta
 
@@ -262,7 +272,7 @@ def fansly_galleries(entry, texts, username):
     out = {}
     for posted, post_id in sorted(entry["posts"]):
         table = texts.get(post_id, (None, None))[0]
-        if table not in ("posts", "messages") or post_id in out:
+        if table not in ("posts", "messages") or post_id in out or bought_only(entry, post_id):
             continue
         meta = fansly_post_meta(post_id, posted, texts, username)
         meta["code"] = post_id

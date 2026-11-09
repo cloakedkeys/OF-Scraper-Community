@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import http.server
 import itertools
 import json
@@ -288,7 +289,9 @@ MENTION_POST = 100000000000000004
 
 
 FIRST_POST = 100000000000000001
-PURCHASE = 100000000000000149  # an item of the messages fixture, bought on its own
+BOUGHT_TOO = 100000000000000149  # an item of a message, also bought on its own
+PURCHASE = 100000000000000900  # a made-up item that was only bought
+PURCHASE_MEDIA = 100000000000000901
 
 
 def fansly_routes(edits=None, purchases=False):
@@ -302,8 +305,13 @@ def fansly_routes(edits=None, purchases=False):
     def route(path, query):
         if purchases and path.startswith("account/media/orders"):
             account_media = load("messages.json")["response"]["accountMedia"]
-            return envelope({"accountMediaOrders": [{"accountMediaId": str(PURCHASE), "createdAt": 1777913614}],
-                             "accountMedia": account_media})
+            only = copy.deepcopy(next(m for m in account_media if int(m["id"]) == BOUGHT_TOO))
+            only.update(id=str(PURCHASE), access=True)
+            only.pop("preview", None)
+            only.pop("previewId", None)
+            only["media"]["id"] = str(PURCHASE_MEDIA)
+            orders = [{"accountMediaId": str(i), "createdAt": 1777913614} for i in (BOUGHT_TOO, PURCHASE)]
+            return envelope({"accountMediaOrders": orders, "accountMedia": account_media + [only]})
         data = both_routes(path, query)
         response = data.get("response")
         items = (response.get("posts") or []) + (response.get("messages") or []) if isinstance(response, dict) else []
@@ -534,6 +542,37 @@ def test_names_in_another_case_or_an_alias_are_reused(make_fansly, tmp_path):
     item = by_file(stash, "100000000000000026.mp4")
     assert {"id": weekend} in item["tags"] and {"id": creator} in item["performers"]
     assert {"id": studio_tag} in by_file(stash, "100000000000000019.mp4")["tags"]
+
+
+def test_fansly_purchase_gets_no_gallery_or_post_link(make_fansly, tmp_path):
+    db, _, files = make_fansly(purchases=True)
+    with closing(sqlite3.connect(db)) as conn:
+        bought = {
+            name for (name,) in conn.execute(
+                "SELECT filename FROM medias WHERE downloaded = 1 GROUP BY filename "
+                "HAVING SUM(post_id != ?) = 0", (PURCHASE,))
+        }
+        # the purchase is stored like a post, under the item's own ID
+        assert conn.execute("SELECT COUNT(*) FROM posts WHERE post_id = ?", (PURCHASE,)).fetchone()[0] == 1
+    assert bought, "the fixture should have a file that was only bought"
+    stash = FakeStash()
+    for path, kind in files:
+        stash.add(kind, path)
+
+    sync([tmp_path / ".data"], stash, apply=True)
+
+    codes = {g["code"] for g in stash.galleries.values()}
+    assert not codes & {str(PURCHASE), str(BOUGHT_TOO)}
+    assert len(stash.galleries) == 5
+    assert {f"{PURCHASE_MEDIA}.jpg", f"{PURCHASE_MEDIA}.mp4"} & bought
+    for name in bought:
+        item = named(stash, by_file(stash, name))
+        assert item["urls"] == [] and item["galleries"] == []
+        assert "Fansly Paid" in item["tags"] and item["studio"] == "Fansly"
+    # bought, and also in a message: only the message's gallery
+    also = named(stash, by_file(stash, "100000000000000150.mp4"))
+    assert also["galleries"] == ["100000000000000147"]
+    assert "Fansly Paid" in also["tags"]
 
 
 def test_onlyfans_performer_in_another_case_is_reused(library):
