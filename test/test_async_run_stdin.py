@@ -368,8 +368,12 @@ def _assert_stdin_closed(process):
 
 
 def test_unread_input_does_not_hold_stdin_open(
-    exiting_background_script, spawned
+    exiting_background_script, spawned, monkeypatch
 ):
+    # Without the fix, closing stdin waits the full KILL_WAIT: make that wait
+    # long, so the time check has a wide margin on both sides.
+    monkeypatch.setattr(subprocess_module, "KILL_WAIT", 20)
+
     async def main():
         start = time.monotonic()
         result = await async_run(
@@ -385,11 +389,15 @@ def test_unread_input_does_not_hold_stdin_open(
     assert result.stdout.strip() == b"script output"
     _assert_stdin_closed(spawned[0])
     # The output grace period, without KILL_WAIT on top for the stdin pipe.
-    assert elapsed < subprocess_module.OUTPUT_GRACE + 1.5
+    assert elapsed < PROMPT
     assert pending == []
 
 
-def test_cancel_with_unread_input_closes_stdin(exiting_background_script, spawned):
+def test_cancel_with_unread_input_closes_stdin(
+    exiting_background_script, spawned, monkeypatch
+):
+    monkeypatch.setattr(subprocess_module, "KILL_WAIT", 20)
+
     async def main():
         task = asyncio.create_task(
             async_run(
@@ -409,8 +417,95 @@ def test_cancel_with_unread_input_closes_stdin(exiting_background_script, spawne
 
     elapsed, pending = asyncio.run(main())
     _assert_stdin_closed(spawned[0])
-    assert elapsed < subprocess_module.KILL_WAIT
+    assert elapsed < PROMPT
     assert pending == []
+
+
+def test_unread_input_warning_does_not_blame_output(tmp_path, caplog):
+    """Only stdin is held open: the warning says the input was dropped and
+    doesn't claim the output may be cut off, which is complete."""
+    pid_file = tmp_path / "background.pid"
+    script = (
+        "import subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        f"'import time; time.sleep({BACKGROUND_SLEEP})'], "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+        f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+        "print('script output')\n"
+    )
+    log = logging.getLogger("test_async_run_stdin_only")
+
+    async def main():
+        return await async_run(
+            [sys.executable, "-c", script],
+            log=log,
+            level=0,
+            timeout=60,
+            input=UNREAD_INPUT,
+        )
+
+    try:
+        with caplog.at_level(logging.WARNING, logger=log.name):
+            result = asyncio.run(main())
+    finally:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGTERM)
+            except OSError:
+                pass
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"script output"
+    assert "rest of the input was dropped" in caplog.text
+    assert "output may be cut off" not in caplog.text
+
+
+def test_no_timeout():
+    """timeout=None means no time limit, as with asyncio.wait_for."""
+    result = asyncio.run(
+        async_run([sys.executable, "-c", "print('ok')"], level=0, timeout=None)
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"ok"
+
+
+def test_exit_is_not_polled(monkeypatch):
+    """Waiting for the script schedules a fixed number of timers, not one
+    every few milliseconds for as long as it runs."""
+    scheduled = []
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        real_call_at = loop.call_at
+
+        def call_at(when, callback, *args, **kwargs):
+            scheduled.append(callback)
+            return real_call_at(when, callback, *args, **kwargs)
+
+        monkeypatch.setattr(loop, "call_at", call_at)
+        return await async_run(
+            [sys.executable, "-c", "import time; time.sleep(1.5)"],
+            level=0,
+            timeout=60,
+        )
+
+    result = asyncio.run(main())
+    assert result.returncode == 0
+    assert len(scheduled) < 5
+
+
+def test_zero_output_grace_keeps_full_output(monkeypatch, caplog):
+    """A script that exits right at the end of the time left (the grace
+    period cut to nothing) still returns all of its output, with no
+    warning, when nothing holds its pipes open."""
+    monkeypatch.setattr(subprocess_module, "OUTPUT_GRACE", 0)
+    script = "import sys; sys.stdout.write('o' * 1_000_000)"
+    log = logging.getLogger("test_async_run_zero_grace")
+    with caplog.at_level(logging.WARNING, logger=log.name):
+        result = asyncio.run(
+            async_run([sys.executable, "-c", script], log=log, level=0, timeout=60)
+        )
+    assert result.stdout == b"o" * 1_000_000
+    assert caplog.text == ""
 
 
 def test_normal_run_captures_full_output():
