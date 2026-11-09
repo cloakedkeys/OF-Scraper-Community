@@ -1,7 +1,7 @@
-"""async_run keeps its stdin/stdout/stderr tasks and leaves none running (#381)."""
+"""async_run: input, output, timeouts and cancels, and scripts that start a
+program in the background (#381, #387, #389, #391)."""
 
 import asyncio
-import logging
 import os
 import signal
 import subprocess
@@ -19,84 +19,50 @@ def _pending_tasks():
     return [t for t in asyncio.all_tasks() if t is not current and not t.done()]
 
 
-@pytest.fixture
-def slow_stdin(monkeypatch):
-    """Make writing to the child's stdin take `delay` seconds before it drains.
-
-    This holds the stdin task open after the child has exited, the window in
-    which an unreferenced task could be lost or left running.
-    """
-    state = {"delay": 0.0, "finished": 0}
-    real_exec = asyncio.create_subprocess_exec
-
-    async def fake_exec(*args, **kwargs):
-        process = await real_exec(*args, **kwargs)
-        if process.stdin is not None:
-            real_drain = process.stdin.drain
-
-            async def drain():
-                await asyncio.sleep(state["delay"])
-                try:
-                    await real_drain()
-                finally:
-                    # Counted even on a broken pipe (child exited), which
-                    # async_run swallows.
-                    state["finished"] += 1
-
-            process.stdin.drain = drain
-        return process
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    return state
+# More than a pipe buffer holds, on Windows and Linux.
+BIG_INPUT = b"x" * 1_000_000
 
 
-def test_script_reading_all_stdin_gets_full_input(slow_stdin):
-    slow_stdin["delay"] = 0.2
-    data = b"x" * 100_000
+def test_script_reading_all_stdin_gets_full_input():
     script = "import sys; print(len(sys.stdin.buffer.read()))"
 
     async def main():
         result = await async_run(
-            [sys.executable, "-c", script], input=data, level=0, timeout=60
+            [sys.executable, "-c", script], input=BIG_INPUT, level=0, timeout=60
         )
         return result, _pending_tasks()
 
     result, pending = asyncio.run(main())
     assert result.returncode == 0
-    assert int(result.stdout) == len(data)
+    assert int(result.stdout) == len(BIG_INPUT)
     assert pending == []
 
 
-def test_stdin_task_is_awaited_when_script_ignores_input(slow_stdin):
-    slow_stdin["delay"] = 1.0
-    script = "print('ok')"
-
+def test_script_ignoring_input_returns():
     async def main():
         result = await async_run(
-            [sys.executable, "-c", script], input=b"data", level=0, timeout=60
+            [sys.executable, "-c", "print('ok')"],
+            input=BIG_INPUT,
+            level=0,
+            timeout=60,
         )
         return result, _pending_tasks()
 
     result, pending = asyncio.run(main())
     assert result.returncode == 0
     assert result.stdout.strip() == b"ok"
-    # The stdin task ran to the end before async_run returned.
-    assert slow_stdin["finished"] == 1
     assert pending == []
 
 
-def test_timeout_kills_and_leaves_no_task(slow_stdin):
-    slow_stdin["delay"] = 30.0
-    script = "import time; time.sleep(60)"
-
-    async def main():
-        with pytest.raises(TimeoutError, match="forcefully killed"):
-            await async_run(
-                [sys.executable, "-c", script], input=b"data", level=0, timeout=1
-            )
-        return _pending_tasks()
-
-    assert asyncio.run(main()) == []
+def test_text_input_and_output():
+    script = "import sys; print(sys.stdin.read().upper())"
+    result = asyncio.run(
+        async_run(
+            [sys.executable, "-c", script], input="café", text=True, level=0
+        )
+    )
+    assert result.stdout.strip() == "CAFÉ"
+    assert result.stderr == ""
 
 
 @pytest.fixture
@@ -133,9 +99,7 @@ def test_cancel_kills_running_script(spawned, input):
         with pytest.raises(asyncio.CancelledError):
             await task
         # Killed and waited for before the cancel reached the caller.
-        returncode, pending = process.returncode, _pending_tasks()
-        await asyncio.sleep(0.2)  # let the pipe transports close
-        return returncode, pending
+        return process.returncode, _pending_tasks()
 
     returncode, pending = asyncio.run(main())
     assert returncode is not None
@@ -153,7 +117,6 @@ def test_second_cancel_during_cleanup_still_raises(spawned):
         with pytest.raises(asyncio.CancelledError):
             await task
         await asyncio.wait_for(process.wait(), timeout=10)
-        await asyncio.sleep(0.2)  # let the pipe transports close
         return process, _pending_tasks()
 
     process, pending = asyncio.run(main())
@@ -162,11 +125,13 @@ def test_second_cancel_during_cleanup_still_raises(spawned):
     assert pending == []
 
 
-def test_timeout_still_kills_script(spawned):
+@pytest.mark.parametrize("input", [None, b"data"])
+def test_timeout_kills_script(spawned, input):
     async def main():
         with pytest.raises(TimeoutError, match="forcefully killed"):
             await async_run(
                 [sys.executable, "-c", "import time; time.sleep(60)"],
+                input=input,
                 level=0,
                 timeout=1,
             )
@@ -175,6 +140,40 @@ def test_timeout_still_kills_script(spawned):
     process, pending = asyncio.run(main())
     assert process.returncode is not None
     assert pending == []
+
+
+def test_no_timeout():
+    """timeout=None means no time limit, as with asyncio.wait_for."""
+    result = asyncio.run(
+        async_run([sys.executable, "-c", "print('ok')"], level=0, timeout=None)
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"ok"
+
+
+def test_exit_is_not_polled(monkeypatch):
+    """Waiting for the script schedules a fixed number of timers, not one
+    every few milliseconds for as long as it runs."""
+    scheduled = []
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        real_call_at = loop.call_at
+
+        def call_at(when, callback, *args, **kwargs):
+            scheduled.append(callback)
+            return real_call_at(when, callback, *args, **kwargs)
+
+        monkeypatch.setattr(loop, "call_at", call_at)
+        return await async_run(
+            [sys.executable, "-c", "import time; time.sleep(1.5)"],
+            level=0,
+            timeout=60,
+        )
+
+    result = asyncio.run(main())
+    assert result.returncode == 0
+    assert len(scheduled) < 5
 
 
 def test_normal_run_unchanged(spawned):
@@ -186,14 +185,60 @@ def test_normal_run_unchanged(spawned):
     assert spawned[0].returncode == 0
 
 
-# A script that starts a background program, which inherits the script's
-# stdout/stderr and so keeps those pipes open after the script is killed (#389).
+def test_normal_run_captures_full_output():
+    script = (
+        "import sys\n"
+        "sys.stdout.write('o' * 1_000_000)\n"
+        "sys.stderr.write('e' * 500_000)\n"
+    )
+    result = asyncio.run(
+        async_run([sys.executable, "-c", script], level=0, timeout=60)
+    )
+    assert result.returncode == 0
+    assert result.stdout == b"o" * 1_000_000
+    assert result.stderr == b"e" * 500_000
+
+
+def test_check_raises_with_output():
+    script = "import sys; print('out'); print('err', file=sys.stderr); sys.exit(4)"
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        asyncio.run(
+            async_run([sys.executable, "-c", script], level=0, check=True)
+        )
+    assert error.value.returncode == 4
+    assert error.value.output.strip() == b"out"
+    assert error.value.stderr.strip() == b"err"
+
+
+def test_without_capture_output():
+    result = asyncio.run(
+        async_run(
+            [sys.executable, "-c", "pass"], level=0, capture_output=False
+        )
+    )
+    assert result.returncode == 0
+    assert result.stdout == b""
+    assert result.stderr == b""
+
+
+# A program the script starts in the background inherits the script's stdin,
+# stdout and stderr. It used to keep those pipes open, and async_run waited
+# for it (#389, #391).
 BACKGROUND_SLEEP = 20
 PROMPT = 8  # well under BACKGROUND_SLEEP
 
 
+def _kill_background(pid_file):
+    if pid_file.exists() and pid_file.read_text():
+        try:
+            os.kill(int(pid_file.read_text()), signal.SIGTERM)
+        except OSError:
+            pass
+
+
 @pytest.fixture
 def background_script(tmp_path):
+    """A script that starts a background program, then runs for a minute."""
     pid_file = tmp_path / "background.pid"
     script = (
         "import subprocess, sys, time\n"
@@ -203,12 +248,7 @@ def background_script(tmp_path):
         "time.sleep(60)\n"
     )
     yield [sys.executable, "-c", script], pid_file
-    # Don't leave the background program running after the test.
-    if pid_file.exists():
-        try:
-            os.kill(int(pid_file.read_text()), signal.SIGTERM)
-        except OSError:
-            pass
+    _kill_background(pid_file)
 
 
 async def _wait_for_file(path):
@@ -254,52 +294,63 @@ def test_cancel_does_not_wait_for_background_program(background_script):
 
 @pytest.fixture
 def exiting_background_script(tmp_path):
-    """A script that starts a background program, prints, and exits.
-
-    The background program keeps the script's stdout/stderr open (#391).
-    """
+    """A script that writes `size` bytes to stdout, starts a background
+    program, and exits with `returncode` without reading its input."""
     pid_file = tmp_path / "background.pid"
 
-    def make(returncode=0):
+    def make(returncode=0, size=0):
         script = (
             "import subprocess, sys\n"
+            f"sys.stdout.write('o' * {size})\n"
+            "print('script output')\n"
+            "print('script error', file=sys.stderr)\n"
+            "sys.stdout.flush()\n"
             "child = subprocess.Popen([sys.executable, '-c', "
             f"'import time; time.sleep({BACKGROUND_SLEEP})'])\n"
             f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
-            "print('script output')\n"
-            "print('script error', file=sys.stderr)\n"
             f"sys.exit({returncode})\n"
         )
         return [sys.executable, "-c", script]
 
     yield make
-    if pid_file.exists():
-        try:
-            os.kill(int(pid_file.read_text()), signal.SIGTERM)
-        except OSError:
-            pass
+    _kill_background(pid_file)
 
 
 def test_script_exit_returns_despite_background_program(
-    exiting_background_script, caplog
+    exiting_background_script,
 ):
-    log = logging.getLogger("test_async_run_391")
-
     async def main():
         start = time.monotonic()
         result = await async_run(
-            exiting_background_script(3), log=log, level=0, timeout=60
+            exiting_background_script(3), level=0, timeout=60
         )
         return result, time.monotonic() - start, _pending_tasks()
 
-    with caplog.at_level(logging.WARNING, logger=log.name):
-        result, elapsed, pending = asyncio.run(main())
+    result, elapsed, pending = asyncio.run(main())
     assert elapsed < PROMPT
     assert result.returncode == 3
     assert result.stdout.strip() == b"script output"
     assert result.stderr.strip() == b"script error"
-    assert "still running" in caplog.text
     assert pending == []
+
+
+def test_no_wait_after_script_exit(exiting_background_script):
+    """Once the script exits, its result is used at once: there is nothing
+    to wait for, even with a background program holding its output."""
+
+    async def timed(cmd):
+        start = time.monotonic()
+        await async_run(cmd, level=0, timeout=60)
+        return time.monotonic() - start
+
+    async def main():
+        plain = await timed([sys.executable, "-c", "import subprocess"])
+        background = await timed(exiting_background_script())
+        return background - plain
+
+    # Starting the background program takes a few tens of milliseconds;
+    # waiting for the output to close took seconds.
+    assert asyncio.run(main()) < 1
 
 
 def test_script_exit_check_raises_despite_background_program(
@@ -319,204 +370,47 @@ def test_script_exit_check_raises_despite_background_program(
     assert error.output.strip() == b"script output"
 
 
-def test_background_program_output_wait_stays_within_timeout(
-    exiting_background_script, monkeypatch
-):
-    async def main():
-        start = time.monotonic()
-        # A grace period longer than the time left: the wait is cut short.
-        result = await async_run(exiting_background_script(), level=0, timeout=3)
-        return result, time.monotonic() - start
-
-    monkeypatch.setattr(subprocess_module, "OUTPUT_GRACE", 30)
-    result, elapsed = asyncio.run(main())
-    assert result.returncode == 0
-    assert result.stdout.strip() == b"script output"
-    assert elapsed < 3 + 1  # timeout, plus closing the pipes
-
-
-def test_cancel_after_script_exit_closes_pipes(exiting_background_script, spawned):
-    async def main():
-        task = asyncio.create_task(
-            async_run(exiting_background_script(), level=0, timeout=60)
+def test_background_program_does_not_cut_off_output(exiting_background_script):
+    """Everything the script wrote before it exited is returned."""
+    result = asyncio.run(
+        async_run(
+            exiting_background_script(size=1_000_000), level=0, timeout=60
         )
-        while not spawned or spawned[0].returncode is None:
-            await asyncio.sleep(0.01)
-        start = time.monotonic()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        return spawned[0], time.monotonic() - start, _pending_tasks()
-
-    process, elapsed, pending = asyncio.run(main())
-    assert elapsed < PROMPT
-    assert process._transport.is_closing()
-    assert pending == []
+    )
+    assert result.stdout == b"o" * 1_000_000 + b"script output" + os.linesep.encode()
 
 
-# More than a pipe buffer holds, on Windows and Linux: writing it never
-# finishes, because the script exits without reading it and the background
-# program holds the pipe open without reading it either.
-UNREAD_INPUT = b"x" * 1_000_000
-
-
-def _assert_stdin_closed(process):
-    # A graceful close() waits for the unsent input to be written, which never
-    # happens; the pipe must be aborted, dropping that input.
-    assert process.stdin.transport.is_closing()
-    assert process.stdin.transport.get_write_buffer_size() == 0
-
-
-def test_unread_input_does_not_hold_stdin_open(
-    exiting_background_script, spawned, monkeypatch
-):
-    # Without the fix, closing stdin waits the full KILL_WAIT: make that wait
-    # long, so the time check has a wide margin on both sides.
-    monkeypatch.setattr(subprocess_module, "KILL_WAIT", 20)
+def test_unread_input_does_not_hold_up_return(exiting_background_script):
+    """The script exits without reading its input, and the background program
+    holds stdin; the call still returns promptly."""
 
     async def main():
         start = time.monotonic()
         result = await async_run(
-            exiting_background_script(),
-            level=0,
-            timeout=60,
-            input=UNREAD_INPUT,
+            exiting_background_script(), level=0, timeout=60, input=BIG_INPUT
         )
         return result, time.monotonic() - start, _pending_tasks()
 
     result, elapsed, pending = asyncio.run(main())
+    assert elapsed < PROMPT
     assert result.returncode == 0
     assert result.stdout.strip() == b"script output"
-    _assert_stdin_closed(spawned[0])
-    # The output grace period, without KILL_WAIT on top for the stdin pipe.
-    assert elapsed < PROMPT
     assert pending == []
 
 
-def test_cancel_with_unread_input_closes_stdin(
-    exiting_background_script, spawned, monkeypatch
-):
-    monkeypatch.setattr(subprocess_module, "KILL_WAIT", 20)
+def test_kill_wait_is_bounded(monkeypatch):
+    """A killed process that is never reaped doesn't hang async_run."""
+    monkeypatch.setattr(subprocess_module, "KILL_WAIT", 0.5)
 
-    async def main():
-        task = asyncio.create_task(
-            async_run(
-                exiting_background_script(),
-                level=0,
-                timeout=60,
-                input=UNREAD_INPUT,
-            )
-        )
-        while not spawned or spawned[0].returncode is None:
-            await asyncio.sleep(0.01)
-        start = time.monotonic()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        return time.monotonic() - start, _pending_tasks()
+    class Unreaped:
+        returncode = None
 
-    elapsed, pending = asyncio.run(main())
-    _assert_stdin_closed(spawned[0])
-    assert elapsed < PROMPT
-    assert pending == []
+        def kill(self):
+            pass
 
+        async def wait(self):
+            await asyncio.sleep(60)
 
-def test_unread_input_warning_does_not_blame_output(tmp_path, caplog):
-    """Only stdin is held open: the warning says the input was dropped and
-    doesn't claim the output may be cut off, which is complete."""
-    pid_file = tmp_path / "background.pid"
-    script = (
-        "import subprocess, sys\n"
-        "child = subprocess.Popen([sys.executable, '-c', "
-        f"'import time; time.sleep({BACKGROUND_SLEEP})'], "
-        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
-        f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
-        "print('script output')\n"
-    )
-    log = logging.getLogger("test_async_run_stdin_only")
-
-    async def main():
-        return await async_run(
-            [sys.executable, "-c", script],
-            log=log,
-            level=0,
-            timeout=60,
-            input=UNREAD_INPUT,
-        )
-
-    try:
-        with caplog.at_level(logging.WARNING, logger=log.name):
-            result = asyncio.run(main())
-    finally:
-        if pid_file.exists():
-            try:
-                os.kill(int(pid_file.read_text()), signal.SIGTERM)
-            except OSError:
-                pass
-    assert result.returncode == 0
-    assert result.stdout.strip() == b"script output"
-    assert "rest of the input was dropped" in caplog.text
-    assert "output may be cut off" not in caplog.text
-
-
-def test_no_timeout():
-    """timeout=None means no time limit, as with asyncio.wait_for."""
-    result = asyncio.run(
-        async_run([sys.executable, "-c", "print('ok')"], level=0, timeout=None)
-    )
-    assert result.returncode == 0
-    assert result.stdout.strip() == b"ok"
-
-
-def test_exit_is_not_polled(monkeypatch):
-    """Waiting for the script schedules a fixed number of timers, not one
-    every few milliseconds for as long as it runs."""
-    scheduled = []
-
-    async def main():
-        loop = asyncio.get_running_loop()
-        real_call_at = loop.call_at
-
-        def call_at(when, callback, *args, **kwargs):
-            scheduled.append(callback)
-            return real_call_at(when, callback, *args, **kwargs)
-
-        monkeypatch.setattr(loop, "call_at", call_at)
-        return await async_run(
-            [sys.executable, "-c", "import time; time.sleep(1.5)"],
-            level=0,
-            timeout=60,
-        )
-
-    result = asyncio.run(main())
-    assert result.returncode == 0
-    assert len(scheduled) < 5
-
-
-def test_zero_output_grace_keeps_full_output(monkeypatch, caplog):
-    """A script that exits right at the end of the time left (the grace
-    period cut to nothing) still returns all of its output, with no
-    warning, when nothing holds its pipes open."""
-    monkeypatch.setattr(subprocess_module, "OUTPUT_GRACE", 0)
-    script = "import sys; sys.stdout.write('o' * 1_000_000)"
-    log = logging.getLogger("test_async_run_zero_grace")
-    with caplog.at_level(logging.WARNING, logger=log.name):
-        result = asyncio.run(
-            async_run([sys.executable, "-c", script], log=log, level=0, timeout=60)
-        )
-    assert result.stdout == b"o" * 1_000_000
-    assert caplog.text == ""
-
-
-def test_normal_run_captures_full_output():
-    script = (
-        "import sys\n"
-        "sys.stdout.write('o' * 1_000_000)\n"
-        "sys.stderr.write('e' * 500_000)\n"
-    )
-    result = asyncio.run(
-        async_run([sys.executable, "-c", script], level=0, timeout=60)
-    )
-    assert result.returncode == 0
-    assert result.stdout == b"o" * 1_000_000
-    assert result.stderr == b"e" * 500_000
+    start = time.monotonic()
+    asyncio.run(subprocess_module._kill(Unreaped()))
+    assert time.monotonic() - start < 5

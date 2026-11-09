@@ -2,6 +2,8 @@ import subprocess
 import sys
 import logging
 import asyncio
+import contextlib
+import tempfile
 import ofscraper.utils.of_env.of_env as of_env
 
 
@@ -79,62 +81,32 @@ def run(
 
 
 KILL_WAIT = 2  # seconds to wait for a killed process to be reaped
-OUTPUT_GRACE = 2  # seconds to wait for the rest of the output after exit
 
 
 async def _kill(process):
-    """Kill the process if it still runs, and close its pipes without waiting
-    on its children.
-
-    A program the process started in the background can hold its stdout and
-    stderr open. Python 3.11's process.wait() also waits for those pipes to
-    close, so close them ourselves and bound the wait (#389). Close them even
-    when the process has already exited (#391).
-    """
+    """Kill the process if it still runs, and wait a bounded time to reap it."""
     if process.returncode is None:
         try:
             process.kill()
         except ProcessLookupError:
             pass
-    # The background program can hold stdin open without reading it. A
-    # graceful close waits for unsent input to be written, which then never
-    # happens, so drop that input. Only abort with input still unsent:
-    # abort() on a stdin pipe that has already closed raises AttributeError
-    # on Linux.
-    stdin = process.stdin
-    if stdin is not None and stdin.transport.get_write_buffer_size():
-        stdin.transport.abort()
-    process._transport.close()
     try:
         await asyncio.wait_for(process.wait(), timeout=KILL_WAIT)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
 
-def _exit_future(process):
-    """Return a future that is done once the process itself has exited.
+def _write_input(file, data):
+    file.write(data)
+    file.seek(0)
 
-    On Python 3.11, process.wait() also waits for the stdout and stderr pipes
-    to close, which a program the process started in the background can hold
-    open (#391). The protocol's process_exited() is called as soon as the
-    process exits, on every Python version and on uvloop, and returncode is
-    set before that call is scheduled. Call this before awaiting anything
-    after the process starts.
-    """
-    exited = asyncio.get_running_loop().create_future()
-    if process.returncode is not None:
-        exited.set_result(None)
-        return exited
-    protocol = process._protocol
-    process_exited = protocol.process_exited
 
-    def on_exit():
-        process_exited()
-        if not exited.done():
-            exited.set_result(None)
-
-    protocol.process_exited = on_exit
-    return exited
+def _read_output(*files):
+    contents = []
+    for file in files:
+        file.seek(0)
+        contents.append(file.read())
+    return contents
 
 
 async def async_run(
@@ -151,8 +123,13 @@ async def async_run(
 ):
     """
     Asynchronously executes a command without blocking the main event loop.
-    Reads streams natively to avoid 'communicate()' closing stdin prematurely,
-    ensuring stdout is ALWAYS perfectly captured.
+
+    The command's input and output go through temporary files, not pipes. A
+    program the command starts in the background inherits them, and with
+    pipes it kept them open, so we waited for that program long after the
+    command had exited (#389, #391). A file has no reader to wait for: we wait
+    for the command itself, then read everything it wrote. The background
+    program is left running.
     """
     log = log or logging.getLogger("shared")
     cmd_args = list(args[0])
@@ -169,114 +146,41 @@ async def async_run(
     if level is None:
         level = int(of_env.getattr("LOG_SUBPROCESS_LEVEL", "10"))
 
-    if capture_output:
-        kwargs["stdout"] = asyncio.subprocess.PIPE
-        kwargs["stderr"] = asyncio.subprocess.PIPE
+    if text and isinstance(input, str):
+        input = input.encode("utf-8")
 
-    if input is not None:
-        kwargs["stdin"] = asyncio.subprocess.PIPE
-        if text and isinstance(input, str):
-            input = input.encode("utf-8")
-
-    process = await asyncio.create_subprocess_exec(*cmd_args, **kwargs)
-    exited = _exit_future(process)
-
-    # Read into buffers, so output read so far is kept if reading stops early.
-    out_buf = bytearray()
-    err_buf = bytearray()
-
-    async def _read_stream(stream, buf):
-        if stream is None:
-            return
-        while chunk := await stream.read(65536):
-            buf += chunk
-
-    async def _feed_stdin(stream, data):
-        if stream is None or data is None:
-            return
-        try:
-            stream.write(data)
-            await stream.drain()
-        except Exception:
-            pass  # Silently swallow Broken Pipe errors if script ignores stdin
-        finally:
-            try:
-                stream.close()
-            except Exception:
-                pass
-
-    # Keep a reference to every task: asyncio holds tasks only weakly, so an
-    # unreferenced task can be garbage-collected before it finishes.
-    tasks = []
-    try:
-        # 1. Start feeding stdin in the background
-        stdin_task = None
+    with contextlib.ExitStack() as files:
         if input is not None:
-            stdin_task = asyncio.create_task(_feed_stdin(process.stdin, input))
-            tasks.append(stdin_task)
+            kwargs["stdin"] = files.enter_context(tempfile.TemporaryFile())
+            await asyncio.to_thread(_write_input, kwargs["stdin"], input)
+        if capture_output:
+            kwargs["stdout"] = files.enter_context(tempfile.TemporaryFile())
+            kwargs["stderr"] = files.enter_context(tempfile.TemporaryFile())
 
-        # 2. Read stdout and stderr concurrently
-        out_task = asyncio.create_task(_read_stream(process.stdout, out_buf))
-        err_task = asyncio.create_task(_read_stream(process.stderr, err_buf))
-        tasks.extend([out_task, err_task])
-
-        # 3. Wait for the script itself to exit, then for the rest of its
-        # output, both bounded by the timeout. A program the script started
-        # in the background can keep its pipes open after it exits (#391):
-        # wait a short while for the output, then use the script's result.
-        io_tasks = [out_task, err_task] + ([stdin_task] if stdin_task else [])
+        process = await asyncio.create_subprocess_exec(*cmd_args, **kwargs)
         try:
-            async with asyncio.timeout(timeout) as limit:
-                # Shielded: the timeout would otherwise cancel `exited`
-                # itself, and a cancelled future counts as done.
-                await asyncio.shield(exited)
-                grace_end = asyncio.get_running_loop().time() + OUTPUT_GRACE
-                if limit.when() is None or grace_end < limit.when():
-                    limit.reschedule(grace_end)
-                await asyncio.wait(io_tasks)
+            async with asyncio.timeout(timeout):
+                await process.wait()
         except TimeoutError:
-            if not exited.done():
-                # The script is still running: the handler below kills it.
-                raise TimeoutError(
-                    f"Subprocess {name} timed out after {timeout} seconds and was forcefully killed."
-                ) from None
-            if not (out_task.done() and err_task.done()):
-                log.warning(
-                    f"Subprocess {name} exited, but a program it started is still "
-                    "running and holding its output open; its output may be cut off."
-                )
-            elif stdin_task and not stdin_task.done():
-                log.warning(
-                    f"Subprocess {name} exited without reading all of its input, "
-                    "and a program it started is still running and holding its "
-                    "input open; the rest of the input was dropped."
-                )
-            if not all(task.done() for task in io_tasks):
-                await _kill(process)
-                # Closing the pipes ends the reads; take what they had buffered.
-                await asyncio.wait(io_tasks, timeout=KILL_WAIT)
-        for task in io_tasks:
-            if task.done():
-                task.result()  # raise a read error, as before
+            await _kill(process)
+            raise TimeoutError(
+                f"Subprocess {name} timed out after {timeout} seconds and was forcefully killed."
+            ) from None
+        except BaseException:
+            # Cancelled (or failed): don't leave the command running.
+            await _kill(process)
+            raise
 
-    except BaseException:
-        # Timed out, cancelled or failed: don't leave the script running, and
-        # close its pipes even if it has exited (#391).
-        await _kill(process)
-        raise
-    finally:
-        # Leave nothing running: cancel unfinished tasks and wait for them.
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if capture_output:
+            stdout, stderr = await asyncio.to_thread(
+                _read_output, kwargs["stdout"], kwargs["stderr"]
+            )
+        else:
+            stdout = stderr = b""
 
-    stdout = bytes(out_buf)
-    stderr = bytes(err_buf)
     if text:
-        if stdout is not None:
-            stdout = stdout.decode("utf-8", errors="ignore")
-        if stderr is not None:
-            stderr = stderr.decode("utf-8", errors="ignore")
+        stdout = stdout.decode("utf-8", errors="ignore")
+        stderr = stderr.decode("utf-8", errors="ignore")
 
     if check and process.returncode != 0:
         raise subprocess.CalledProcessError(
