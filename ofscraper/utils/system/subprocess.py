@@ -102,6 +102,17 @@ def _write_input(file, data):
     file.seek(0)
 
 
+async def _write_input_async(file, data):
+    writing = asyncio.ensure_future(asyncio.to_thread(_write_input, file, data))
+    try:
+        await asyncio.shield(writing)
+    except asyncio.CancelledError:
+        # Closing the file waits for the thread still writing to it, which
+        # would block the event loop: let the write finish first.
+        await asyncio.wait([writing])
+        raise
+
+
 def _read_output(*files):
     contents = []
     for file in files:
@@ -157,18 +168,21 @@ async def async_run(
         kwargs.update(tree.popen_kwargs())
         if input is not None:
             kwargs["stdin"] = files.enter_context(tempfile.TemporaryFile())
-            await asyncio.to_thread(_write_input, kwargs["stdin"], input)
+            await _write_input_async(kwargs["stdin"], input)
         if capture_output:
             kwargs["stdout"] = files.enter_context(tempfile.TemporaryFile())
             kwargs["stderr"] = files.enter_context(tempfile.TemporaryFile())
 
         process = await asyncio.create_subprocess_exec(*cmd_args, **kwargs)
         try:
-            tree.attach(process.pid)
-        except OSError as error:
+            untracked = tree.attach(process.pid)
+        except BaseException:
+            await _kill(process)
+            raise
+        if untracked:
             log.warning(
                 f"Programs started by subprocess {name} can't be tracked, so "
-                f"they won't be stopped when it exits: {error}"
+                f"they won't be stopped when it exits: {untracked}"
             )
         exited = False
         try:
@@ -186,7 +200,7 @@ async def async_run(
             raise
         finally:
             # Don't leave anything it started running either.
-            if tree.running():
+            if await tree.running():
                 if exited:
                     log.warning(
                         f"Subprocess {name} exited but left programs running; "

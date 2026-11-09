@@ -6,16 +6,19 @@ stops them. ProcessTree puts the command and everything it starts into one
 group the operating system tracks:
 
 - POSIX: a new session, so the command leads its own process group and its
-  children join it. A program that starts its own session (a daemon) leaves
-  the group and isn't stopped.
-- Windows: a Job Object. Children join the job and can't leave it, and the
-  job is closed with KILL_ON_JOB_CLOSE, so its programs are also killed if
-  ofscraper exits without cleaning up. The command is added to the job right
-  after it starts; a program it starts before that isn't tracked, but a
-  script can't start one that quickly.
+  children join it. A program that starts its own session (for example with
+  `setsid`) leaves the group and isn't stopped. Because the command is no
+  longer in the terminal's process group, Ctrl+C doesn't reach it; groups
+  still running when ofscraper exits are killed then (see _kill_at_exit).
+- Windows: a Job Object. The command starts suspended and is resumed once it
+  is in the job, so everything it starts is in the job too (a venv's
+  python.exe starts the real interpreter as a child at once). Programs can't
+  leave the job, and it is created with KILL_ON_JOB_CLOSE, so its programs
+  are also killed when ofscraper exits, however it exits.
 """
 
 import asyncio
+import atexit
 import os
 import signal
 import sys
@@ -24,6 +27,12 @@ import psutil
 
 STOP_WAIT = 2  # seconds a program gets to exit after it is asked to stop
 STOP_POLL = 0.05  # seconds between checks that the programs have exited
+
+# POSIX process groups not yet stopped, to kill if ofscraper exits first
+# (Ctrl+C leaves running tasks unfinished). Only the process that started
+# them kills them: a forked child inherits the set but not the groups.
+_live_groups = set()
+_owner_pid = os.getpid()
 
 
 class ProcessTree:
@@ -37,27 +46,36 @@ class ProcessTree:
 
     def popen_kwargs(self):
         if sys.platform == "win32":
-            return {}
+            return {"creationflags": _CREATE_SUSPENDED}
         return {"start_new_session": True}
 
     def attach(self, pid):
-        if sys.platform == "win32":
-            self._job = _windows_job(pid)
-        else:
-            # With start_new_session the command leads its own process group.
-            self._pgid = pid
+        """Start tracking the command, which was started with popen_kwargs().
 
-    def running(self):
+        Returns None, or the OSError that kept the programs from being
+        tracked; the command runs either way. Raises OSError if the command
+        (started suspended on Windows) couldn't be resumed: kill it then.
+        """
+        if sys.platform == "win32":
+            self._job, error = _windows_attach(pid)
+            return error
+        # With start_new_session the command leads its own process group.
+        self._pgid = pid
+        _live_groups.add(pid)
+        return None
+
+    async def running(self):
         """Whether any program in the tree is still running."""
         if self._job is not None:
             return _windows_job_active(self._job)
-        if self._pgid is not None:
-            # The signal check is cheap and settles the usual case, an empty
-            # group. A program that has exited but hasn't been reaped (a
-            # zombie) stays in the group: in Docker, ofscraper is PID 1 and
-            # inherits orphans it never reaps. So look for a live member.
-            return _signal_group(self._pgid, 0) and _live_member(self._pgid)
-        return False
+        if self._pgid is None or not _signal_group(self._pgid, 0):
+            # The usual case: the group is empty, which the signal settles.
+            return False
+        # A program that exited but wasn't reaped (a zombie) stays in the
+        # group: in Docker, ofscraper is PID 1 and inherits orphans it never
+        # reaps. Look for a live member, off the event loop: it scans every
+        # process.
+        return await asyncio.to_thread(_live_member, self._pgid)
 
     async def stop(self):
         """Stop every program still running in the tree.
@@ -74,7 +92,7 @@ class ProcessTree:
         try:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + STOP_WAIT
-            while self.running() and loop.time() < deadline:
+            while loop.time() < deadline and await self.running():
                 await asyncio.sleep(STOP_POLL)
         finally:
             # Also on a cancel during the wait: don't leave anything running.
@@ -84,6 +102,8 @@ class ProcessTree:
         return self
 
     def __exit__(self, *exc):
+        if self._pgid is not None:
+            _live_groups.discard(self._pgid)
         if self._job is not None:
             _windows_close(self._job)
             self._job = None
@@ -118,17 +138,30 @@ def _live_member(pgid):
     return False
 
 
+@atexit.register
+def _kill_at_exit():
+    if os.getpid() != _owner_pid:
+        return
+    for pgid in list(_live_groups):
+        _signal_group(pgid, signal.SIGKILL)
+    _live_groups.clear()
+
+
+_CREATE_SUSPENDED = 0x00000004
+
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
 
     _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _ntdll = ctypes.WinDLL("ntdll")
 
     _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
     _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
     _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
-    _PROCESS_SET_QUOTA = 0x0100
     _PROCESS_TERMINATE = 0x0001
+    _PROCESS_SET_QUOTA = 0x0100
+    _PROCESS_SUSPEND_RESUME = 0x0800
 
     class _BasicLimit(ctypes.Structure):
         _fields_ = [
@@ -203,13 +236,17 @@ if sys.platform == "win32":
     _kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
     _kernel32.CloseHandle.restype = wintypes.BOOL
     _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    # Resumes every thread of a process started with CREATE_SUSPENDED; the
+    # thread handle that ResumeThread needs is closed by subprocess.Popen.
+    _ntdll.NtResumeProcess.restype = ctypes.c_long  # NTSTATUS
+    _ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
 
     def _check(result):
         if not result:
             raise ctypes.WinError(ctypes.get_last_error())
         return result
 
-    def _windows_job(pid):
+    def _new_job(process):
         job = _check(_kernel32.CreateJobObjectW(None, None))
         try:
             info = _ExtendedLimit()
@@ -224,35 +261,53 @@ if sys.platform == "win32":
                     ctypes.sizeof(info),
                 )
             )
-            process = _check(
-                _kernel32.OpenProcess(
-                    _PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid
-                )
-            )
-            try:
-                _check(_kernel32.AssignProcessToJobObject(job, process))
-            finally:
-                _kernel32.CloseHandle(process)
+            _check(_kernel32.AssignProcessToJobObject(job, process))
         except BaseException:
             _kernel32.CloseHandle(job)
             raise
         return job
 
-    def _windows_job_active(job):
-        info = _Accounting()
-        _check(
-            _kernel32.QueryInformationJobObject(
-                job,
-                _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
-                ctypes.byref(info),
-                ctypes.sizeof(info),
-                None,
+    def _windows_attach(pid):
+        """Put the suspended process in a new job, then resume it.
+
+        Returns (job, None), or (None, error) if the job couldn't be set up;
+        the process is resumed either way. Raises OSError if it can't be.
+        """
+        process = _check(
+            _kernel32.OpenProcess(
+                _PROCESS_SET_QUOTA | _PROCESS_TERMINATE | _PROCESS_SUSPEND_RESUME,
+                False,
+                pid,
             )
         )
+        try:
+            try:
+                return _new_job(process), None
+            except OSError as error:
+                return None, error
+        finally:
+            status = _ntdll.NtResumeProcess(process)
+            _kernel32.CloseHandle(process)
+            if status != 0:
+                raise OSError(f"NtResumeProcess failed with status {status:#010x}")
+
+    def _windows_job_active(job):
+        info = _Accounting()
+        if not _kernel32.QueryInformationJobObject(
+            job,
+            _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+            None,
+        ):
+            return True  # unknown: stop() then terminates the job anyway
         return info.ActiveProcesses > 0
 
     def _windows_job_kill(job):
-        _check(_kernel32.TerminateJobObject(job, 1))
+        # Best effort: called during cleanup, where raising would hide the
+        # original error, and closing the job (KILL_ON_JOB_CLOSE) kills its
+        # programs anyway.
+        _kernel32.TerminateJobObject(job, 1)
 
     def _windows_close(job):
         _kernel32.CloseHandle(job)

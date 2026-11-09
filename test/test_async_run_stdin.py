@@ -550,8 +550,140 @@ def test_zombie_does_not_count_as_running():
     try:
         while psutil.Process(child.pid).status() != psutil.STATUS_ZOMBIE:
             time.sleep(0.01)
-        tree = process_tree.ProcessTree()
-        tree.attach(child.pid)
-        assert not tree.running()
+        with process_tree.ProcessTree() as tree:
+            tree.attach(child.pid)
+            assert not asyncio.run(tree.running())
     finally:
         child.wait()
+
+
+# Runs a command through the app's own entry wrapper (run_async.run), as a
+# download does, and writes the pids of the script and its program.
+CTRL_C_WRAPPER = """
+import sys
+sys.argv = sys.argv[:1]
+import ofscraper.__main__  # noqa: F401  (import order, see AGENTS.md)
+from ofscraper.utils.context import run_async
+from ofscraper.utils.system.subprocess import async_run
+
+pid_file = {pid_file!r}
+script = (
+    "import os, subprocess, sys, time\\n"
+    "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\\n"
+    f"open({{pid_file!r}}, 'w').write(f'{{{{os.getpid()}}}} {{{{c.pid}}}}')\\n"
+    "time.sleep(30)\\n"
+)
+
+@run_async.run
+async def main():
+    await async_run([sys.executable, "-c", script], level=0, timeout=60)
+
+main()
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_ctrl_c_stops_script_and_its_programs(tmp_path):
+    """Ctrl+C leaves running tasks unfinished, so async_run's cleanup never
+    runs; the script and its programs are killed when ofscraper exits."""
+    pid_file = tmp_path / "pids"
+    wrapper = tmp_path / "wrapper.py"
+    wrapper.write_text(CTRL_C_WRAPPER.format(pid_file=str(pid_file)))
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "PYTHONPATH": repo}
+    # Its own session, like a terminal's foreground group: Ctrl+C signals it.
+    app = subprocess.Popen(
+        [sys.executable, str(wrapper)],
+        env=env,
+        start_new_session=True,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        for _ in range(200):
+            if pid_file.exists() and len(pid_file.read_text().split()) == 2:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("script did not start")
+        os.killpg(app.pid, signal.SIGINT)
+        app.wait(timeout=30)
+        for pid in pid_file.read_text().split():
+            _assert_gone(int(pid))
+    finally:
+        if app.poll() is None:
+            app.kill()
+            app.wait()
+        if pid_file.exists():
+            for pid in pid_file.read_text().split():
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                except OSError:
+                    pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+def test_running_check_does_not_block_event_loop(monkeypatch):
+    """The scan for live programs runs off the event loop: with many
+    zombies it takes tens of milliseconds, repeated while stopping."""
+
+    def slow_scan(pgid):
+        time.sleep(0.5)
+        return True
+
+    monkeypatch.setattr(process_tree, "_live_member", slow_scan)
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        start_new_session=True,
+    )
+
+    async def main():
+        ticks = 0
+
+        async def tick():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        ticker = asyncio.create_task(tick())
+        with process_tree.ProcessTree() as tree:
+            tree.attach(child.pid)
+            assert await tree.running()
+        ticker.cancel()
+        await asyncio.gather(ticker, return_exceptions=True)
+        return ticks
+
+    try:
+        assert asyncio.run(main()) >= 10
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_cancel_while_writing_input_lets_the_write_finish(monkeypatch):
+    """Closing the input file while a thread still writes to it blocks the
+    event loop (the write holds the file's lock), so a cancel waits for the
+    write first."""
+    closed_during_write = []
+    real_write = subprocess_module._write_input
+
+    def slow_write(file, data):
+        time.sleep(0.5)
+        closed_during_write.append(file.closed)
+        if not file.closed:
+            real_write(file, data)
+
+    monkeypatch.setattr(subprocess_module, "_write_input", slow_write)
+
+    async def main():
+        task = asyncio.create_task(
+            async_run([sys.executable, "-c", "pass"], input=b"data", level=0)
+        )
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return _pending_tasks()
+
+    assert asyncio.run(main()) == []
+    assert closed_during_write == [False]
