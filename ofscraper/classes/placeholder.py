@@ -161,7 +161,7 @@ class databasePlaceholder(basePlaceholder):
         super().__init__()
 
     @basePlaceholder.wrapper
-    def databasePathHelper(self, model_id, model_username):
+    def databasePathHelper(self, model_id, model_username, create=True):
         self._variables.update({"username": model_username})
         self._variables.update({"model_username": model_username})
         self._variables.update({"first_letter": model_username[0].capitalize()})
@@ -180,7 +180,9 @@ class databasePlaceholder(basePlaceholder):
         data_path = pathlib.Path(formatStr, "user_data.db")
         data_path = pathlib.Path(os.path.normpath(data_path))
         self._metadata = data_path
-        self._metadata.parent.mkdir(parents=True, exist_ok=True)
+        # a read-only read passes create=False, so it makes no folder (#373)
+        if create:
+            self._metadata.parent.mkdir(parents=True, exist_ok=True)
         log.trace(f"final database path {data_path}")
         return pathlib.Path(data_path)
 

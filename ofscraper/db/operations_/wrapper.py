@@ -55,6 +55,19 @@ def _read_only_uri(database_path):
     return f"file://{'' if path.startswith('/') else '/'}{path}?mode=ro"
 
 
+def _database_path(kwargs, read_only):
+    """The operation's database: db_path, or the creator's usual path. A
+    read-only read works that out without making the creator's folder
+    (#373); a write makes it, as before."""
+    if kwargs.get("db_path", None):
+        return pathlib.Path(kwargs["db_path"]).resolve()
+    model_id, username = kwargs.get("model_id"), kwargs.get("username")
+    helper = placeholder.databasePlaceholder().databasePathHelper
+    if read_only:
+        return pathlib.Path(helper(model_id, username, create=False)).resolve()
+    return pathlib.Path(helper(model_id, username)).resolve()
+
+
 def _connect(database_path, read_only, **kwargs):
     """Open the database. A caller that only reads passes read_only=True
     (#373): the file is opened read-only, so it isn't created, its journal
@@ -84,12 +97,7 @@ def operation_wrapper_async(func: abc.Callable):
             conn = None
             database_path = None
             try:
-                database_path = pathlib.Path(
-                    kwargs.get("db_path", None)
-                    or placeholder.databasePlaceholder().databasePathHelper(
-                        kwargs.get("model_id"), kwargs.get("username")
-                    )
-                ).resolve()
+                database_path = _database_path(kwargs, read_only)
 
                 conn = _connect(
                     database_path,
@@ -146,12 +154,7 @@ def operation_wrapper(func: abc.Callable):
         db_timeout = of_env.getattr("DATABASE_TIMEOUT")
         read_only = kwargs.get("read_only", False)
         try:
-            database_path = pathlib.Path(
-                kwargs.get("db_path", None)
-                or placeholder.databasePlaceholder().databasePathHelper(
-                    kwargs.get("model_id"), kwargs.get("username")
-                )
-            ).resolve()
+            database_path = _database_path(kwargs, read_only)
 
             # Apply the user-configurable timeout for synchronous calls
             conn = _connect(

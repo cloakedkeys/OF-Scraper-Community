@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import ofscraper.classes.placeholder as placeholder
 import ofscraper.commands.db as db_command
 import ofscraper.db.operations_.media as media_ops
 import ofscraper.db.operations_.wrapper as wrapper
@@ -69,7 +70,7 @@ def digest(path):
 
 def patch_command(monkeypatch, path_for, areas=ALL_AREAS, unmark=False):
     """Settings for `ofscraper db`, and its readers reading
-    path_for(model_id)."""
+    path_for(model_id); with path_for=None they use the usual path."""
     args = SimpleNamespace(
         download_area=areas,
         downloaded=None,
@@ -95,9 +96,12 @@ def patch_command(monkeypatch, path_for, areas=ALL_AREAS, unmark=False):
         db_asc=True,
         db_sort="mediaid",
         export=None,
+        anon=False,
     )
     monkeypatch.setattr(db_command.settings, "get_args", lambda: args)
     monkeypatch.setattr(db_command.settings, "get_settings", lambda: options)
+    if path_for is None:
+        return
     for name in READERS:
         reader = getattr(db_command, name)
         monkeypatch.setattr(
@@ -223,10 +227,11 @@ def run_command(tmp_path, monkeypatch, caplog):
     are tmp_path/<id>.db. Returns the exported rows and the files the
     wrapper tried to open, one entry per try."""
 
-    def run(creators, areas=ALL_AREAS):
-        patch_command(
-            monkeypatch, lambda model_id: tmp_path / f"{model_id}.db", areas
-        )
+    def by_id(model_id):
+        return tmp_path / f"{model_id}.db"
+
+    def run(creators, areas=ALL_AREAS, path_for=by_id):
+        patch_command(monkeypatch, path_for, areas)
         monkeypatch.setattr(
             db_command,
             "manager",
@@ -307,6 +312,64 @@ def test_db_skips_creator_without_database(
         assert sorted(p.name for p in tmp_path.iterdir()) == ["5.db", "6.db"]
     else:
         assert not missing.exists()
+
+
+@pytest.fixture
+def usual_paths(monkeypatch, tmp_path):
+    """The real database path helper, with its config, profile and login
+    pointed at tmp_path: a creator's database is
+    tmp_path/cfg/main_profile/.data/<username>/user_data.db."""
+    # the app's logger gains .trace at startup; tests don't run that setup
+    monkeypatch.setattr(placeholder.log, "trace", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(placeholder.me, "parse_user", lambda: ("1", "me"))
+    monkeypatch.setattr(placeholder.me, "get_id", lambda: 1)
+    monkeypatch.setattr(
+        placeholder.profile_data, "get_active_profile", lambda: "main_profile"
+    )
+    monkeypatch.setattr(
+        placeholder.common_paths, "get_config_home", lambda: tmp_path / "cfg"
+    )
+    monkeypatch.setattr(
+        placeholder.common_paths,
+        "get_save_location",
+        lambda *a, **k: str(tmp_path / "data"),
+    )
+    monkeypatch.setattr(
+        placeholder.data,
+        "get_metadata",
+        lambda *a, **k: "{configpath}/{profile}/.data/{model_username}",
+    )
+    return tmp_path / "cfg" / "main_profile" / ".data"
+
+
+def test_db_makes_no_folder_for_creator_without_database(
+    tmp_path, caplog, run_command, usual_paths
+):
+    # Given two creators at their usual paths, one with no database yet
+    folder = usual_paths / "a creator"
+    folder.mkdir(parents=True)
+    make_db(folder / "user_data.db")
+    before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
+
+    # When ofscraper db runs, working out each path itself
+    exported, _ = run_command(
+        [
+            SimpleNamespace(name="new creator", id=6),
+            SimpleNamespace(name="a creator", id=5),
+        ],
+        path_for=None,
+    )
+
+    # Then the new creator is skipped and gets no folder and no file, and
+    # nothing else on disk changes
+    assert "new creator has no database yet, skipping" in caplog.text
+    assert sorted(row["media_id"] for row in exported) == [1, 2]
+    assert not (usual_paths / "new creator").exists()
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
+
+    # and a write (as a scrape makes) still makes the folder and database
+    asyncio.run(media_ops.create_media_table(model_id=6, username="new creator"))
+    assert journal_mode(usual_paths / "new creator" / "user_data.db") == "wal"
 
 
 def test_db_skips_unreadable_databases(tmp_path, caplog, monkeypatch, run_command):
