@@ -4,6 +4,7 @@ A row with an empty posted_at or created_at shows an empty date, and the date
 filters and sorts don't crash on it. Dated rows come out as before.
 """
 
+import asyncio
 import contextlib
 import csv
 import io
@@ -110,7 +111,14 @@ def run_db(monkeypatch, tmp_path):
         console = Console(file=out, width=400)
         monkeypatch.setattr(db_command.console, "get_console", lambda: console)
 
-        db_command.db()
+        # the command's run() keeps the current loop open; close it after
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            db_command.db()
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
 
         with open(export.with_suffix(".csv"), newline="") as f:
             written = list(csv.DictReader(f))
