@@ -511,6 +511,30 @@ def test_fansly_and_onlyfans_end_to_end(library, fansly_library, stash_server, t
     assert (len(stash.created), len(stash.updates)) == (created, updates)
 
 
+def test_fansly_gallery_is_found_in_any_studio(fansly_library, tmp_path):
+    _, _, files = fansly_library
+    stash = FakeStash()
+    for path, kind in files:
+        stash.add(kind, path)
+    # an OnlyFans gallery the user made, with the same code
+    stash.galleries["of"] = {"id": "of", "title": "mine", "details": "", "date": None, "code": str(MENTION_POST),
+                             "urls": [f"https://onlyfans.com/{MENTION_POST}/someone"], "organized": False,
+                             "studio": None, "performers": [], "tags": []}
+    sync([tmp_path / ".data"], stash, apply=True)
+    assert len(stash.galleries) == 6
+    assert stash.galleries["of"]["title"] == "mine" and stash.galleries["of"]["performers"] == []
+
+    # the user moves every Fansly gallery to their own studio, then runs with another --studio
+    own = stash.entity("studio", "Creator's studio")
+    for key, gallery in stash.galleries.items():
+        if key != "of":
+            gallery["studio"] = {"id": own}
+    report = sync([tmp_path / ".data"], stash, apply=True, studio="Other")
+    assert len(stash.galleries) == 6
+    assert "galleries_created" not in report["totals"]
+    assert all(g["studio"] == {"id": own} for k, g in stash.galleries.items() if k != "of")
+
+
 def test_fansly_existing_values_are_kept(fansly_library, tmp_path):
     _, _, fansly_files = fansly_library
     stash = FakeStash()

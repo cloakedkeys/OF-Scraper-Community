@@ -98,6 +98,7 @@ files: the report then says so in a `hint`, and nothing is created in Stash.
 - The creator's performer is matched by name, which is their username. A
   performer you created yourself under another name gets a second one; merge them
   in Stash if so. The same goes for @mentioned Fansly creators.
-- A Fansly gallery is found again by its code (the post or message ID) within its
-  studio, so changing a gallery's code or studio in Stash makes the next run
+- A Fansly gallery is found again by its code (the post or message ID), in any
+  studio, so you can move it to another studio. A gallery with an OnlyFans link
+  is never taken for a Fansly one. Changing a gallery's code makes the next run
   create a new one.

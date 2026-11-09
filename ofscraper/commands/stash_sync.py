@@ -309,14 +309,19 @@ UPDATE = {
 CREATE_GALLERY = "mutation($input: GalleryCreateInput!) { galleryCreate(input: $input) { id } }"
 
 
-def find_gallery(client, code, studio_id):
-    """The gallery with this code in this studio, or None."""
-    if studio_id is None:
-        return None
-    for gallery in client.call(FIND_GALLERY, {"code": code})["findGalleries"]["galleries"]:
-        if gallery.get("code") == code and (gallery.get("studio") or {}).get("id") == studio_id:
-            return gallery
-    return None
+def find_gallery(client, code, url=None):
+    """The Fansly gallery with this code (a post or message ID), in any studio, or None.
+
+    The user may move a gallery to another studio, or run with another
+    --studio, so the studio isn't checked. Fansly IDs are 18-digit snowflakes,
+    unlike OnlyFans' much shorter ones, and a gallery with an OnlyFans link is
+    skipped all the same. One with this post's link is preferred.
+    """
+    found = [
+        g for g in client.call(FIND_GALLERY, {"code": code})["findGalleries"]["galleries"]
+        if g.get("code") == code and not any("onlyfans.com" in (u or "").lower() for u in g.get("urls") or [])
+    ]
+    return next((g for g in found if url and url in (g.get("urls") or [])), found[0] if found else None)
 
 
 def find_item(client, kind, path):
@@ -499,13 +504,13 @@ def sync(
 
     def gallery_id(site, prefix, creator_id, meta, counts):
         """Find, fill in or create the gallery for one post or message."""
-        key = (studio or SITES[site]["studio"], meta["code"])
+        key = (site, meta["code"])
         if key in galleries:
             return galleries[key]
         sid = studio_id(site)
         people = [creator_id] + [performer_id(site, m) for m in meta["mentions"]]
         tag_ids = fansly_tags(meta, meta["sources"], prefix)
-        existing = find_gallery(client, meta["code"], sid)
+        existing = find_gallery(client, meta["code"], meta.get("url"))
         if existing:
             changes = plan(existing, meta, people, sid, tag_ids, organized)
             if changes:
