@@ -1,13 +1,17 @@
 """`ofscraper db` on media rows with no date (#366).
 
 A row with an empty posted_at or created_at shows an empty date, and the date
-filters and sorts don't crash on it. Dated rows come out as before.
+filters and sorts don't crash on it. Dated rows come out as before. Also: the
+export with a date format arrow can't read back, and the printed table's
+column order (#368).
 """
 
 import asyncio
 import contextlib
 import csv
+import inspect
 import io
+import re
 import sqlite3
 from types import SimpleNamespace
 
@@ -19,16 +23,26 @@ import ofscraper.commands.db as db_command
 import ofscraper.db.operations_.media as media_ops
 
 ALL_AREAS = ["Timeline", "Pinned", "Archived", "Messages", "Streams", "Highlights", "Stories"]
+READERS = [
+    "get_all_medias",
+    "get_timeline_media",
+    "get_archived_media",
+    "get_messages_media",
+    "get_streams_media",
+    "get_pinned_media",
+    "get_highlights_media",
+    "get_stories_media",
+]
 
 
-def media_row(media_id, posted_at, created_at):
+def media_row(media_id, posted_at, created_at, api_type="timeline"):
     return {
         "media_id": media_id,
         "post_id": 100 + media_id,
         "link": "https://example.invalid/a.jpg",
         "filename": f"{media_id}.jpg",
         "size": 2048,
-        "api_type": "timeline",
+        "api_type": api_type,
         "media_type": "Images",
         "downloaded": 1,
         "created_at": created_at,
@@ -59,12 +73,12 @@ def make_db(path, rows):
 def run_db(monkeypatch, tmp_path):
     """Run the `ofscraper db` command on one database; returns (csv rows, table text)."""
 
-    def run(rows, **options):
+    def run(rows, areas=ALL_AREAS, **options):
         path = tmp_path / "user_data.db"
         make_db(path, rows)
         export = tmp_path / "out"
         args = SimpleNamespace(
-            download_area=ALL_AREAS,
+            download_area=areas,
             downloaded=None,
             protected=False,
             normal=False,
@@ -93,12 +107,14 @@ def run_db(monkeypatch, tmp_path):
         monkeypatch.setattr(db_command.settings, "get_args", lambda: args)
         monkeypatch.setattr(db_command.settings, "get_settings", lambda: settings)
 
-        real = media_ops.get_all_medias
+        # the real readers, on this database
+        for name in READERS:
 
-        async def get_all_medias(**kwargs):
-            return await real(**kwargs, db_path=path)
+            async def reader(real=getattr(media_ops, name), **kwargs):
+                result = real(**kwargs, db_path=path)
+                return await result if inspect.isawaitable(result) else result
 
-        monkeypatch.setattr(db_command, "get_all_medias", get_all_medias)
+            monkeypatch.setattr(db_command, name, reader)
         model = SimpleNamespace(name="a creator", id=5)
         model_manager = SimpleNamespace(all_subs=[model], sync_models=lambda **kwargs: None)
         monkeypatch.setattr(
@@ -190,3 +206,72 @@ def test_date_filters_with_empty_dates(run_db, option, value, expected):
 def test_date_sorts_with_empty_dates(run_db, sort, asc, expected):
     written, _ = run_db(ROWS, db_sort=sort, db_asc=asc)
     assert [int(r["media_id"]) for r in written] == expected
+
+
+def area_rows(api_type):
+    return [
+        media_row(1, "2024-01-02T10:00:00", "2024-01-01T10:00:00", api_type),
+        media_row(2, None, "2024-02-01T10:00:00", api_type),
+        media_row(3, "2024-03-02T10:00:00", "", api_type),
+        media_row(4, None, None, api_type),
+        media_row(5, "", "", api_type),
+    ]
+
+
+@pytest.mark.parametrize("area,api_type", [("Timeline", "timeline"), ("Messages", "messages")])
+def test_one_area_empty_dates_show_empty(run_db, area, api_type):
+    # Given rows with missing dates, when ofscraper db runs on one area
+    written, table = run_db(area_rows(api_type), areas=[area])
+
+    # Then a row with neither date shows empty dates, not 1970; a row with no
+    # posted date still shows its created date as posted, as before
+    assert dates(written) == [
+        (1, "2024-01-02 10:00:00", "2024-01-01 10:00:00"),
+        (2, "2024-02-01 10:00:00", "2024-02-01 10:00:00"),
+        (3, "2024-03-02 10:00:00", ""),
+        (4, "", ""),
+        (5, "", ""),
+    ]
+    assert "1970" not in table
+
+
+@pytest.mark.parametrize(
+    "options,expected",
+    [
+        ({"db_sort": "posted", "db_asc": True}, [4, 5, 1, 2, 3]),
+        ({"db_sort": "posted", "db_asc": False}, [3, 2, 1, 4, 5]),
+        ({"posted_before": arrow.get("2024-01-15")}, [1, 4, 5]),
+        ({"posted_after": arrow.get("2024-01-15")}, [2, 3]),
+    ],
+)
+def test_one_area_date_sorts_and_filters(run_db, options, expected):
+    written, _ = run_db(area_rows("timeline"), areas=["Timeline"], **options)
+    assert [int(r["media_id"]) for r in written] == expected
+
+
+def test_export_with_custom_date_format(run_db, monkeypatch):
+    # Given a date format arrow can't read back
+    real = db_command.of_env.getattr
+
+    def getattr_(key, *args, **kwargs):
+        if key == "API_DATE_FORMAT":
+            return "DD/MM/YYYY HH:mm"
+        return real(key, *args, **kwargs)
+
+    monkeypatch.setattr(db_command.of_env, "getattr", getattr_)
+
+    # When ofscraper db --export runs, the dates use that format
+    written, _ = run_db(ROWS)
+    assert dates(written) == [
+        (1, "02/01/2024 10:00", "01/01/2024 10:00"),
+        (2, "", "01/02/2024 10:00"),
+        (3, "02/03/2024 10:00", ""),
+    ]
+
+
+def test_table_columns_follow_the_export(run_db):
+    # The printed table's columns are in the same order as the CSV's (#368)
+    written, table = run_db(ROWS)
+    header = next(line for line in table.splitlines() if "media_id" in line)
+    columns = [cell.strip() for cell in re.split("[┃│]", header) if cell.strip()]
+    assert columns == list(written[0])
