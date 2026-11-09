@@ -387,6 +387,38 @@ def test_file_the_script_keeps_downloads_as_before(env, monkeypatch, chunked):
     assert second.todo == [] and second.asked == []
 
 
+def test_same_media_sent_again_asks_the_script_again(env, monkeypatch):
+    # the check table sends the same Media object again after a skip; the
+    # script is asked again then, and the file downloads when it keeps it.
+    # The answers last only for one download call and its retries
+    asked = []
+    answers = iter([True, False])
+
+    async def script(total, ele):
+        asked.append(total)
+        return next(answers)
+
+    monkeypatch.setattr(dm, "skip_download_script", script)
+
+    async def go():
+        async with Server() as srv:
+            async with sessionManager(
+                retries=1, wait_min=0, wait_max=0, log=logging.getLogger("test")
+            ) as c:
+                ele = photo(srv.base)
+                first, _ = await run_async(env, [ele], c)
+                second, todo = await run_async(env, [ele], c)
+                return first, second, todo
+
+    first, second, todo = asyncio.run(go())
+    assert first == counts(forced_skipped=1)
+    assert [ele.id for ele in todo] == [7]
+    assert asked == [len(BODY), len(BODY)]
+    assert second == counts(photo_count=1)
+    assert downloaded(env, 7) == 1
+    assert files(env) == [BODY]
+
+
 @pytest.mark.parametrize("answer", [True, SKIP_PERMANENT], ids=["skip", "skip-permanent"])
 def test_script_skip_reaches_action_script_as_skipped(
     env, monkeypatch, action_script, answer
@@ -475,6 +507,47 @@ def test_fansly_stream_size_skip_is_counted_and_downloaded_later(env, fansly, li
     assert downloaded(env, fansly.id) == 1
     assert files(env) == [b"\0" * STREAM_SIZE]
     assert len(fansly.runs) == 2
+
+
+@pytest.mark.parametrize(
+    "answer", [True, SKIP_PERMANENT, False], ids=["skip", "skip-permanent", "keep"]
+)
+def test_fansly_stream_script_answers(env, fansly, monkeypatch, action_script, answer):
+    # a stream the script skips is handled as a normal file is (#351)
+    asked = []
+    answers = iter([answer, False])
+
+    async def script(total, ele):
+        asked.append(total)
+        return next(answers)
+
+    monkeypatch.setattr(dm, "skip_download_script", script)
+    first, todo = run_once(env, [fansly_item()[0]], fansly.session)
+    assert asked == [STREAM_SIZE]
+    (media,) = action_script(todo)
+    assert media["type"] == "video"
+    if not answer:
+        assert first == counts(video_count=1)
+        assert downloaded(env, fansly.id) == 1
+        assert marker(env, fansly.id) is None
+        assert media["download_status"] == "succeeded"
+        return
+    assert first == counts(forced_skipped=1)
+    assert files(env) == []
+    assert media["download_status"] == "skipped"
+    later, again = run_once(env, [fansly_item()[0]], fansly.session)
+    if answer == SKIP_PERMANENT:
+        # saved as done with no file, marked, and not asked about again
+        assert downloaded(env, fansly.id) == 1
+        assert marker(env, fansly.id) == 1
+        assert again == [] and asked == [STREAM_SIZE]
+    else:
+        # not saved: the next run asks again, and it downloads on keep
+        assert [ele.id for ele in again] == [fansly.id]
+        assert asked == [STREAM_SIZE, STREAM_SIZE]
+        assert later == counts(video_count=1)
+        assert downloaded(env, fansly.id) == 1
+        assert files(env) == [b"\0" * STREAM_SIZE]
 
 
 def test_fansly_stream_no_limits_unchanged(env, fansly):

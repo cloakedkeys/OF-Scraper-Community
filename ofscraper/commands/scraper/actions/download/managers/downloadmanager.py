@@ -243,8 +243,9 @@ class DownloadManager:
         """skip_download_script's answer for the file (or a DRM video's
         track) at this size. It's asked once per run: the check on the saved
         size, the one on the reply and those of retries get the answer it
-        gave (#350). The next run's scrape makes a new Media, which asks
-        again."""
+        gave (#350). run.download starts each download call with no
+        answers, so a later run, or the check table sending the item
+        again, asks again."""
         answers = ele.skip_script_answers
         key = (track, total)
         if key not in answers:
