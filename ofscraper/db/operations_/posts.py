@@ -472,7 +472,9 @@ async def rebuild_posts_table(model_id=None, username=None, db_path=None, **kwar
     )
 
 
-async def make_post_table_changes(all_posts, model_id=None, username=None, **kwargs):
+async def make_post_table_changes(
+    all_posts, model_id=None, username=None, from_api=False, **kwargs
+):
     all_posts_data = list(
         map(
             lambda x: posts_.Post(x, model_id, username) if isinstance(x, dict) else x,
@@ -488,10 +490,20 @@ async def make_post_table_changes(all_posts, model_id=None, username=None, **kwa
     if len(new_posts) > 0:
         new_posts = convert.converthelper(new_posts)
         await write_post_table(new_posts, model_id=model_id, username=username)
-    # a post the API returned again isn't deleted; only --metadata updates the rest
-    await unmark_post_as_deleted(
-        [ele.id for ele in curr_posts], model_id=model_id, username=username
-    )
+    # a post the API returned in this run isn't deleted; cached lists (the check
+    # commands) can hold posts deleted since. from_api is True when every post
+    # came from the API, or the ids of those that did. Only --metadata updates
+    # the rest
+    if from_api:
+        await unmark_post_as_deleted(
+            [
+                ele.id
+                for ele in curr_posts
+                if from_api is True or ele.id in from_api
+            ],
+            model_id=model_id,
+            username=username,
+        )
     if settings.get_settings().metadata and len(curr_posts) > 0:
         curr_posts = convert.converthelper(curr_posts)
         await update_posts_table(curr_posts, model_id=model_id, username=username)

@@ -99,8 +99,9 @@ def dump(db, table="posts"):
 
 
 def scan(*items):
+    # as the scan areas call it: everything came from the API in this run
     return posts.make_post_table_changes(
-        list(items), model_id=MODEL_ID, username=USERNAME
+        list(items), model_id=MODEL_ID, username=USERNAME, from_api=True
     )
 
 
@@ -237,7 +238,7 @@ def message(post_id, text, date, price=0):
 
 def scan_messages(*items):
     return messages.make_messages_table_changes(
-        list(items), model_id=MODEL_ID, username=USERNAME
+        list(items), model_id=MODEL_ID, username=USERNAME, from_api=True
     )
 
 

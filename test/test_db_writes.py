@@ -247,8 +247,9 @@ def test_message_seen_again_on_a_normal_run_is_no_longer_flagged_deleted(
             [message("text")], model_id=MODEL_ID, username=USERNAME
         )
         await mark_message_as_deleted([901], model_id=MODEL_ID, username=USERNAME)
+        # the messages scan, which got the message from the API again
         await operations.make_messages_table_changes(
-            [message("text")], model_id=MODEL_ID, username=USERNAME
+            [message("text")], model_id=MODEL_ID, username=USERNAME, from_api=True
         )
         return await get_deleted_messages_ids(model_id=MODEL_ID, username=USERNAME)
 
