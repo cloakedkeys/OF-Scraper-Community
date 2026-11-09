@@ -30,6 +30,26 @@ ALL_AREAS = [
     "Stories",
 ]
 
+# each area's reader, and an api_type it reads
+AREA_READERS = {
+    "Timeline": "get_timeline_media",
+    "Pinned": "get_pinned_media",
+    "Archived": "get_archived_media",
+    "Messages": "get_messages_media",
+    "Streams": "get_streams_media",
+    "Highlights": "get_highlights_media",
+    "Stories": "get_stories_media",
+}
+AREA_API_TYPES = {
+    "Timeline": "timeline",
+    "Pinned": "pinned",
+    "Archived": "archived",
+    "Messages": "messages",
+    "Streams": "streams",
+    "Highlights": "highlights",
+    "Stories": "stories",
+}
+
 # the medias table as released before skip_permanent was added (#357)
 MEDIAS_BEFORE_SKIP_PERMANENT = """
 CREATE TABLE IF NOT EXISTS medias (
@@ -156,9 +176,9 @@ def schema(path):
 def run_db(monkeypatch):
     """Run `ofscraper db` over all areas on one database; returns its rows."""
 
-    def run(path):
+    def run(path, areas=ALL_AREAS):
         args = SimpleNamespace(
-            download_area=ALL_AREAS,
+            download_area=areas,
             downloaded=None,
             protected=False,
             normal=False,
@@ -190,6 +210,13 @@ def run_db(monkeypatch):
             return await real(**kwargs, db_path=path)
 
         monkeypatch.setattr(db_command, "get_all_medias", get_all_medias)
+        for name in AREA_READERS.values():
+            area_reader = getattr(media_ops, name)
+            monkeypatch.setattr(
+                db_command,
+                name,
+                lambda reader=area_reader, **kwargs: reader(**kwargs, db_path=path),
+            )
         manager = db_command.DBManager("a creator", 5)
         # the command's run() keeps the current loop open; close it after
         loop = asyncio.new_event_loop()
@@ -266,6 +293,86 @@ def test_db_up_to_date_gives_same_output(tmp_path, run_db, monkeypatch):
     # same keys in the same order too, as the CSV export's header follows it
     assert [list(row) for row in rows] == [list(row) for row in expected]
     assert rows[0]["skip_permanent"] == 1
+    assert schema(path) == before
+
+
+# one row in each area, for the per-area runs
+AREA_ROWS = [
+    dict(MEDIA_ROWS[0], media_id=i, post_id=200 + i, api_type=api_type)
+    for i, api_type in enumerate(AREA_API_TYPES.values(), start=1)
+]
+
+# the per-area queries' columns before #364
+AREA_COLUMNS_BEFORE = (
+    "media_id,post_id,link,directory,filename,size,api_type,media_type,"
+    "preview,linked,downloaded,created_at,posted_at,hash,model_id,unlocked,duration"
+)
+
+
+@pytest.mark.parametrize("area", ALL_AREAS)
+def test_db_per_area_without_older_optional_columns_shows_rows(tmp_path, run_db, area):
+    # Given a database from before hash, duration and unlocked
+    path = tmp_path / "user_data.db"
+    make_db(path, MEDIAS_BEFORE_HASH, "medias", AREA_ROWS)
+    before = schema(path)
+
+    # When ofscraper db runs over one area
+    rows = run_db(path, [area])
+
+    # Then it shows that area's rows, the missing columns count as not set
+    assert [row["api_type"] for row in rows] == [AREA_API_TYPES[area]]
+    assert rows[0]["filename"] == "a.jpg"
+    assert rows[0]["hash"] is None
+    assert rows[0]["duration"] is None
+    assert rows[0]["unlocked"] is None
+    # and the database's columns don't change
+    assert schema(path) == before
+
+
+def test_db_per_area_without_model_id_shows_rows(tmp_path, run_db):
+    # Given a database from before model_id, which holds one creator's media
+    path = tmp_path / "user_data.db"
+    create = MEDIAS_BEFORE_HASH.replace("    model_id INTEGER,\n", "").replace(
+        "UNIQUE (media_id,model_id,post_id)", "UNIQUE (media_id,post_id)"
+    )
+    make_db(path, create, "medias", AREA_ROWS)
+    before = schema(path)
+
+    rows = run_db(path, ["Timeline", "Messages"])
+
+    assert sorted(row["api_type"] for row in rows) == ["messages", "timeline"]
+    assert all(row["model_id"] is None for row in rows)
+    assert schema(path) == before
+
+
+def test_db_per_area_up_to_date_gives_same_output(tmp_path, run_db, monkeypatch):
+    # Given an up-to-date database, with rows of another creator too
+    path = tmp_path / "user_data.db"
+    other = [dict(row, model_id=6) for row in AREA_ROWS]
+    make_db(path, media_ops.mediaCreate, "medias", AREA_ROWS + other)
+    before = schema(path)
+    areas = ["Timeline", "Messages", "Pinned", "Stories"]
+
+    rows = run_db(path, areas)
+
+    # the output is what the queries before #364 gave
+    def execute_before(cur, query, model_id):
+        cur.execute(
+            query.format(columns=AREA_COLUMNS_BEFORE, model_filter="and model_id=(?)"),
+            [model_id],
+        )
+
+    monkeypatch.setattr(media_ops, "execute_area_media", execute_before)
+    expected = run_db(path, areas)
+    assert rows == expected
+    assert [list(row) for row in rows] == [list(row) for row in expected]
+    assert sorted(row["api_type"] for row in rows) == [
+        "messages",
+        "pinned",
+        "stories",
+        "timeline",
+    ]
+    assert {row["model_id"] for row in rows} == {5}
     assert schema(path) == before
 
 
