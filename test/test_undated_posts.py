@@ -1,13 +1,16 @@
 """Posts and messages with no date don't stop scans or crash the media filters (#369)."""
 
 import asyncio
+import pathlib
 from types import SimpleNamespace
 
 import arrow
 import pytest
 
+import ofscraper.classes.placeholder as placeholder
 import ofscraper.commands.check as check
 import ofscraper.classes.of.media as media_
+import ofscraper.sites.fansly.normalize as normalize
 import ofscraper.classes.of.posts as posts_
 import ofscraper.data.api.messages as messages
 import ofscraper.data.api.timeline as timeline
@@ -146,6 +149,16 @@ def test_timeline_page_with_no_dated_post_is_kept_and_logged(log):
     assert any("no post on this page has a date" in w for w in log.warnings)
 
 
+def test_timeline_empty_date_counts_as_undated(log):
+    empty = {"id": 2, "postedAtPrecise": ""}
+    client = Client([{"list": [post(1, 1), empty, post(3, 2)], "hasMore": False}])
+    ids = collect(
+        timeline.scrape_timeline_posts(client, 1, "u", timestamp=0, is_last_chunk=True)
+    )
+    assert ids == [1, 2, 3]
+    assert any("post 2 has no date" in w for w in log.warnings)
+
+
 def test_timeline_worker_error_is_logged(log):
     client = Client([RuntimeError("boom")])
     assert collect(
@@ -182,6 +195,14 @@ def test_messages_after_cutoff_still_applies_with_undated_message(log):
     # message 1 is before the cutoff, which ends the scan; the undated one stays
     assert ids == [3, 2]
     assert len(client.urls) == 1
+
+
+def test_messages_empty_date_counts_as_undated(log):
+    empty = {"id": 2, "createdAt": "", "postedAt": ""}
+    client = Client([{"list": [message(3, 20), empty, message(1, 18)], "hasMore": False}])
+    ids = collect(messages.scrape_messages(client, 1, "u", is_last_chunk=True))
+    assert ids == [3, 2, 1]
+    assert any("message 2 has no date" in w for w in log.warnings)
 
 
 def test_messages_worker_error_is_logged(log):
@@ -260,6 +281,18 @@ def test_check_table_with_undated_media(monkeypatch):
     assert any("media 20 in post 2 has no date" in w for w in log.warnings)
 
 
+def test_check_table_warns_for_undated_post_with_dated_media(monkeypatch):
+    raw = {"id": 7, "text": "t", "price": 0, "isOpened": True, "responseType": "post"}
+    media = media_.Media(
+        {"id": 70, "type": "photo", "canView": True, "createdAt": "2024-02-01T00:00:00+00:00"},
+        0,
+        posts_.Post(raw, 1, "u"),
+    )
+    rows, log = check_rows(monkeypatch, [media])
+    assert rows[0]["post_date"] == "Probably Deleted"
+    assert any("media 70 in post 7 has no date" in w for w in log.warnings)
+
+
 def test_check_table_dated_order_unchanged(monkeypatch):
     rows, log = check_rows(monkeypatch, [m for m in MIXED if m.post.date])
     assert [row["post_id"] for row in rows] == [1, 3]
@@ -333,3 +366,144 @@ def test_after_unchanged_for_dated_media(after_env):
         asyncio.run(timeline.get_after(1, "u"))
         == arrow.get("2024-05-01T00:00:00.25+00:00").float_timestamp
     )
+
+
+# ---------------------------------------------------------------- Fansly normalize
+
+
+def fansly_response(created=None):
+    item = {
+        "id": 500,
+        "senderId": 9,
+        "content": "hi",
+        "attachments": [{"contentType": normalize.ACCOUNT_MEDIA, "contentId": 600, "pos": 0}],
+    }
+    if created is not None:
+        item["createdAt"] = created
+    account_media = {
+        "id": 600,
+        "access": True,
+        "media": {
+            "id": 700,
+            "mimetype": "image/jpeg",
+            "locations": [{"locationId": "1", "location": "https://example.invalid/a.jpg"}],
+        },
+    }
+    return item, account_media
+
+
+@pytest.fixture
+def fansly_log(monkeypatch):
+    log = Log()
+    monkeypatch.setattr(normalize, "log", log)
+    return log
+
+
+def test_fansly_undated_message_is_kept_and_logged(fansly_log):
+    dated, media = fansly_response(1_700_000_000)
+    undated, _ = fansly_response()
+    undated["id"] = 501
+    found = normalize.messages({"messages": [dated, undated], "accountMedia": [media]})
+    assert [m["id"] for m in found] == [500, 501]
+    assert found[1]["createdAt"] is None
+    assert fansly_log.warnings == ["Fansly: message 501 has no date"]
+
+
+def test_fansly_undated_post_is_logged(fansly_log):
+    post, media = fansly_response()
+    found = normalize.posts({"posts": [post], "accountMedia": [media]})
+    assert [p["id"] for p in found] == [500]
+    assert fansly_log.warnings == ["Fansly: post 500 has no date"]
+
+
+def test_fansly_dated_items_log_nothing(fansly_log):
+    item, media = fansly_response(1_700_000_000)
+    normalize.posts({"posts": [item], "accountMedia": [media]})
+    normalize.messages({"messages": [item], "accountMedia": [media]})
+    assert fansly_log.warnings == []
+
+
+# ---------------------------------------------------------------- file and folder names
+
+
+async def _none():
+    return None
+
+
+@pytest.fixture
+def names_env(monkeypatch, tmp_path):
+    log = Log()
+    log.trace = log.debug
+    monkeypatch.setattr(placeholder, "log", log)
+    monkeypatch.setattr(placeholder.me, "parse_user", lambda: ("1", "me"))
+    monkeypatch.setattr(placeholder.me, "get_id", lambda: 1)
+    monkeypatch.setattr(placeholder.profile_data, "get_active_profile", lambda: "main_profile")
+    monkeypatch.setattr(placeholder.common_paths, "get_config_home", lambda: tmp_path / "cfg")
+    monkeypatch.setattr(
+        placeholder.common_paths, "get_save_location", lambda *a, **k: str(tmp_path / "data")
+    )
+    monkeypatch.setattr(placeholder.config_file, "open_config", lambda: {})
+    monkeypatch.setattr(placeholder.settings, "get_args", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        placeholder.manager,
+        "Manager",
+        SimpleNamespace(current_model_manager=SimpleNamespace(get_model=lambda _u: None)),
+    )
+    monkeypatch.setattr(placeholder, "naming_script", lambda *a, **k: _none())
+    monkeypatch.setattr(placeholder.data, "get_date", lambda *a, **k: "YYYY-MM-DD")
+    monkeypatch.setattr(placeholder.data, "get_dirformat", lambda *a, **k: "{date}")
+    monkeypatch.setattr(placeholder.data, "get_fileformat", lambda *a, **k: "{date}_{post_id}.{ext}")
+    return log
+
+
+def names(item, cls=placeholder.Placeholders):
+    holder = cls(item, "jpg")
+    folder = asyncio.run(holder.getmediadir(create=False))
+    return pathlib.Path(folder).name, asyncio.run(holder.createfilename())
+
+
+def of_media(post_date=None, media_date=None):
+    raw = {"id": 7, "text": "t", "price": 0, "isOpened": True, "responseType": "post"}
+    if post_date:
+        raw["postedAt"] = post_date
+    media = {"id": 70, "type": "photo", "canView": True,
+             "files": {"full": {"url": "https://example.invalid/a.jpg"}}}
+    if media_date:
+        media["createdAt"] = media_date
+    raw["media"] = [media]
+    return posts_.Post(raw, 1, "u", "timeline").all_media[0]
+
+
+def test_names_unchanged_for_dated_post(names_env):
+    item = of_media("2024-05-01T20:00:00+00:00", "2024-04-01T00:00:00+00:00")
+    assert names(item) == ("2024-05-01", "2024-05-01_7.jpg")
+    assert names_env.warnings == []
+
+
+def test_names_use_media_date_when_post_is_undated(names_env):
+    item = of_media(None, "2024-04-01T00:00:00+00:00")
+    assert names(item) == ("2024-04-01", "2024-04-01_7.jpg")
+    assert any("Post 7 (media 70) has no date, using its media date" in w
+               for w in names_env.warnings)
+
+
+def test_names_use_1970_when_nothing_is_dated(names_env):
+    item = of_media()
+    assert names(item) == ("1970-01-01", "1970-01-01_7.jpg")
+    assert any("Post 7 (media 70) has no date, using 1970-01-01" in w
+               for w in names_env.warnings)
+
+
+def test_names_for_undated_fansly_post(names_env, fansly_log):
+    post, media = fansly_response()
+    (raw,) = normalize.posts({"posts": [post], "accountMedia": [media]})
+    item = posts_.Post(raw, 1, "u", "timeline").all_media[0]
+    assert names(item) == ("1970-01-01", "1970-01-01_500.jpg")
+    assert any("Post 500 (media 700) has no date" in w for w in names_env.warnings)
+
+
+def test_text_names_for_undated_post(names_env):
+    raw = {"id": 8, "text": "hello", "price": 0, "isOpened": True, "responseType": "post"}
+    folder, file_name = names(posts_.Post(raw, 1, "u", "timeline"), placeholder.Textholders)
+    assert (folder, file_name) == ("1970-01-01", "1970-01-01_8.jpg")
+    assert any("Post 8 has no date, using 1970-01-01" in w for w in names_env.warnings)

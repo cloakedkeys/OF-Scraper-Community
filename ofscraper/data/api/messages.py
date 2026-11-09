@@ -293,7 +293,7 @@ async def scrape_messages(
                 batch_timestamps = []
                 for x in batch:
                     date = x.get("createdAt") or x.get("postedAt")
-                    if date is None:
+                    if not date:
                         log.warning(f"{API}: message {x.get('id')} has no date")
                         batch_timestamps.append(None)
                     else:

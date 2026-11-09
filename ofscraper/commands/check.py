@@ -895,7 +895,8 @@ async def row_gather(username, model_id):
             sorted_media = list(media)
 
     for count, ele in enumerate(sorted_media):
-        if not ele.date:
+        # the date column shows the post's date
+        if not ele.postdate:
             log.warning(
                 f"Check table: media {ele.id} in post {ele.post_id} has no date"
             )

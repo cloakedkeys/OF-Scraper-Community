@@ -338,7 +338,7 @@ async def scrape_timeline_posts(
                 # an undated post is kept; it doesn't move the page cursor
                 batch_timestamps = []
                 for x in batch:
-                    if x.get("postedAtPrecise") is None:
+                    if x.get("postedAtPrecise") in (None, ""):
                         log.warning(f"{API}: post {x.get('id')} has no date")
                         batch_timestamps.append(None)
                     else:
