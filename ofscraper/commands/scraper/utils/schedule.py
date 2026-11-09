@@ -70,10 +70,12 @@ def set_schedule(*functs, wakeup=None):
                     schedule.run_pending()
                 time.sleep(sleep)
         except Exception as E:
-            # the scheduler carries on (#379)
+            # the scheduler carries on (#379), after its usual wait, so a
+            # repeating error neither spins nor floods the output
             log.warning(f"Daemon scheduler failed: {type(E).__name__}: {E}")
             log.traceback_(E)
             log.traceback_(traceback.format_exc())
+            time.sleep(sleep)
 
 
 def schedule_helper(*functs, wakeup=None):
