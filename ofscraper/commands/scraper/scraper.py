@@ -19,7 +19,7 @@ import ofscraper.utils.paths.paths as paths
 import ofscraper.utils.system.network as network
 from ofscraper.commands.scraper.utils.prepare import prepare
 import ofscraper.utils.console as console
-from ofscraper.commands.utils.command import CommandManager
+from ofscraper.commands.utils.command import CommandManager, log_user_failure
 import ofscraper.utils.actions as actions
 import ofscraper.utils.checkers as checkers
 import ofscraper.managers.manager as manager
@@ -153,7 +153,7 @@ class scraperManager(CommandManager):
                     ACTION_SCRIPTS.get(action)(username, media, posts, action=action)
 
                 except Exception as E:
-                    log.debug(f"Unable to complete {action} for {username}")
+                    log_user_failure(username, E, what=action)
                     log.traceback_(E)
                     log.traceback_(traceback.format_exc())
 
