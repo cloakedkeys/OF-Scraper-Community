@@ -414,14 +414,9 @@ async def post_check_retriver(forced=False):
                         streams_data = oldstreams
                     else:
                         log.info(f"[{user_name}] Fetching fresh data for {streams.API}")
-                        streams_resp = await streams.get_streams_posts(
+                        streams_data = await streams.get_streams_posts(
                             model_id, user_name, c=c
                         )
-                        streams_data = [
-                            post
-                            for streams in streams_resp
-                            for post in streams.get("posts", [])
-                        ]
                         set_check(streams_data, model_id, streams.API)
 
                 await operations.make_post_table_changes(
@@ -433,40 +428,15 @@ async def post_check_retriver(forced=False):
                     model_id=model_id,
                     username=user_name,
                 )
-                all_post_data = []
-                for ele in [
-                    pinned_data,
-                    archived_data,
-                    labels_data,
-                    timeline_data,
-                    streams_data,
-                ]:
-                    if ele == timeline_data:
-
-                        all_post_data.append(
-                            timeline.filter_timeline_post(
-                                list(
-                                    map(
-                                        lambda x: posts_.Post(x, model_id, user_name),
-                                        timeline_data,
-                                    )
-                                )
-                            )
-                        )
-                    else:
-                        all_post_data.append(
-                            map(lambda x: posts_.Post(x, model_id, user_name), ele)
-                        )
-
-                all_post_data = list(
-                    map(
-                        lambda x: posts_.Post(x, model_id, user_name),
-                        pinned_data
-                        + archived_data
-                        + labels_data
-                        + timeline_data
-                        + streams_data,
+                def to_posts(data):
+                    return list(
+                        map(lambda x: posts_.Post(x, model_id, user_name), data)
                     )
+
+                all_post_data = (
+                    to_posts(pinned_data + archived_data + labels_data)
+                    + timeline.filter_timeline_post(to_posts(timeline_data))
+                    + to_posts(streams_data)
                 )
 
                 yield user_name, model_id, all_post_data
@@ -584,7 +554,7 @@ async def message_check_retriver(forced=False):
                     set_check(paid, model_id, paid_.API)
 
                 paid_posts_array = list(
-                    map(lambda x: posts_.Post(x, model_id, user_name), paid)
+                    map(lambda x: posts_.Post(x, model_id, user_name, purchased=True), paid)
                 )
 
                 final_post_array = paid_posts_array + message_posts_array
@@ -648,7 +618,9 @@ async def purchase_check_retriver(forced=False):
                 log.info(f"[{user_name}] Fetching fresh data for {paid_.API}")
                 paid = await paid_.get_paid_posts(user_name, model_id, c=c)
                 set_check(paid, model_id, paid_.API)
-            posts_array = list(map(lambda x: posts_.Post(x, model_id, user_name), paid))
+            posts_array = list(
+                map(lambda x: posts_.Post(x, model_id, user_name, purchased=True), paid)
+            )
             yield user_name, model_id, posts_array
 
 
