@@ -2,11 +2,16 @@
 
 Since #326 the database doesn't record a size-limit or script skip as
 downloaded, so the table's Downloaded column, its stats and its filter don't
-either. These tests send rows through the real process_download_queue and
+either, and a skipped row can be added to the cart again like a failed one.
+The Downloaded cell is redrawn along with the download cell (#358).
+These tests send rows through the real process_download_queue and
 InputApp.update_cell_state with the download faked.
 """
 
+import asyncio
 import queue
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -49,6 +54,18 @@ class _FakeApp:
     update_search_info = table_app.InputApp.update_search_info
     _filter_runner = table_app.InputApp._filter_runner
     action_select_all_undownloaded = table_app.InputApp.action_select_all_undownloaded
+    action_select_page_undownloaded = (
+        table_app.InputApp.action_select_page_undownloaded
+    )
+    action_select_current_page = table_app.InputApp.action_select_current_page
+    action_select_all_filtered = table_app.InputApp.action_select_all_filtered
+    action_select_unique_all_filtered = (
+        table_app.InputApp.action_select_unique_all_filtered
+    )
+    _add_items_to_cart = table_app.InputApp._add_items_to_cart
+    _run_unique_selection = table_app.InputApp._run_unique_selection
+    on_data_table_cell_selected = table_app.InputApp.on_data_table_cell_selected
+    add_to_row_queue = table_app.InputApp.add_to_row_queue
 
     def __init__(self, rows):
         self.table_data = rows
@@ -91,6 +108,57 @@ def _row(index, media_id):
     }
 
 
+def _fake_download(monkeypatch, rows, results):
+    """Fake everything around process_download_queue except the queue and
+    sleep: each media id's download returns the result given for it. Returns
+    a list that gets an entry when the batch has finished."""
+    media = {
+        row["media_id"]: SimpleNamespace(
+            id=row["media_id"],
+            filename=f"file{row['media_id']}.jpg",
+            post=SimpleNamespace(id=row["post_id"]),
+        )
+        for row in rows
+    }
+    collection = SimpleNamespace(find_media_item=lambda mid: media.get(mid))
+    monkeypatch.setitem(check.check_user_dict, "1", {"collection": collection})
+
+    def fake_get_data(row):
+        item = media[int(row["media_id"])]
+        return item, item.post, row["username"], 1
+
+    def fake_process_dicts(username, model_id, medialist, posts):
+        return results[medialist[0].id]
+
+    done = []
+    model_manager = SimpleNamespace(
+        get_model=lambda username: SimpleNamespace(
+            id=1, active=True, expired_string=None
+        ),
+        mark_as_processed=lambda *a, **k: None,
+        clear_scrape_queues=lambda: None,
+    )
+    stats_manager = SimpleNamespace(
+        update_and_print_stats=lambda *a, **k: None,
+        clear_scraper_activity_stats=lambda: None,
+    )
+    monkeypatch.setattr(
+        check.manager,
+        "Manager",
+        SimpleNamespace(
+            current_model_manager=model_manager, stats_manager=stats_manager
+        ),
+    )
+    monkeypatch.setattr(check, "_get_data_from_row", fake_get_data)
+    monkeypatch.setattr(check, "process_dicts", fake_process_dicts)
+    monkeypatch.setattr(check, "data_refill", lambda model_id: None)
+    monkeypatch.setattr(check, "after_download_action_script", lambda *a: None)
+    monkeypatch.setattr(check, "final_action", lambda: done.append(True))
+    monkeypatch.setattr(check.operations, "table_init_create", lambda **k: None)
+    monkeypatch.setattr(check.network, "check_cdm", lambda: True)
+    return done
+
+
 @pytest.fixture
 def run_queue(monkeypatch):
     """Send rows through process_download_queue; each media id's download
@@ -103,26 +171,7 @@ def run_queue(monkeypatch):
             row_queue.put((str(row["index"]), row))
         monkeypatch.setattr(table_app, "row_queue", row_queue)
         monkeypatch.setattr(table_app, "app", app, raising=False)
-
-        media = {
-            row["media_id"]: SimpleNamespace(
-                id=row["media_id"],
-                filename=f"file{row['media_id']}.jpg",
-                post=SimpleNamespace(id=row["post_id"]),
-            )
-            for row in rows
-        }
-        collection = SimpleNamespace(find_media_item=lambda mid: media.get(mid))
-        monkeypatch.setitem(check.check_user_dict, "1", {"collection": collection})
-
-        def fake_get_data(row):
-            item = media[int(row["media_id"])]
-            return item, item.post, row["username"], 1
-
-        def fake_process_dicts(username, model_id, medialist, posts):
-            return results[medialist[0].id]
-
-        done = []
+        done = _fake_download(monkeypatch, rows, results)
 
         def fake_sleep(seconds):
             # The retry after a failure sleeps too; stop only once the batch
@@ -130,32 +179,7 @@ def run_queue(monkeypatch):
             if done:
                 raise _StopLoop
 
-        model_manager = SimpleNamespace(
-            get_model=lambda username: SimpleNamespace(
-                id=1, active=True, expired_string=None
-            ),
-            mark_as_processed=lambda *a, **k: None,
-            clear_scrape_queues=lambda: None,
-        )
-        stats_manager = SimpleNamespace(
-            update_and_print_stats=lambda *a, **k: None,
-            clear_scraper_activity_stats=lambda: None,
-        )
-        monkeypatch.setattr(
-            check.manager,
-            "Manager",
-            SimpleNamespace(
-                current_model_manager=model_manager, stats_manager=stats_manager
-            ),
-        )
-        monkeypatch.setattr(check, "_get_data_from_row", fake_get_data)
-        monkeypatch.setattr(check, "process_dicts", fake_process_dicts)
-        monkeypatch.setattr(check, "data_refill", lambda model_id: None)
-        monkeypatch.setattr(check, "after_download_action_script", lambda *a: None)
-        monkeypatch.setattr(check, "final_action", lambda: done.append(True))
-        monkeypatch.setattr(check.operations, "table_init_create", lambda **k: None)
-        monkeypatch.setattr(check.network, "check_cdm", lambda: True)
-        monkeypatch.setattr(check.time, "sleep", fake_sleep)
+        monkeypatch.setattr(check, "time", SimpleNamespace(sleep=fake_sleep))
 
         with pytest.raises(_StopLoop):
             check.process_download_queue()
@@ -211,11 +235,193 @@ def test_downloaded_false_filter_keeps_a_skipped_item(run_queue):
     assert [r["media_id"] for r in app._filtered_rows] == [1]
 
 
-def test_add_all_new_still_leaves_a_skipped_item_alone(run_queue):
-    # Behaviour kept: "Add All New" adds only rows in [] or [failed], so a
-    # skipped row isn't queued again just because it's no longer downloaded
-    rows = [_row(0, 1), _row(1, 2)]
-    app = run_queue(rows, {1: SIZE_SKIPPED, 2: FAILED})
-    app.action_select_all_undownloaded()
-    assert rows[0]["download_cart"] == "[skipped]"
+@pytest.mark.parametrize(
+    "action",
+    [
+        "action_select_all_undownloaded",
+        "action_select_page_undownloaded",
+        "action_select_current_page",
+        "action_select_all_filtered",
+        "action_select_unique_all_filtered",
+    ],
+)
+def test_add_actions_re_add_a_skipped_item_like_a_failed_one(run_queue, action):
+    rows = [_row(0, 1), _row(1, 2), _row(2, 3)]
+    app = run_queue(rows, {1: SIZE_SKIPPED, 2: FAILED, 3: DOWNLOADED})
+    getattr(app, action)()
+    assert rows[0]["download_cart"] == "[added]"
     assert rows[1]["download_cart"] == "[added]"
+
+
+def test_add_new_still_leaves_a_downloaded_item_alone(run_queue):
+    rows = [_row(0, 1), _row(1, 2)]
+    app = run_queue(rows, {1: SIZE_SKIPPED, 2: DOWNLOADED})
+    app.action_select_all_undownloaded()
+    assert rows[0]["download_cart"] == "[added]"
+    assert rows[1]["download_cart"] == "[downloaded]"
+
+
+class _FakeDataTable:
+    id = "data_table"
+    ordered_columns_keys = ["download_cart"]
+
+    def __init__(self):
+        self.updated = []
+
+    def update_cell_at_coord(self, coord, value):
+        self.updated.append(value.plain)
+
+
+def _click_cart_cell(app, row):
+    table = _FakeDataTable()
+    event = SimpleNamespace(
+        control=table,
+        coordinate=SimpleNamespace(column=0),
+        cell_key=SimpleNamespace(row_key=SimpleNamespace(value=str(row["index"]))),
+    )
+    app.on_data_table_cell_selected(event)
+    return table.updated
+
+
+@pytest.mark.parametrize("result,state", [(SIZE_SKIPPED, "[skipped]"), (FAILED, "[failed]")])
+def test_clicking_a_skipped_or_failed_cell_adds_it_to_the_cart(run_queue, result, state):
+    row = _row(0, 1)
+    app = run_queue([row], {1: result})
+    assert row["download_cart"] == state
+    assert _click_cart_cell(app, row) == ["[added]"]
+    assert row["download_cart"] == "[added]"
+
+
+def test_a_skipped_item_is_sent_again_only_after_it_is_re_added(run_queue):
+    row = _row(0, 1)
+    app = run_queue([row], {1: SIZE_SKIPPED})
+    # The download run doesn't put the skipped row back on the queue
+    assert table_app.row_queue.empty()
+    # Nor does pressing download with nothing in the cart
+    app.add_to_row_queue()
+    assert table_app.row_queue.empty()
+    assert row["download_cart"] == "[skipped]"
+    # Re-adding it and pressing download sends it once
+    _click_cart_cell(app, row)
+    app.add_to_row_queue()
+    assert row["download_cart"] == "[downloading]"
+    assert table_app.row_queue.get_nowait() == ("0", row)
+    assert table_app.row_queue.empty()
+
+
+# --- #358: the Downloaded cell is redrawn with the download cell ---
+
+
+@pytest.mark.parametrize(
+    "result,state,downloaded",
+    [
+        (DOWNLOADED, "[downloaded]", "True"),
+        (SIZE_SKIPPED, "[skipped]", "False"),
+        (FAILED, "[failed]", "False"),
+    ],
+)
+def test_downloaded_cell_is_redrawn_with_the_result(
+    run_queue, result, state, downloaded
+):
+    row = _row(0, 1)
+    app = run_queue([row], {1: result})
+    assert _cell(app, row) == state
+    assert app.table.cells[("0", "downloaded")].plain == downloaded
+
+
+class _AnySettings(SimpleNamespace):
+    def __getattr__(self, name):
+        return None
+
+
+def _full_row(index, media_id):
+    return {
+        "index": index,
+        "number": index,
+        "download_cart": "[]",
+        "username": "a_creator",
+        "downloaded": False,
+        "unlocked": True,
+        "download_type": "normal",
+        "other_posts_with_media": [],
+        "post_media_count": 1,
+        "mediatype": "Images",
+        "post_date": "2024-01-01",
+        "media": 1,
+        "length": "N/A",
+        "responsetype": "Timeline",
+        "price": "Free",
+        "post_id": 100 + media_id,
+        "media_id": media_id,
+        "text": "t",
+    }
+
+
+def test_rendered_downloaded_column_is_right_straight_after_the_run(monkeypatch):
+    """The real InputApp, driven headless: Add Page, Send Downloads, and the
+    real worker thread; the Downloaded cells are read without a redraw."""
+    monkeypatch.setattr(
+        table_app.settings,
+        "get_settings",
+        lambda *a, **k: _AnySettings(db_sort="number", desc=False),
+    )
+    monkeypatch.setattr(
+        table_app.settings,
+        "get_args",
+        lambda *a, **k: SimpleNamespace(text=False, text_only=False),
+    )
+    monkeypatch.setattr(table_app.settings, "update_args", lambda *a, **k: None)
+    rows = [_full_row(1, 11), _full_row(2, 12), _full_row(3, 13)]
+    done = _fake_download(
+        monkeypatch, rows, {11: DOWNLOADED, 12: SIZE_SKIPPED, 13: FAILED}
+    )
+
+    def fake_sleep(seconds):
+        if done:
+            raise _StopLoop
+        time.sleep(0.02)
+
+    monkeypatch.setattr(check, "time", SimpleNamespace(sleep=fake_sleep))
+    monkeypatch.setattr(table_app, "row_queue", queue.Queue())
+
+    def worker():
+        try:
+            check.process_download_queue()
+        except _StopLoop:
+            pass
+
+    async def drive():
+        app = table_app.InputApp()
+        app.table_data = rows
+        app._sortkey = None
+        app._reverse = False
+        monkeypatch.setattr(table_app, "app", app, raising=False)
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+        async with app.run_test(size=(260, 70)) as pilot:
+            await pilot.pause()
+            await pilot.press("a")  # Add Page
+            await pilot.pause()
+            app.query_one("#send_downloads_main").press()
+            for _ in range(200):
+                await pilot.pause(0.05)
+                if done:
+                    break
+            thread.join(5)
+            await pilot.pause()
+            table = app.table
+            return {
+                key: (
+                    table.get_cell(key, "download_cart").plain,
+                    table.get_cell(key, "downloaded").plain,
+                )
+                for key in ("1", "2", "3")
+            }, thread.is_alive()
+
+    rendered, alive = asyncio.run(drive())
+    assert not alive
+    assert rendered == {
+        "1": ("[downloaded]", "True"),
+        "2": ("[skipped]", "False"),
+        "3": ("[failed]", "False"),
+    }
