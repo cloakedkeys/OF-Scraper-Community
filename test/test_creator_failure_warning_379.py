@@ -5,18 +5,21 @@ at the normal --output level nothing said a creator had failed. That's how
 the metadata crash in #376 went unnoticed.
 
 Each test runs the real command loop with two creators, the first of which
-fails, and watches the "shared" logger through handlers set to the levels the
-console uses.
+fails, or the real daemon loop with a failing pass, and watches the "shared"
+logger through handlers set to the levels the console uses. Ctrl+C still
+stops every loop at once.
 """
 
 import asyncio
 import contextlib
 import logging
+import queue
 from types import SimpleNamespace
 
 import pytest
 
 import ofscraper.commands.scraper.scraper as scraper
+import ofscraper.commands.scraper.utils.schedule as daemon_schedule
 import ofscraper.commands.utils.command as command
 import ofscraper.utils.logs.utils.level as level
 
@@ -177,6 +180,106 @@ def test_scraper_action_failure_warns_and_goes_on(logs, monkeypatch):
     )
     assert done == ["second"]
     check_failure_shown(logs, what=" download")
+
+
+def interrupt_first(done):
+    async def action(ele=None, **_):
+        if ele.name == "first":
+            raise KeyboardInterrupt
+        done.append(ele.name)
+
+    return action
+
+
+def test_ctrl_c_still_stops_every_loop(logs, monkeypatch):
+    # Ctrl+C isn't an Exception, so it passes the loops' handlers and stops
+    # the run at once, with no "failed" warning
+    async def posts(ele, c=None):
+        return SimpleNamespace()
+
+    async def gather(c, ele):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(command, "post_media_process", posts)
+    manager = command.CommandManager()
+    users = [creator("first"), creator("second")]
+    data = {n: {"ele": creator(n), "postcollection": None} for n in ("first", "second")}
+    done = []
+    runs = [
+        manager._process_users_normal(users, Session(), interrupt_first(done)),
+        manager._gather_user_first_data(users, Session(), gather),
+        manager._execute_user_first_actions(data, interrupt_first(done)),
+    ]
+    for run in runs:
+        with pytest.raises(KeyboardInterrupt):
+            asyncio.run(run)
+    assert done == []
+    assert logs.normal.records == []
+
+
+class InterruptWhenIdle(queue.Queue):
+    # Ctrl+C while the daemon waits for its next job
+    def get(self, *args, **kwargs):
+        if self.empty():
+            raise KeyboardInterrupt
+        return super().get(*args, **kwargs)
+
+
+def test_daemon_pass_failure_warns_and_goes_on(logs, monkeypatch):
+    runs = []
+
+    def failing_pass():
+        raise ValueError("boom")
+
+    jobs = InterruptWhenIdle()
+    jobs.put(failing_pass)
+    monkeypatch.setattr(scraper, "jobqueue", jobs)
+    monkeypatch.setattr(scraper.exit, "sigterm_as_keyboard_interrupt", lambda: None)
+    monkeypatch.setattr(scraper.checkers, "check_auth", lambda: None)
+    monkeypatch.setattr(
+        scraper, "scraperManager", lambda: SimpleNamespace(runner=lambda: runs.append(1))
+    )
+    monkeypatch.setattr(
+        scraper.settings, "get_settings", lambda: SimpleNamespace(output_level="NORMAL")
+    )
+    monkeypatch.setattr(
+        scraper.manager,
+        "Manager",
+        SimpleNamespace(current_model_manager=SimpleNamespace(sync_models=lambda: None)),
+    )
+    monkeypatch.setattr(scraper.actions, "select_areas", lambda: None)
+    monkeypatch.setattr(scraper, "set_schedule", lambda *args, **kwargs: None)
+
+    with pytest.raises(KeyboardInterrupt):
+        scraper.daemon_process()
+    assert runs == [1]  # the next pass still ran
+    assert jobs.unfinished_tasks == 0
+    warnings = [r.getMessage() for r in logs.normal.records if r.levelno == logging.WARNING]
+    assert "Daemon pass failed: ValueError: boom" in warnings
+    assert not any("Traceback" in m for m in logs.normal.messages())
+    assert any("Traceback" in m for m in logs.traces.messages())
+
+
+def test_scheduler_failure_warns_and_goes_on(logs, monkeypatch):
+    wakeup = daemon_schedule.DaemonWakeup()
+    joins = []
+
+    class Jobs:
+        def join(self):
+            joins.append(1)
+            if len(joins) == 1:
+                raise ValueError("boom")
+            wakeup.stopped = True  # the loop came round again; end the test
+
+    monkeypatch.setattr(daemon_schedule, "jobqueue", Jobs())
+    monkeypatch.setattr(
+        daemon_schedule.settings, "get_settings", lambda: SimpleNamespace(daemon=60)
+    )
+    daemon_schedule.set_schedule(lambda: None, wakeup=wakeup)
+    assert joins == [1, 1]
+    warnings = [r.getMessage() for r in logs.normal.records if r.levelno == logging.WARNING]
+    assert warnings == ["Daemon scheduler failed: ValueError: boom"]
+    assert any("Traceback" in m for m in logs.traces.messages())
 
 
 def test_no_errors_logs_no_warning(logs, monkeypatch):

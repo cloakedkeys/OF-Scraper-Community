@@ -47,8 +47,6 @@ class CommandManager:
                     log_user_failure(ele.name, e)
                     log.traceback_(f"failed with exception: {e}")
                     log.traceback_(traceback.format_exc())
-                    if isinstance(e, KeyboardInterrupt):
-                        raise e
                 finally:
                     progress_updater.activity.update_user(advance=1, visible=True)
 
@@ -72,8 +70,6 @@ class CommandManager:
                     log_user_failure(ele.name, e)
                     log.traceback_(f"failed with exception: {e}")
                     log.traceback_(traceback.format_exc())
-                    if isinstance(e, KeyboardInterrupt):
-                        raise e
                 finally:
                     c.reset_sleep()
                     progress_updater.activity.update_user(advance=1, visible=True)
@@ -102,8 +98,6 @@ class CommandManager:
                 log_user_failure(val["ele"].name, e)
                 log.traceback_(f"failed with exception: {e}")
                 log.traceback_(traceback.format_exc())
-                if isinstance(e, KeyboardInterrupt):
-                    raise e
             finally:
                 progress_updater.activity.update_user(advance=1, visible=True)
         progress_updater.activity.update_overall(advance=1, visible=True)

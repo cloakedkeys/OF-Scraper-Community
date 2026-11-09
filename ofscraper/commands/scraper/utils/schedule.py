@@ -70,6 +70,8 @@ def set_schedule(*functs, wakeup=None):
                     schedule.run_pending()
                 time.sleep(sleep)
         except Exception as E:
+            # the scheduler carries on (#379)
+            log.warning(f"Daemon scheduler failed: {type(E).__name__}: {E}")
             log.traceback_(E)
             log.traceback_(traceback.format_exc())
 

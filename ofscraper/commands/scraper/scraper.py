@@ -238,6 +238,8 @@ def daemon_process():
                 # so end the daemon with the error instead (#286)
                 raise
             except Exception as E:
+                # the daemon carries on with the next pass (#379)
+                log.warning(f"Daemon pass failed: {type(E).__name__}: {E}")
                 log.traceback_(E)
                 log.traceback_(traceback.format_exc())
             finally:
