@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
-from test_fansly_api import DM_CREATOR, DM_CREATOR_ID, FakeSession, both_routes, fansly  # noqa: F401
+from test_fansly_api import DM_CREATOR, DM_CREATOR_ID, FakeSession, both_routes, envelope, fansly, load  # noqa: F401
 
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.data.posts.post as post
@@ -34,6 +34,7 @@ class FakeStash:
             for path in paths:
                 self.add(kind, path)
         self.entities = {"studio": {}, "tag": {}, "performer": {}}
+        self.aliases = {"studio": {}, "tag": {}, "performer": {}}  # id -> aliases
         self.galleries = {}
         self.created = []
         self.updates = []
@@ -87,15 +88,35 @@ class FakeStash:
                 self._apply(item, dict(change))
                 return {f"{kind}Update": {"id": item["id"]}}
         for entity, plural in (("studio", "Studios"), ("tag", "Tags"), ("performer", "Performers")):
+            alias_field = "alias_list" if entity == "performer" else "aliases"
             if f"find{plural}" in query:
-                found = [{"id": i, "name": n} for n, i in self.entities[entity].items() if n == variables["name"]]
+                # like Stash, EQUALS ignores case
+                want = variables["name"].lower()
+                by_alias = "aliases: {" in query
+                found = [
+                    {"id": i, "name": n, alias_field: self.aliases[entity].get(i, [])}
+                    for n, i in self.entities[entity].items()
+                    if (want in [a.lower() for a in self.aliases[entity].get(i, [])] if by_alias else n.lower() == want)
+                ]
                 return {f"find{plural}": {plural.lower(): found}}
             if f"{entity}Create" in query:
+                name = variables["input"]["name"]
+                # like Stash, names are unique ignoring case, and aliases count
+                for n, i in self.entities[entity].items():
+                    if name.lower() in [n.lower()] + [a.lower() for a in self.aliases[entity].get(i, [])]:
+                        raise StashError(f"{entity} with name '{name}' already exists")
                 new = self.next_id()
-                self.entities[entity][variables["input"]["name"]] = new
+                self.entities[entity][name] = new
                 self.created.append((entity, variables["input"]))
                 return {f"{entity}Create": {"id": new}}
         raise AssertionError(f"unexpected query: {query}")
+
+    def entity(self, kind, name, aliases=()):
+        """An entity the user already has in Stash."""
+        new = self.next_id()
+        self.entities[kind][name] = new
+        self.aliases[kind][new] = list(aliases)
+        return new
 
 
 @pytest.fixture
@@ -266,19 +287,49 @@ FRIEND = "samplefriend"
 MENTION_POST = 100000000000000004
 
 
-def mention_routes(path, query):
-    """The Fansly fixtures, with one post mentioning another creator."""
-    data = both_routes(path, query)
-    response = data.get("response")
-    for item in response.get("posts") or [] if isinstance(response, dict) else []:
-        if int(item["id"]) == MENTION_POST:
-            item["content"] += f" with @{FRIEND}"
-    return data
+FIRST_POST = 100000000000000001
+PURCHASE = 100000000000000149  # an item of the messages fixture, bought on its own
+
+
+def fansly_routes(edits=None, purchases=False):
+    """The Fansly fixtures, with one post mentioning another creator.
+
+    edits replaces captions by post or message ID; purchases answers the
+    purchases call with one order.
+    """
+    edits = {MENTION_POST: f"{{}} with @{FRIEND}", **(edits or {})}
+
+    def route(path, query):
+        if purchases and path.startswith("account/media/orders"):
+            account_media = load("messages.json")["response"]["accountMedia"]
+            return envelope({"accountMediaOrders": [{"accountMediaId": str(PURCHASE), "createdAt": 1777913614}],
+                             "accountMedia": account_media})
+        data = both_routes(path, query)
+        response = data.get("response")
+        items = (response.get("posts") or []) + (response.get("messages") or []) if isinstance(response, dict) else []
+        for item in items:
+            if int(item["id"]) in edits:
+                item["content"] = edits[int(item["id"])].format(item["content"])
+        return data
+
+    return route
 
 
 @pytest.fixture
 def fansly_library(fansly, monkeypatch, tmp_path):
-    """A Fansly creator's database written by the real Fansly scrape and download code."""
+    """A Fansly creator's database written by the real Fansly scrape and download code.
+
+    make_fansly builds a variant, with caption edits or a purchase.
+    """
+    return build_fansly(monkeypatch, tmp_path)
+
+
+@pytest.fixture
+def make_fansly(fansly, monkeypatch, tmp_path):
+    return lambda **kwargs: build_fansly(monkeypatch, tmp_path, **kwargs)
+
+
+def build_fansly(monkeypatch, tmp_path, edits=None, purchases=False):
     db = tmp_path / ".data" / "Fansly" / str(DM_CREATOR_ID) / "user_data.db"
     db.parent.mkdir(parents=True)
     monkeypatch.setattr(placeholder.databasePlaceholder, "databasePathHelper", lambda self, mid, name: db)
@@ -286,11 +337,15 @@ def fansly_library(fansly, monkeypatch, tmp_path):
     media_dir = tmp_path / "fansly"
 
     async def scrape():
-        c = FakeSession(mention_routes)
+        c = FakeSession(fansly_routes(edits, purchases))
         await operations.table_init_create(model_id=DM_CREATOR_ID, username=DM_CREATOR)
         timeline, _ = await post.process_timeline_posts(DM_CREATOR_ID, DM_CREATOR, c)
         messages, _ = await post.process_messages(DM_CREATOR_ID, DM_CREATOR, c)
-        media = [m for p in timeline + messages for m in p.all_media]
+        found = timeline + messages
+        if purchases:
+            paid, _ = await post.process_paid_post(DM_CREATOR_ID, DM_CREATOR, c)
+            found += paid
+        media = [m for p in found for m in p.all_media]
         await batch_mediainsert(media, model_id=DM_CREATOR_ID, username=DM_CREATOR, downloaded=False)
         for m in media:
             ext = "mp4" if m.mediatype.lower() == "videos" else "jpg"
@@ -313,7 +368,11 @@ def stash_server():
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            data = json.dumps({"data": stash.call(body["query"], body["variables"])}).encode()
+            try:
+                answer = {"data": stash.call(body["query"], body["variables"])}
+            except StashError as e:
+                answer = {"data": None, "errors": [{"message": str(e)}]}
+            data = json.dumps(answer).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
@@ -453,6 +512,38 @@ def test_fansly_existing_values_are_kept(fansly_library, tmp_path):
     # the empty ones are still filled
     assert named(stash, item)["studio"] == "Fansly"
     assert item["urls"] == [f"https://fansly.com/post/{MENTION_POST}"]
+
+
+def test_names_in_another_case_or_an_alias_are_reused(make_fansly, tmp_path):
+    # one post mentions @Pal, another @pal; the user has "Weekend", a tag
+    # "Studio Shots" with the alias "studio", and the creator in capitals
+    _, _, files = make_fansly(edits={MENTION_POST: "{} @Pal", FIRST_POST: "{} @pal"})
+    stash = FakeStash()
+    for path, kind in files:
+        stash.add(kind, path)
+    weekend = stash.entity("tag", "Weekend")
+    studio_tag = stash.entity("tag", "Studio Shots", aliases=["studio"])
+    creator = stash.entity("performer", DM_CREATOR.upper())
+
+    report = sync([tmp_path / ".data"], stash, apply=True)
+
+    assert report["totals"]["updated"] == len(files)
+    created = {(kind, value["name"].lower()) for kind, value in stash.created if kind != "gallery"}
+    assert not created & {("tag", "weekend"), ("tag", "studio"), ("performer", DM_CREATOR)}
+    assert [name for kind, name in created if name == "pal"] == ["pal"]  # created once
+    item = by_file(stash, "100000000000000026.mp4")
+    assert {"id": weekend} in item["tags"] and {"id": creator} in item["performers"]
+    assert {"id": studio_tag} in by_file(stash, "100000000000000019.mp4")["tags"]
+
+
+def test_onlyfans_performer_in_another_case_is_reused(library):
+    db, media_dir = library
+    stash = FakeStash(scenes=[str(media_dir / "post.mp4")])
+    creator = stash.entity("performer", "Creator")
+    report = sync([db], stash, apply=True)
+    assert report["totals"]["updated"] == 1
+    assert next(iter(stash.items["scene"].values()))["performers"] == [{"id": creator}]
+    assert "performer" not in {kind for kind, _ in stash.created}
 
 
 def test_site_flag_is_read_in_any_case(tmp_path):

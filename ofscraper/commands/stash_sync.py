@@ -318,13 +318,29 @@ def find_or_create(client, entity, name, apply, extra=None):
     In preview mode a missing one isn't created and None is returned.
     """
     plural = {"studio": "Studios", "tag": "Tags", "performer": "Performers"}[entity]
-    query = (
-        f"query($name: String!) {{ find{plural}({entity}_filter: {{name: {{value: $name, modifier: EQUALS}}}}) "
-        f"{{ {plural.lower()} {{ id name }} }} }}"
-    )
-    for found in client.call(query, {"name": name})[f"find{plural}"][plural.lower()]:
-        if found["name"] == name:
-            return found["id"]
+    alias_field = "alias_list" if entity == "performer" else "aliases"
+
+    def lookup(field):
+        query = (
+            f"query($name: String!) {{ find{plural}({entity}_filter: {{{field}: {{value: $name, modifier: EQUALS}}}}) "
+            f"{{ {plural.lower()} {{ id name {alias_field} }} }} }}"
+        )
+        return client.call(query, {"name": name})[f"find{plural}"][plural.lower()]
+
+    # Stash names are unique ignoring case (and a tag's aliases count too), so
+    # an existing one in another case or under an alias is the one to use;
+    # creating it would be refused
+    key = name.lower()
+    found = lookup("name")
+    for match in found:
+        if match["name"] == name:
+            return match["id"]
+    for match in found:
+        if (match.get("name") or "").lower() == key:
+            return match["id"]
+    for match in lookup("aliases"):
+        if key in [(a or "").lower() for a in match.get(alias_field) or []]:
+            return match["id"]
     if not apply:
         return None
     kind = entity[0].upper() + entity[1:]
@@ -437,23 +453,24 @@ def sync(
     performers = {}
     galleries = {}
 
+    # caches are keyed ignoring case, as Stash's names are
     def studio_id(site):
         name = studio or SITES[site]["studio"]
-        if name not in studios:
-            studios[name] = find_or_create(client, "studio", name, apply, {"urls": [SITES[site]["studio_url"]]})
-        return studios[name]
+        if name.lower() not in studios:
+            studios[name.lower()] = find_or_create(client, "studio", name, apply, {"urls": [SITES[site]["studio_url"]]})
+        return studios[name.lower()]
 
     def tag_id(tag):
-        if tag not in tag_cache or tag_cache[tag] is None:
-            tag_cache[tag] = find_or_create(client, "tag", tag, apply)
-        return tag_cache[tag]
+        if tag_cache.get(tag.lower()) is None:
+            tag_cache[tag.lower()] = find_or_create(client, "tag", tag, apply)
+        return tag_cache[tag.lower()]
 
     def performer_id(site, name):
-        if performers.get(name) is None:
-            performers[name] = find_or_create(
+        if performers.get(name.lower()) is None:
+            performers[name.lower()] = find_or_create(
                 client, "performer", name, apply, {"urls": [SITES[site]["creator_url"].format(name)]}
             )
-        return performers[name]
+        return performers[name.lower()]
 
     def fansly_tags(meta, sources, prefix, preview=False):
         if not tags:
