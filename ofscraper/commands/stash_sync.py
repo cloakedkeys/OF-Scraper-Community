@@ -374,21 +374,22 @@ def find_or_create(client, entity, name, apply, extra=None, disambiguation=None)
     for match in aliased:
         if key in [(a or "").lower() for a in match.get(alias_field) or []]:
             return match["id"]
-    if not apply:
-        return None
-    extra = dict(extra or {})
     # Stash's EQUALS is SQL LIKE, so "_" and "%" in a name match any character,
     # and it checks a new performer's or studio's name that way: "pal_one" is
     # refused while "Pal One" exists. A performer can be told apart with a
-    # disambiguation, and is then found again by its exact name; a studio can't.
-    if entity == "performer" and found and disambiguation:
-        extra["disambiguation"] = disambiguation
-    elif entity == "studio" and (found or aliased):
+    # disambiguation, and is then found again by its exact name; a studio can't,
+    # so that's an error in preview too.
+    if entity == "studio" and (found or aliased):
         clash = ", ".join(repr(m["name"]) for m in found + aliased)
         raise StashError(
             f"Stash won't create the studio {name!r}: it reads '_' and '%' in a name as wildcards, "
             f"so the name clashes with {clash}. Use another --studio, or that studio's name."
         )
+    if not apply:
+        return None
+    extra = dict(extra or {})
+    if entity == "performer" and found and disambiguation:
+        extra["disambiguation"] = disambiguation
     kind = entity[0].upper() + entity[1:]
     mutation = f"mutation($input: {kind}CreateInput!) {{ {entity}Create(input: $input) {{ id }} }}"
     return client.call(mutation, {"input": {"name": name, **extra}})[f"{entity}Create"]["id"]
@@ -485,6 +486,14 @@ def sync(
         username, files = read_model(database, site)
         models.append((database, site, username, files))
 
+    studios = {}
+    if studio is not None:
+        # A --studio Stash would refuse stops the run before anything in Stash
+        # is scanned, created or changed; this only reads
+        found = find_or_create(client, "studio", studio, False)
+        if found is not None:
+            studios[studio.lower()] = found
+
     if do_scan and apply:
         folders = sorted(
             {map_path(os.path.commonpath([os.path.dirname(f["path"]) for f in files]), mappings) for _, _, _, files in models if files}
@@ -494,7 +503,6 @@ def sync(
 
     # The studio, performers, tags and galleries are looked up (and created)
     # only once a file is found, so a run that matches nothing leaves Stash unchanged
-    studios = {}
     tag_cache = {}
     performers = {}
     galleries = {}

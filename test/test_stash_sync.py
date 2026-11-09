@@ -50,6 +50,7 @@ class FakeStash:
         self.galleries = {}
         self.created = []
         self.updates = []
+        self.mutations = []  # every mutation sent, refused or not
 
     def add(self, kind, path, **fields):
         item = {"id": self.next_id(), "title": "", "details": "", "date": None, "code": "", "urls": [],
@@ -72,6 +73,8 @@ class FakeStash:
 
     def call(self, query, variables=None):
         variables = variables or {}
+        if query.lstrip().startswith("mutation"):
+            self.mutations.append(query)
         if "findGalleries" in query:
             found = [dict(g) for g in self.galleries.values() if g["code"] == variables["code"]]
             return {"findGalleries": {"galleries": found}}
@@ -755,13 +758,39 @@ def test_onlyfans_creator_with_underscore_gets_its_own_performer(library):
     assert len(stash.created) == before
 
 
-def test_studio_name_stash_would_refuse_is_reported(library):
+@pytest.mark.parametrize("apply", [True, False])
+def test_studio_name_stash_would_refuse_stops_before_any_change(library, fansly_library, stash_server, tmp_path,
+                                                                 capsys, apply):
+    of_db, of_dir = library
+    _, _, fansly_files = fansly_library
+    stash, url = stash_server
+    for path, kind in fansly_files:
+        stash.add(kind, path)
+    stash.add("scene", str(of_dir / "post.mp4"))
+    stash.entity("studio", "My Studio")
+    args = [str(tmp_path / ".data"), "--url", url, "--studio", "My_Studio"] + (["--apply"] if apply else [])
+    assert stash_sync.main(args) == 1
+    assert "wildcards" in capsys.readouterr().err
+    # nothing was created or changed: no performers, tags, galleries or item updates
+    assert stash.mutations == []
+    assert all(not item["performers"] for kind in stash.items.values() for item in kind.values())
+
+
+@pytest.mark.parametrize("studio", ["My Studio", "my studio", "Mine", "My Other Studio"])
+def test_usable_studio_is_set(library, studio):
     db, media_dir = library
     stash = FakeStash(scenes=[str(media_dir / "post.mp4")])
-    stash.entity("studio", "My Studio")
-    with pytest.raises(StashError, match="wildcards"):
-        sync([db], stash, apply=True, studio="My_Studio")
-    assert "studio" not in [kind for kind, _ in stash.created]
+    mine = stash.entity("studio", "My Studio", aliases=["Mine"])
+    report = sync([db], stash, apply=True, studio=studio)
+    assert report["totals"]["updated"] == 1
+    item = next(iter(stash.items["scene"].values()))
+    created = [new for kind, new in stash.created if kind == "studio"]
+    if studio == "My Other Studio":
+        assert [new["name"] for new in created] == [studio]
+        assert item["studio"] == {"id": stash.entities["studio"][studio]}
+    else:
+        assert created == []
+        assert item["studio"] == {"id": mine}
 
 
 def test_onlyfans_performer_in_another_case_is_reused(library):
