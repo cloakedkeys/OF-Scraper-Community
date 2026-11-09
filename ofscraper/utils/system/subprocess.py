@@ -133,17 +133,17 @@ async def _start(cmd_args, kwargs):
     starting = asyncio.ensure_future(
         asyncio.create_subprocess_exec(*cmd_args, **kwargs)
     )
-    try:
-        return await asyncio.shield(starting), False
-    except asyncio.CancelledError:
-        while not starting.done():
-            try:
-                await asyncio.wait([starting])
-            except asyncio.CancelledError:
-                pass  # already cancelling; the caller raises it
-        if starting.cancelled() or starting.exception() is not None:
-            raise
-        return starting.result(), True
+    cancelled = False
+    # asyncio.wait doesn't cancel what it waits for (no shield needed, which
+    # on 3.15 logs a failed start as an unhandled error after a cancel).
+    while not starting.done():
+        try:
+            await asyncio.wait([starting])
+        except asyncio.CancelledError:
+            cancelled = True  # raised once the command is stopped
+    if cancelled and (starting.cancelled() or starting.exception() is not None):
+        raise asyncio.CancelledError
+    return starting.result(), cancelled
 
 
 async def async_run(

@@ -802,3 +802,30 @@ def test_no_signal_to_a_group_that_already_exited(monkeypatch):
         tree.attach(child.pid)
         asyncio.run(tree.stop())
     assert sent == [signal.SIGTERM]
+
+
+def test_cancel_during_failed_start_logs_nothing(monkeypatch):
+    """A cancel during a start that then fails raises CancelledError, and
+    the start's error isn't reported to the event loop as unhandled."""
+
+    async def failing_start(*args, **kwargs):
+        await asyncio.sleep(0.5)
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", failing_start)
+    reported = []
+
+    async def main():
+        asyncio.get_running_loop().set_exception_handler(
+            lambda loop, context: reported.append(context)
+        )
+        task = asyncio.create_task(async_run(["missing"], level=0))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0.1)  # let any report arrive
+        return _pending_tasks()
+
+    assert asyncio.run(main()) == []
+    assert reported == []
