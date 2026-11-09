@@ -51,7 +51,6 @@ class InputApp(App):
         self.table_data = kwargs.pop("table_data", [])
         self._sortkey = None
         self._reverse = False
-        self._download_cart_toggle = False
         self.run()
 
     def compose(self):
