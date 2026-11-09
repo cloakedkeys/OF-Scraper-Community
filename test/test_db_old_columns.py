@@ -191,7 +191,14 @@ def run_db(monkeypatch):
 
         monkeypatch.setattr(db_command, "get_all_medias", get_all_medias)
         manager = db_command.DBManager("a creator", 5)
-        manager.get_wanted_media()
+        # the command's run() keeps the current loop open; close it after
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            manager.get_wanted_media()
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
         return [dict(row) for row in manager.media]
 
     return run
