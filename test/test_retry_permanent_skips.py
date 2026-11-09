@@ -381,9 +381,18 @@ def test_db_command_id_filters_parse_whole_ids():
 
 # values that aren't ids, and values with no id in them: a usage error, never
 # "no filter" (with --unmark-permanent-skips that would un-mark every row).
-# Only ASCII digits are ids: "²" and "１" pass str.isdigit() but int() can't
-# read the first
-BAD_IDS = [",", " ", "", " , ", "abc", "4,x", "²", "4,²", "１"]
+# "²" passes str.isdigit() but int() can't read it; "½" is numeric, not a digit
+BAD_IDS = [",", " ", "", " , ", "abc", "4,x", "²", "4,²", "½", "-4", "+4", "1_000"]
+
+
+@pytest.mark.parametrize("value, ids", [
+    ("١٢٣", {123}),  # Arabic-Indic digits
+    ("１２", {12}),  # full-width digits
+    ("١٢٣,4", {123, 4}),
+])
+def test_db_command_id_filters_take_decimal_digits_of_any_script(value, ids):
+    args = parse_db("--post-id", value, "--media-id", value)
+    assert args.post_id == ids and args.media_id == ids
 
 
 @pytest.mark.parametrize("option", ["--post-id", "--media-id"])
@@ -396,7 +405,7 @@ def test_db_command_id_filters_reject_bad_values(option, value):
 
 
 @pytest.mark.parametrize("option", ["--post-id", "-pd", "--media-id"])
-@pytest.mark.parametrize("value", [",", "", "²"])
+@pytest.mark.parametrize("value", [",", "", "²", "½"])
 def test_unmark_with_a_bad_id_filter_changes_nothing(env, table, option, value):
     import click
 
@@ -406,7 +415,9 @@ def test_unmark_with_a_bad_id_filter_changes_nothing(env, table, option, value):
     assert all_rows(env) == before
 
 
-@pytest.mark.parametrize("value, message", [(",", "no id given"), ("²", "is not an id")])
+@pytest.mark.parametrize("value, message", [
+    (",", "no id given"), ("²", "is not an id"), ("½", "is not an id"),
+])
 def test_bad_id_filter_is_a_usage_error_from_the_command_line(capsys, value, message):
     # run as click runs a command line: a usage error (exit code 2) with the
     # option named, not a traceback

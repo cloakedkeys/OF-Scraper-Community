@@ -5,11 +5,6 @@ from click import BadParameter
 
 from ofscraper.utils.args.parse.group_bundles.db import db_args
 
-# an id is ASCII digits only: str.isdigit() also takes "²" and other digits
-# int() can't read
-ID = re.compile(r"[0-9]+")
-
-
 def parse_ids(value, option):
     """The whole ids in an option's value, as ints: one id, or several split
     by commas or spaces as the main command's --post-id takes them (#363).
@@ -20,7 +15,9 @@ def parse_ids(value, option):
     for part in re.split(r"[,\s]+", str(value).strip()):
         if not part:
             continue
-        if not ID.fullmatch(part):
+        # isdecimal: exactly the digits int() reads, from any script
+        # ("١٢٣" is 123). isdigit() also takes "²", which int() can't read
+        if not part.isdecimal():
             raise BadParameter(f"{part!r} is not an id", param_hint=option)
         ids.add(int(part))
     if not ids:
