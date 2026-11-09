@@ -218,6 +218,20 @@ def test_flag_leaves_real_downloads_and_other_rows_alone(env, monkeypatch):
 # ------------------------------------------------------------- 2. the db command
 
 
+ALL_AREAS = ("Timeline", "Pinned", "Archived", "Messages", "Streams",
+             "Highlights", "Stories")
+
+
+def parse_db(*cli):
+    """The args `ofscraper db <cli>` gives the app, from the real parser."""
+    from ofscraper.utils.args.main import AutoDotDict
+    from ofscraper.utils.args.parse.commands.db import db
+
+    ctx = db.make_context("db", list(cli))
+    params, _ = db.invoke(ctx)
+    return AutoDotDict(params)
+
+
 @pytest.fixture
 def table(env, monkeypatch):
     """`ofscraper db` over the test database: rows of two creators. The
@@ -244,19 +258,14 @@ def table(env, monkeypatch):
         )
         conn.commit()
 
-    args = SimpleNamespace(
-        download_area=["Timeline", "Pinned", "Archived", "Messages", "Streams",
-                       "Highlights", "Stories"],
-        downloaded=None, protected=False, normal=False, unlocked=None,
-        preview=None, post_id=None, media_id=None, unmark_permanent_skips=False,
-    )
+    args = {}
     for name, value in {
         "posted_before": None, "posted_after": None, "created_before": None,
         "created_after": None, "mediatypes": ["Audios", "Videos", "Images"],
         "db_asc": False, "db_sort": None, "export": None, "max_post_count": 0,
     }.items():
         setattr(env.stub, name, value)
-    monkeypatch.setattr(settings, "get_args", lambda *a, **k: args)
+    monkeypatch.setattr(settings, "get_args", lambda *a, **k: args["now"])
     monkeypatch.setattr(db_mod, "time", SimpleNamespace(
         sleep=lambda s: None, strptime=time.strptime))
     shown = []
@@ -265,9 +274,12 @@ def table(env, monkeypatch):
         lambda self: shown.append(sorted({m["media_id"] for m in self.media})),
     )
 
-    def run(model_id=MODEL_ID, **options):
-        for name, value in options.items():
-            setattr(args, name, value)
+    def run(*cli, model_id=MODEL_ID, areas=ALL_AREAS):
+        """`ofscraper db <cli>` for one creator: the options are parsed from
+        the command line as the app parses them. The areas are picked
+        later in the app (select_areas), so they're given here."""
+        args["now"] = parse_db(*cli)
+        args["now"].download_area = list(areas)
         # the command's database reads run on the current loop: one that's
         # closed afterwards
         loop = asyncio.new_event_loop()
@@ -299,7 +311,7 @@ def test_db_command_without_the_option_changes_nothing(env, table):
 def test_db_command_unmarks_only_the_creators_permanent_skips(env, table):
     before = all_rows(env)
     # the creator's permanent skips are shown, then un-marked
-    assert table.run(unmark_permanent_skips=True) == [1, 2, 3]
+    assert table.run("--unmark-permanent-skips") == [1, 2, 3]
     assert marked(env) == [(OTHER_MODEL, 1, 100)]
     for media_id in (1, 2, 3):
         assert set(state(env, media_id)) == {(None, None)}
@@ -309,15 +321,17 @@ def test_db_command_unmarks_only_the_creators_permanent_skips(env, table):
     assert [r for r in after if r in unchanged] == unchanged
 
 
-def test_db_command_post_filter(env, table):
+@pytest.mark.parametrize("cli", [["--post-id", "100"], ["-pd", "100"]])
+def test_db_command_post_filter(env, table, cli):
     # post 100 has media 1 and 2. Media 1's download state is kept on all of
     # its rows, so its row in post 101 is un-marked too
-    assert table.run(unmark_permanent_skips=True, post_id={100}) == [1, 2]
+    assert table.run("--unmark-permanent-skips", *cli) == [1, 2]
     assert marked(env) == [(MODEL_ID, 3, 102), (OTHER_MODEL, 1, 100)]
 
 
-def test_db_command_media_filter(env, table):
-    assert table.run(unmark_permanent_skips=True, media_id={3, 4, 5, 6}) == [3]
+@pytest.mark.parametrize("ids", ["3,4,5,6", "3, 4 5,6"])
+def test_db_command_media_filter(env, table, ids):
+    assert table.run("--unmark-permanent-skips", "--media-id", ids) == [3]
     assert marked(env) == [
         (MODEL_ID, 1, 100), (MODEL_ID, 1, 101), (MODEL_ID, 2, 100),
         (OTHER_MODEL, 1, 100),
@@ -332,8 +346,44 @@ def test_db_command_on_a_database_from_before_the_column(env, table):
         conn.commit()
     before = all_rows(env)
     # one area: reading all of them at once needs the column already
-    assert table.run(unmark_permanent_skips=True, download_area=["Timeline"]) == []
+    assert table.run("--unmark-permanent-skips", areas=["Timeline"]) == []
     assert all_rows(env) == before
+
+
+# the id filters of plain `ofscraper db` (#363): each value is a whole id, not
+# its characters, compared with the stored numbers
+
+
+@pytest.mark.parametrize("cli, shown", [
+    (["--post-id", "102"], [3, 4, 5, 6]),
+    (["--post-id", "101"], [1]),
+    (["--post-id", "100,102"], [1, 2, 3, 4, 5, 6]),
+    (["--media-id", "4"], [4]),
+    (["--media-id", "1,6"], [1, 6]),
+    (["--post-id", "102", "--media-id", "6"], [6]),
+    # "10" isn't post 100 or 101, though its characters are in them
+    (["--post-id", "10"], []),
+])
+def test_db_command_id_filters(env, table, cli, shown):
+    before = all_rows(env)
+    assert table.run(*cli) == shown
+    assert all_rows(env) == before
+
+
+def test_db_command_id_filters_parse_whole_ids():
+    args = parse_db("--post-id", "123", "--media-id", "45, 46")
+    assert args.post_id == {123}
+    assert args.media_id == {45, 46}
+    args = parse_db()
+    assert not args.post_id and not args.media_id
+
+
+@pytest.mark.parametrize("cli", [["--post-id", "abc"], ["--media-id", "4,x"]])
+def test_db_command_id_filters_reject_non_ids(cli):
+    import click
+
+    with pytest.raises(click.BadParameter):
+        parse_db(*cli)
 
 
 def test_after_the_db_command_the_next_run_asks_again(env, monkeypatch):
