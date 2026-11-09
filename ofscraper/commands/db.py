@@ -94,30 +94,39 @@ class DBManager:
             )
         ):
             # All conditions are true, so proceed with your logic
-            self.media = await get_all_medias(model_id=model_id, username=username)
+            self.media = await get_all_medias(
+                model_id=model_id, username=username, read_only=True
+            )
         else:
+            # read_only: the db command doesn't change the database (#373)
             if "Timeline" in args.download_area:
                 timeline = await get_timeline_media(
-                    model_id=model_id, username=username
+                    model_id=model_id, username=username, read_only=True
                 )
             if "Pinned" in args.download_area:
-                pinned = await get_pinned_media(model_id=model_id, username=username)
+                pinned = await get_pinned_media(
+                    model_id=model_id, username=username, read_only=True
+                )
             if "Archived" in args.download_area:
                 archived = await get_archived_media(
-                    model_id=model_id, username=username
+                    model_id=model_id, username=username, read_only=True
                 )
             if "Messages" in args.download_area:
                 messages = await get_messages_media(
-                    model_id=model_id, username=username
+                    model_id=model_id, username=username, read_only=True
                 )
             if "Streams" in args.download_area:
-                streams = await get_streams_media(model_id=model_id, username=username)
+                streams = await get_streams_media(
+                    model_id=model_id, username=username, read_only=True
+                )
             if "Highlights" in args.download_area:
                 highlights = await get_highlights_media(
-                    model_id=model_id, username=username
+                    model_id=model_id, username=username, read_only=True
                 )
             if "Stories" in args.download_area:
-                stories = await get_stories_media(model_id=model_id, username=username)
+                stories = await get_stories_media(
+                    model_id=model_id, username=username, read_only=True
+                )
             self.media = (
                 timeline + messages + archived + streams + pinned + stories + highlights
             )
@@ -223,7 +232,7 @@ class DBManager:
         # only the permanent skips are un-marked (#354)
         if unmarking():
             skipped = get_permanent_skip_media_ids(
-                model_id=self.model_id, username=self.username
+                model_id=self.model_id, username=self.username, read_only=True
             )
             medias = [media for media in medias if media["media_id"] in skipped]
         self.media = medias
