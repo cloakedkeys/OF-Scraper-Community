@@ -8,10 +8,7 @@ log = logging.getLogger("shared")
 
 
 class DataTableExtended(DataTable):
-    #cell modification and retrieval
-    def get_row_dict(self,row_key):
-        return {key:value for key,value in zip(self.ordered_columns_keys,map(lambda x:x.plain if isinstance(x,Text) else x,self.get_row(row_key)))}
-
+    #cell modification
     def update_cell_at_coord(self, coords, value):
         with mutex:
             value=value if isinstance(value,Text) else Text(value)
@@ -32,22 +29,10 @@ class DataTableExtended(DataTable):
                 except Exception as E:
                     log.debug("Row was probably removed")
                     log.debug(E)
-    def get_matching_rows(self,col_name,col_value):
-        order_row_keys=list(self.ordered_row_keys)
-        out={}
-        for key in order_row_keys:
-            row_dict=self.get_row_dict(key)
-            if row_dict[col_name] == col_value:
-                out[key]=row_dict
-        return out
-    
+
     @property
     def ordered_columns_keys(self):
         return list(map(lambda x:x.key.value,self.ordered_columns))
-    
-    @property
-    def ordered_row_keys(self):
-        return list(map(lambda x:x.key.value,self.ordered_rows))
 
         
 
