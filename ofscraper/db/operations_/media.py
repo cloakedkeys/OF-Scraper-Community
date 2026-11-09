@@ -21,6 +21,7 @@ from rich.console import Console
 
 import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.utils.rebuild as rebuild
+import ofscraper.db.utils.columns as db_columns
 from ofscraper.db.operations_.profile import get_single_model_via_profile
 from ofscraper.utils.context.run_async import run
 
@@ -52,31 +53,28 @@ CREATE TABLE IF NOT EXISTS medias (
     UNIQUE (media_id,model_id,post_id)
 );"""
 
-mediaSelectTransition = """
-SELECT  media_id,post_id,link,directory,filename,size,api_type,
-media_type,preview,linked,downloaded,created_at,unlocked,
-CASE WHEN EXISTS (SELECT 1 FROM pragma_table_info('medias') WHERE name = 'model_id')
-            THEN model_id
-            ELSE NULL
-END AS model_id,
-CASE WHEN EXISTS (SELECT 1 FROM pragma_table_info('medias') WHERE name = 'posted_at')
-            THEN posted_at
-            ELSE NULL
-END AS posted_at,
-CASE WHEN EXISTS (SELECT 1 FROM pragma_table_info('medias') WHERE name = 'hash')
-            THEN hash
-            ELSE NULL
-END AS hash,
-CASE WHEN EXISTS (SELECT 1 FROM pragma_table_info('medias') WHERE name = 'duration')
-            THEN duration
-            ELSE NULL
-END AS duration,
-CASE WHEN EXISTS (SELECT 1 FROM pragma_table_info('medias') WHERE name = 'skip_permanent')
-            THEN skip_permanent
-            ELSE NULL
-END AS skip_permanent
-FROM medias;
-"""
+# columns a later version added are (name, stand-in when missing): see
+# db_columns.select_all
+mediaSelectTransition = [
+    "media_id",
+    "post_id",
+    "link",
+    "directory",
+    "filename",
+    "size",
+    "api_type",
+    "media_type",
+    "preview",
+    "linked",
+    "downloaded",
+    "created_at",
+    ("unlocked", "NULL"),
+    ("model_id", "NULL"),
+    ("posted_at", "NULL"),
+    ("hash", "NULL"),
+    ("duration", "NULL"),
+    ("skip_permanent", "NULL"),
+]
 
 mediaUpdateAPI = """Update 'medias'
 SET
@@ -611,7 +609,7 @@ def get_all_medias_transition(
     model_id=None, username=None, conn=None, database_model=None, **kwargs
 ) -> list:
     with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(mediaSelectTransition)
+        cur.execute(db_columns.select_all(cur, "medias", mediaSelectTransition))
         data = [dict(row) for row in cur.fetchall()]
         return [
             dict(
