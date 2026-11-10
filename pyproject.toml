@@ -37,7 +37,7 @@ dependencies = [
   "textual==1.0.0",
   "uvloop~=0.23.0; sys_platform == 'linux' or sys_platform == 'linux2'",
   "win32-setctime~=1.2.1",
-  "xxhash~=3.4.1",
+  "xxhash~=4.1.0",
   "pyyaml>=6.0.2",
   "dotenv>=0.9.9",
 ]
