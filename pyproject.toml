@@ -6,7 +6,7 @@ authors = [{ name = "datawhores", email = "datawhores@riseup.net" }]
 readme = "README.md"
 requires-python = ">=3.11, <3.16"
 dependencies = [
-  "aiofiles~=23.2.1",
+  "aiofiles~=25.1.0",
   "aiohttp>=3.14.5,<4",
   "aiolimiter~=1.3.0",
   "aioprocessing~=2.0.1",
