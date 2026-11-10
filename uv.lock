@@ -1578,7 +1578,7 @@ requires-dist = [
     { name = "setproctitle", specifier = "~=1.3.3" },
     { name = "speedtest-cli", specifier = "~=2.1.3" },
     { name = "sphinx-argparse", marker = "extra == 'docs'", specifier = "~=0.5.2" },
-    { name = "tenacity", specifier = "~=8.2.3" },
+    { name = "tenacity", specifier = "~=9.2.1" },
     { name = "textual", specifier = "==1.0.0" },
     { name = "uvloop", marker = "sys_platform == 'linux' or sys_platform == 'linux2'", specifier = "~=0.23.0" },
     { name = "win32-setctime", specifier = "~=1.2.1" },
@@ -2475,11 +2475,11 @@ wheels = [
 
 [[package]]
 name = "tenacity"
-version = "8.2.3"
+version = "9.2.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/89/3c/253e1627262373784bf9355db9d6f20d2d8831d79f91e9cca48050cddcc2/tenacity-8.2.3.tar.gz", hash = "sha256:5398ef0d78e63f40007c1fb4c0bff96e1911394d2fa8d194f77619c05ff6cc8a", size = 40651, upload-time = "2023-08-14T13:22:50.869Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/9e/497c1c8ebe5a5b5d1d4a7511aea22c0bb1a97e3170d98abdef0e1b34265a/tenacity-9.2.1.tar.gz", hash = "sha256:a606b5c808d0cded4a359d5b9932d867ff2a6a6b64d37350260fd01bbdf83839", size = 58261, upload-time = "2026-10-07T12:13:01.633Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/f1/990741d5bb2487d529d20a433210ffa136a367751e454214013b441c4575/tenacity-8.2.3-py3-none-any.whl", hash = "sha256:ce510e327a630c9e1beaf17d42e6ffacc88185044ad85cf74c0a8887c6a0f88c", size = 24401, upload-time = "2023-08-14T13:22:49.265Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/26/1ff2b0721ac66a3ec5b1402b333110b352ab0a8724052ac279a7b82d40c4/tenacity-9.2.1-py3-none-any.whl", hash = "sha256:9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e", size = 32310, upload-time = "2026-10-07T12:13:00.102Z" },
 ]
 
 [[package]]
