@@ -139,6 +139,12 @@ def test_run_async_returns_the_result_and_passes_ctrl_c_on():
         await asyncio.sleep(0)
         raise KeyboardInterrupt
 
-    assert answer() == 42
-    with pytest.raises(KeyboardInterrupt):
-        interrupted()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        assert answer() == 42
+        with pytest.raises(KeyboardInterrupt):
+            interrupted()
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
