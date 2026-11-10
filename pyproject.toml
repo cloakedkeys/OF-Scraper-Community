@@ -14,7 +14,7 @@ dependencies = [
   "browser-cookie3==0.19.1",
   "bs4~=0.0.2",
   "certifi>=2026.10.18",
-  "cloup~=3.0.5",
+  "cloup>=3.0.5,<4.1.0",
   "dill~=0.3.8",
   "diskcache~=5.6.3",
   "faust-cchardet~=2.1.19",
