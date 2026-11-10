@@ -21,3 +21,12 @@ def test_media_file_hash_is_unchanged(tmp_path):
     path = tmp_path / "media.mp4"
     path.write_bytes(DATA * 10_000)  # several read blocks
     assert _calc_hash(path) == "e8aa41d1ac9a7efaa1bbdce860769acc"
+
+
+def test_profile_ids_are_unchanged():
+    """Profile media IDs are xxh128 of the URL; xxhash 3 encoded strings as
+    UTF-8, and xxhash 4 needs bytes, so the IDs must stay the same."""
+    url = "https://public.onlyfans.com/files/a/b/avatar.jpg"
+    assert xxhash.xxh128(url.encode("utf-8")).hexdigest() == (
+        "4ad2069aff6afcff9d5e3b3072bdcd95"
+    )
