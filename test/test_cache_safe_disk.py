@@ -181,3 +181,20 @@ def test_unregistered_or_uncached_extension_codes_are_refused_without_a_scan(
             safe_disk._load_plain(b"\x80\x02\x82\xf0.")
     finally:
         copyreg.remove_extension("os", "getcwd", 240)
+
+
+def test_extension_cache_rebound_is_still_scanned(monkeypatch):
+    """The C unpickler keeps the original extension-cache dict, so a cached
+    extension is refused even if copyreg's attribute is rebound."""
+    from ofscraper.utils.cache.safe_disk import _load_plain
+
+    copyreg.add_extension("os", "getcwd", 240)
+    try:
+        pickle.loads(b"\x80\x02\x82\xf0.")  # cache it in the original dict
+        monkeypatch.setattr(copyreg, "_extension_cache", {})
+        with pytest.raises(UnsafeCacheEntry, match="extension code 240"):
+            _load_plain(b"\x80\x02\x82\xf0.")
+    finally:
+        monkeypatch.undo()
+        copyreg.remove_extension("os", "getcwd", 240)
+        copyreg.clear_extension_cache()

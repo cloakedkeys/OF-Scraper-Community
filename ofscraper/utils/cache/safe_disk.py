@@ -41,6 +41,9 @@ class UnsafeCacheEntry(OSError):
 # the opcode scan below (pure Python, about 15x the cost of the load) only
 # runs if something has filled it.
 _EXTENSION_OPCODES = {"EXT1", "EXT2", "EXT4"}
+# The C unpickler keeps the dict copyreg._extension_cache named when pickle
+# was imported; check that one too, in case the module attribute is rebound.
+_EXTENSION_CACHE = copyreg._extension_cache
 
 
 class _PlainDataUnpickler(pickle.Unpickler):
@@ -56,7 +59,7 @@ def _refuse_extensions(data: bytes):
 
 def _load_plain(data: bytes):
     try:
-        if copyreg._extension_cache:
+        if _EXTENSION_CACHE or copyreg._extension_cache:
             _refuse_extensions(data)
         return _PlainDataUnpickler(io.BytesIO(data)).load()
     except UnsafeCacheEntry as error:
