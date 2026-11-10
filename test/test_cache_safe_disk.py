@@ -4,6 +4,7 @@ a planted entry can't run code, and is read as missing."""
 import copyreg
 import logging
 import os
+import pickle
 from types import SimpleNamespace
 
 import diskcache
@@ -141,9 +142,8 @@ def test_copyreg_extension_codes_are_refused(caplog):
 
     copyreg.add_extension("os", "getcwd", 240)
     try:
-        # sanity: plain pickle would hand back os.getcwd for this
-        import pickle
-
+        # plain pickle hands back os.getcwd for this, and caches it, which
+        # is the case the scan is for
         assert pickle.loads(b"\x80\x02\x82\xf0.") is os.getcwd
         with caplog.at_level(logging.WARNING, logger="shared"):
             with pytest.raises(UnsafeCacheEntry):
@@ -152,3 +152,32 @@ def test_copyreg_extension_codes_are_refused(caplog):
     finally:
         copyreg.remove_extension("os", "getcwd", 240)
         copyreg.clear_extension_cache()
+
+
+def test_unregistered_or_uncached_extension_codes_are_refused_without_a_scan(
+    monkeypatch,
+):
+    """With nothing in copyreg's extension cache an EXT opcode can't bypass
+    find_class, so the opcode scan is skipped and the load still refuses it."""
+    import ofscraper.utils.cache.safe_disk as safe_disk
+
+    def no_scan(data):
+        raise AssertionError("scanned with an empty extension cache")
+
+    monkeypatch.setattr(safe_disk, "_refuse_extensions", no_scan)
+    assert not copyreg._extension_cache
+    # plain data loads without the scan
+    assert safe_disk._load_plain(pickle.dumps([{"id": 1}, ("t", 1.5)])) == [
+        {"id": 1},
+        ("t", 1.5),
+    ]
+    # an unregistered code fails to resolve
+    with pytest.raises(UnsafeCacheEntry):
+        safe_disk._load_plain(b"\x80\x02\x82\xf0.")
+    # a registered one that isn't cached goes through find_class
+    copyreg.add_extension("os", "getcwd", 240)
+    try:
+        with pytest.raises(UnsafeCacheEntry, match="os.getcwd"):
+            safe_disk._load_plain(b"\x80\x02\x82\xf0.")
+    finally:
+        copyreg.remove_extension("os", "getcwd", 240)
