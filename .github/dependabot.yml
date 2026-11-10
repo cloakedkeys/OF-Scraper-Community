@@ -9,9 +9,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    # Update uv.lock only; never rewrite the ranges in pyproject.toml.
-    # Versions outside the current ranges are skipped.
-    versioning-strategy: "lockfile-only"
+    # Leave a pyproject.toml range alone when it already allows the new version
+    # (only uv.lock changes); raise it only when a release falls outside it.
+    versioning-strategy: "increase-if-necessary"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "build"
