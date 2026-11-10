@@ -51,8 +51,16 @@ LEAKS = [
     ),
     # JSON
     ('{"sess":"' + NEW_SESS + '","auth_id":"' + AUTH_ID + '"}', [NEW_SESS, AUTH_ID], ['"sess":"{sess}"']),
-    # a header line
+    # a header line, and the equals form of a query string
     (f"x-bc: {XBC}\nUser-Id: {AUTH_ID}", [XBC, AUTH_ID], ["x-bc: {x-bc}", "User-Id: {hidden}"]),
+    (f"?x-bc={XBC}&user-id={AUTH_ID}", [XBC, AUTH_ID], ["x-bc={x-bc}", "user-id={hidden}"]),
+    # the auth_uniq_<user id> cookie, set-cookie and dict form
+    (
+        f"set-cookie: auth_uniq_{AUTH_ID}={AUTH_UID}; path=/ "
+        + str({f"auth_uniq_{AUTH_ID}": AUTH_UID}),
+        [AUTH_ID, AUTH_UID],
+        ["auth_uniq={hidden}", "'auth_uniq': '{hidden}'"],
+    ),
 ]
 
 
@@ -72,6 +80,7 @@ def test_auth_values_are_masked_by_name(formatter, line, secrets, labels):
     [
         "assess=3 sessions remaining, session=ok",
         "the user-id is checked; x-bc header set",
+        "the user-id: header is missing",
         "posted by a creator: 'subscribers': 12",
     ],
 )

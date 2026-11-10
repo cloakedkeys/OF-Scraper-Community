@@ -13,18 +13,20 @@ _DEFAULT_PATTERNS = {
     # Auth values by name, whatever the value. Masking by value covers only
     # what auth.json holds: OnlyFans can send a new session cookie in a
     # set-cookie, and a failed request logs its headers, IDs included. The
-    # auth_uid_<user id> cookie has the ID in its name, so that goes too.
+    # auth_uid_<user id> and auth_uniq_<user id> cookies have the ID in their
+    # name, so that goes too.
     # Cookie form: sess=...; auth_id=...; auth_uid_123=...
     r"(?i)\b(sess)=[^;\s'\",]+": r"\g<1>={sess}",
     r"(?i)\b(auth_id)=[^;\s'\",]+": r"\g<1>={hidden}",
-    r"(?i)\b(auth_uid)\w*=[^;\s'\",]+": r"\g<1>={hidden}",
+    r"(?i)\b(auth_uid|auth_uniq)\w*=[^;\s'\",]+": r"\g<1>={hidden}",
     # Header, dict or JSON form: 'sess': '...', "x-bc": "...", 'auth_id': 123
     r"""(?i)(['"])(sess)\1(\s*:\s*)(['"])[^'"]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{sess}\g<4>",
     r"""(?i)(['"])(x-bc)\1(\s*:\s*)(['"])[^'"]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{x-bc}\g<4>",
-    r"""(?i)(['"])(user-id|auth_id|auth_uid)\w*\1(\s*:\s*)(['"]?)[^'",}\s]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{hidden}\g<4>",
-    # Header line form: x-bc: ...
-    r"(?i)\b(x-bc)(\s*:\s*)(?!['\"])[^\s'\",;]+": r"\g<1>\g<2>{x-bc}",
-    r"(?i)\b(user-id)(\s*:\s*)(?!['\"])[^\s'\",;]+": r"\g<1>\g<2>{hidden}",
+    r"""(?i)(['"])(user-id|auth_id|auth_uid|auth_uniq)\w*\1(\s*:\s*)(['"]?)[^'",}\s]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{hidden}\g<4>",
+    # Header line or query form: x-bc: ..., x-bc=..., user-id: 123. A user ID
+    # is a number, so prose such as "the user-id: header" is left alone.
+    r"(?i)\b(x-bc)(\s*[:=]\s*)(?!['\"])[^\s'\",;&]+": r"\g<1>\g<2>{x-bc}",
+    r"(?i)\b(user-id)(\s*[:=]\s*)\d+": r"\g<1>\g<2>{hidden}",
     # The request-signing header, as a header dict or JSON shows it
     # ('sign': '...'). It changes on every request, so it can't be
     # registered by value the way the session cookie is.
