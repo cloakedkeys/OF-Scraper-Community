@@ -25,7 +25,9 @@ DATES = [
 
 @pytest.mark.parametrize("value, epoch", DATES)
 def test_dates_parse_to_the_same_instant(value, epoch):
-    assert arrow.get(value).float_timestamp == pytest.approx(epoch)
+    # to the microsecond: approx's default relative tolerance is about half
+    # an hour at these timestamps
+    assert arrow.get(value).float_timestamp == pytest.approx(epoch, rel=0, abs=1e-6)
 
 
 @pytest.mark.parametrize(
