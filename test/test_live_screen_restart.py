@@ -8,7 +8,7 @@ What lands in the StringIO is the frame that would be left on screen.
 import io
 
 import pytest
-from rich.console import Group
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.progress import Progress, TextColumn
 
@@ -47,6 +47,47 @@ def _start(layout):
     live.update(layout)
     live.start()
     return live
+
+
+def _shown(live):
+    """The text the live display draws now."""
+    out = Console(file=io.StringIO(), width=60)
+    out.print(live.get_renderable())
+    return out.file.getvalue()
+
+
+def _panel(text):
+    progress = Progress(TextColumn("{task.description}"))
+    progress.add_task(text)
+    return Group(Panel(progress))
+
+
+def _prompt_via_stop_live_screen():
+    return screens.stop_live_screen()
+
+
+def _prompt_via_prompt_live():
+    return empty.prompt_live()
+
+
+@pytest.mark.parametrize(
+    "prompt", [_prompt_via_stop_live_screen, _prompt_via_prompt_live]
+)
+def test_a_prompt_inside_a_screen_then_the_screen_closes(shared, prompt):
+    """Closing a screen puts the outer layout back on the running display.
+
+    The prompt replaces the live display with a new one, so the screen has
+    to put its layout back on that one, not on the display it opened on.
+    """
+    _start(_panel("outer layout"))
+    with screens.ProgressLayoutManager(layout=_panel("inner layout")):
+        with prompt():
+            pass
+        assert "inner layout" in _shown(live_mod.live)
+    assert live_mod.live.is_started
+    shown = _shown(live_mod.live)
+    assert "outer layout" in shown
+    assert "inner layout" not in shown
 
 
 def test_live_display_runs_again_after_the_screen(shared):
