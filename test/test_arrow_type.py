@@ -86,12 +86,12 @@ def test_relative_dates_keep_the_wall_clock_across_daylight_saving():
     now, result = found["now"], found["result"]
     # the result is on the other side of the change
     assert now[5] != result[5]
-    # N calendar days earlier, at the same local time of day (the clock may
-    # tick over a minute between reading it and parsing)
-    days = datetime.date(*now[:3]) - datetime.date(*result[:3])
-    minutes = (now[3] * 60 + now[4]) - (result[3] * 60 + result[4])
-    assert days.days == found["days"]
-    assert minutes in (0, 1)
+    # N days earlier on the local wall clock, at the same time of day. The
+    # clock is read before parsing, so a minute can tick over in between and
+    # make the result a minute later.
+    gap = datetime.datetime(*now[:5]) - datetime.datetime(*result[:5])
+    minutes = gap.total_seconds() / 60
+    assert minutes in (found["days"] * 1440, found["days"] * 1440 - 1)
 
 
 @pytest.mark.parametrize(
