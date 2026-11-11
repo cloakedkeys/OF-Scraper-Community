@@ -13,7 +13,7 @@ from ofscraper.utils.live.groups import (
     metadata_group,
     userlist_group,
 )
-from ofscraper.utils.live.live import get_live, stop_live,start_live
+from ofscraper.utils.live.live import get_live, start_live, stop_live
 
 from ofscraper.utils.live.clear import clear_tasks_by_name
 from ofscraper.utils.live.updater import ActivityManager
@@ -22,25 +22,24 @@ from ofscraper.utils.live.updater import ActivityManager
 @contextlib.contextmanager
 def stop_live_screen(clear=False):
     """
-    A context manager to safely stop the live display, show a prompt,
-    and then resume the display.
+    A context manager to stop the live display, show a prompt,
+    and then start the display again with the panels it showed.
+
+    stop_live() leaves the last frame on the screen only if it shows
+    progress; empty panels are erased. If the body starts a live display
+    of its own, that one is left running.
     """
     live = get_live()
     if not live.is_started:
         yield
         return
-    original_transient_state = live.transient
-    live.transient = False
-
+    renderable = live.get_renderable()
     try:
-        # Stop the live display. Because it's transient, it will be erased.
         stop_live()
         yield
     finally:
-        # Restore the original state before restarting
-        live.transient = original_transient_state
-        # Restart the live display with its original content
-        start_live(refresh=True)
+        # stop_live() drops the live display, so this starts a new one
+        start_live(renderable, refresh=True)
         if clear:
             clear_tasks_by_name(clear)
 
