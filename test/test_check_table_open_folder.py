@@ -7,6 +7,7 @@ starts a real file manager: the opener is stubbed, or its folder is missing.
 """
 
 import asyncio
+import os
 import pathlib
 import queue
 import subprocess
@@ -94,6 +95,11 @@ def test_each_creator_gets_its_own_folder(tmp_path):
         ("{user_name}/{responsetype}", ["a_creator"]),
         # a fixed folder before the creator is part of the creator's folder
         ("OnlyFans/{model_username}/{mediatype}", ["OnlyFans", "a_creator"]),
+        # the whole folder name that holds the username (#434 review)
+        ("{model_username}_archive/{media_type}", ["a_creator_archive"]),
+        ("x_{model_username}-y/{date}", ["x_a_creator-y"]),
+        ("{model_username}_x", ["a_creator_x"]),
+        (f"{{model_username}}_archive{os.sep}{{media_type}}", ["a_creator_archive"]),
     ],
 )
 def test_creator_folder_is_dir_format_up_to_the_username(tmp_path, dir_format, parts):
@@ -104,8 +110,39 @@ def test_creator_folder_is_dir_format_up_to_the_username(tmp_path, dir_format, p
 @pytest.mark.parametrize(
     "dir_format",
     [
+        "{model_username}/{responsetype}/{mediatype}/",
+        "{model_username}_archive/{media_type}",
+        "OnlyFans/{model_username}-{model_username}/{date}/",
+        "{user_name}",
+    ],
+)
+def test_creator_folder_holds_what_the_downloader_writes(tmp_path, dir_format):
+    # the media folder, built as Placeholders.getmediadir builds it
+    variables = {
+        "model_username": "a_creator", "modelusername": "a_creator",
+        "user_name": "a_creator", "username": "a_creator",
+        "responsetype": "Timeline", "mediatype": "Videos",
+        "media_type": "Videos", "date": "2024-01-01",
+    }
+    media_dir = pathlib.Path(
+        os.path.normpath(f"{tmp_path}/{pathlib.Path(dir_format.format(**variables))}")
+    )
+
+    target = open_folder.creator_target("a_creator", tmp_path, dir_format)
+
+    assert target.note is None
+    assert target.path == media_dir or target.path in media_dir.parents
+    # the creator's own folder, not the save location
+    assert target.path.parent == tmp_path or target.path.parent.parent == tmp_path
+
+
+@pytest.mark.parametrize(
+    "dir_format",
+    [
         "{responsetype}/{model_username}/{mediatype}",
         "{first_letter}/{model_username}",
+        # the username's folder name also depends on the post
+        "{model_username}_{date}/{mediatype}",
         "{mediatype}",
         "",
     ],
@@ -292,6 +329,76 @@ def test_opener_that_cannot_start(tmp_path):
     popen = _Popen(fail=FileNotFoundError("explorer"))
     with pytest.raises(OpenError, match="file manager"):
         open_folder.open_target(Target(tmp_path), "Windows", popen)
+
+
+def test_explorer_command_for_a_path_with_spaces_and_a_comma():
+    # Explorer reads /select, then the quoted path; the comma stays inside
+    # the quotes. Built as a string, so nothing re-quotes it.
+    file = pathlib.PureWindowsPath(r"C:\a b\c,d\e f.mp4")
+
+    assert (
+        open_folder.open_command(Target(file, select=True), "Windows")
+        == r'explorer /select,"C:\a b\c,d\e f.mp4"'
+    )
+    assert (
+        open_folder.open_command(Target(file.parent), "Windows")
+        == r'explorer "C:\a b\c,d"'
+    )
+
+
+def test_explorer_gets_that_string_unchanged(tmp_path):
+    file = tmp_path / "a b" / "c,d" / "e f.mp4"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(b"x")
+    popen = _Popen()
+
+    open_folder.open_target(Target(file, select=True), "Windows", popen)
+
+    [(cmd, kwargs)] = popen.calls
+    assert cmd == f'explorer /select,"{file}"'
+    assert "start_new_session" not in kwargs
+    popen.release.set()
+
+
+@pytest.mark.parametrize(
+    "system, expected",
+    [
+        ("Linux", lambda folder: ["xdg-open", str(folder)]),
+        ("Darwin", lambda folder: ["open", str(folder)]),
+        ("Windows", lambda folder: f'explorer "{folder}"'),
+    ],
+)
+def test_a_relative_save_location_reaches_the_opener_absolute(
+    tmp_path, monkeypatch, system, expected
+):
+    # "-downloads/a_creator" would be read as an option (#434 review)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(open_folder.shutil, "which", lambda name: "/usr/bin/xdg-open")
+    monkeypatch.setenv("DISPLAY", ":0")
+    folder = tmp_path / "-downloads" / "a_creator"
+    folder.mkdir(parents=True)
+    popen = _Popen()
+
+    open_folder.open_target(
+        Target(pathlib.Path("-downloads", "a_creator")), system, popen
+    )
+
+    [(cmd, _kwargs)] = popen.calls
+    assert cmd == expected(folder)
+    popen.release.set()
+
+
+def test_a_relative_save_location_gives_an_absolute_creator_folder(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+
+    target = open_folder.creator_target("a_creator", "-downloads", DIR_FORMAT)
+    assert target.path == tmp_path / "-downloads" / "a_creator"
+    assert target.path.is_absolute()
+
+    fallback = open_folder.creator_target("a_creator", "-downloads", "{date}")
+    assert fallback.path == tmp_path / "-downloads"
 
 
 # ------------------------------------------------------------------- the table

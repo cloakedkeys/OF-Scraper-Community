@@ -14,7 +14,7 @@ import shutil
 import string
 import subprocess
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 log = logging.getLogger("shared")
 
@@ -52,11 +52,30 @@ def get_dir_format():
     return data.get_dirformat()
 
 
-def creator_dir_prefix(dir_format, username):
-    """dir_format up to and including the username placeholder, filled in.
+# what splits folders in the path the downloader builds (a backslash only on
+# Windows)
+_SEPARATORS = {"/", os.sep}
 
-    None when another placeholder comes before it, or there is none: those
-    parts depend on the post, so the creator's folder isn't known.
+
+def _fill_username(field, spec, conv, username):
+    """One username placeholder, filled as str.format fills it."""
+    piece = "{0" + (f"!{conv}" if conv else "") + (f":{spec}" if spec else "") + "}"
+    return piece.format(username)
+
+
+def _first_separator(text):
+    found = [text.index(sep) for sep in _SEPARATORS if sep in text]
+    return min(found) if found else None
+
+
+def creator_dir_prefix(dir_format, username):
+    """dir_format up to the end of the path part holding the username
+    placeholder, filled in: ``{model_username}_archive/{mediatype}`` gives
+    ``<username>_archive``.
+
+    None when another placeholder comes before it or shares its part, or
+    there is none: those depend on the post, so the creator's folder isn't
+    known.
     """
     if not username:
         return None
@@ -65,37 +84,51 @@ def creator_dir_prefix(dir_format, username):
     except ValueError:
         return None
     out = []
-    for literal, field, spec, conv in parsed:
-        out.append(literal)
-        if field is None:
-            break
-        if field not in USERNAME_FIELDS:
-            return None
-        piece = "{0" + (f"!{conv}" if conv else "") + (f":{spec}" if spec else "") + "}"
-        try:
-            out.append(piece.format(username))
-        except (ValueError, KeyError, IndexError, AttributeError):
-            return None
-        return "".join(out)
-    return None
+    found = False
+    try:
+        for literal, field, spec, conv in parsed:
+            if found:
+                # the rest of the username's path part
+                cut = _first_separator(literal)
+                if cut is not None:
+                    out.append(literal[:cut])
+                    break
+                out.append(literal)
+            else:
+                out.append(literal)
+            if field is None:
+                break
+            if field not in USERNAME_FIELDS:
+                return None
+            out.append(_fill_username(field, spec, conv, username))
+            found = True
+    except (ValueError, KeyError, IndexError, AttributeError):
+        return None
+    return "".join(out) if found else None
+
+
+def absolute(path) -> pathlib.Path:
+    """The path made absolute against the working folder, as the downloader
+    used it. Not resolve(): that can turn a mapped drive into a UNC path."""
+    return pathlib.Path(os.path.abspath(path))
 
 
 def creator_target(username, root=None, dir_format=None) -> Target:
     root = root if root is not None else default_root()
     if not username:
         return Target(
-            pathlib.Path(os.path.normpath(str(root))),
+            absolute(str(root)),
             note="No creator picked, opened the save location",
         )
     dir_format = dir_format if dir_format is not None else get_dir_format()
     prefix = creator_dir_prefix(dir_format, username)
     if prefix is None:
         return Target(
-            pathlib.Path(os.path.normpath(str(root))),
+            absolute(str(root)),
             note="dir_format doesn't start with the creator, opened the save location",
         )
     # joined as Placeholders.getmediadir joins it
-    return Target(pathlib.Path(os.path.normpath(f"{root}/{prefix}")))
+    return Target(absolute(os.path.normpath(f"{root}/{prefix}")))
 
 
 def stored_file(row):
@@ -120,7 +153,7 @@ def row_target(row, root=None, dir_format=None) -> Target:
     if row and row.get("downloaded"):
         file = stored_file(row)
         if file is not None and _is_file(file):
-            return Target(file, select=True)
+            return Target(absolute(file), select=True)
     return creator_target((row or {}).get("username"), root, dir_format)
 
 
@@ -150,6 +183,9 @@ def open_target(target: Target, system=None, popen=None):
     """
     system = system or platform.system()
     popen = popen or subprocess.Popen
+    # a relative path such as "-downloads/a_creator" would reach the opener
+    # as an option
+    target = replace(target, path=absolute(target.path))
     folder = target.folder
     try:
         exists = folder.is_dir()
