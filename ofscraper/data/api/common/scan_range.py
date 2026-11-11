@@ -1,4 +1,4 @@
-"""The "Setting ... scan range" log lines and the timeline's full-rescan hint."""
+"""The "Setting ... scan range" log lines and the full-rescan hint."""
 
 import arrow
 
@@ -9,26 +9,36 @@ CLI_HINT = (
     "Full rescan: add --after 2000"
     " (or --after 2000 --force-all to also re-download files)"
 )
-# the menu has no flag to append; its full rescan is the redownload prompt,
-# which sets --after 2000 together with --force-all
+# when the actions came from the action prompt there's no command to append
+# to; the prompt's full rescan is the redownload question, which sets
+# --after 2000 together with --force-all
 MENU_HINT = (
     'Full rescan: answer Yes to "Would you like to redownload all files"'
     " (this also re-downloads files)"
 )
 
-# set for each run by prepare(); the hint is shown once per run
+# set once the action prompt chose the actions (main menu, daemon or the
+# "run again" loop); later runs in this process use those actions too
 _menu = False
+# the hint is shown once per run, for whichever area scans partially first
 _hint_shown = False
 
 
-def set_menu_mode(menu):
+def mark_actions_prompted():
     global _menu
-    _menu = bool(menu)
+    _menu = True
 
 
 def reset_hint():
     global _hint_shown
     _hint_shown = False
+
+
+def log_scan_range(log, username, area, after):
+    log.info(range_text(username, area, after))
+    hint = full_scan_hint(after)
+    if hint:
+        log.info(f"[yellow]{hint}[/yellow]")
 
 
 def range_text(username, area, after):
@@ -49,9 +59,9 @@ def range_end():
 
 
 def full_scan_hint(after):
-    """The hint line to show for this timeline scan, or None.
+    """The hint line to show for this scan, or None.
 
-    Only a partial (incremental) scan of a run that downloads gets it, and
+    Only a partial (incremental) scan in a run that downloads gets it, and
     only once per run.
     """
     global _hint_shown
@@ -60,7 +70,7 @@ def full_scan_hint(after):
         return None
     if "download" not in (getattr(current, "actions", None) or []):
         return None
-    # a start the user chose (--after, or the menu's redownload) is not
+    # a start the user chose (--after, or the redownload question) is not
     # an incremental scan
     if getattr(current, "after", None) is not None:
         return None

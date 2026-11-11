@@ -357,4 +357,4 @@ async def get_after(model_id, username):
 
 
 def time_log(username, after):
-    log.info(scan_range.range_text(username, "streams", after))
+    scan_range.log_scan_range(log, username, "streams", after)

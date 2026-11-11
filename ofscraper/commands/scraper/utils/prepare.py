@@ -2,7 +2,6 @@ import logging
 import time
 import re
 
-import ofscraper.data.api.common.scan_range as scan_range
 import ofscraper.data.api.init as init
 import ofscraper.managers.manager as manager
 import ofscraper.utils.actions as actions
@@ -26,7 +25,6 @@ def prepare(menu=False):
     actions.select_areas()
     if menu is True:
         actions.set_scrape_paid()
-    scan_range.set_menu_mode(menu is True)
     manager.Manager.stats_manager.clear_scraper_activity_stats()
     userdata = manager.Manager.current_model_manager.prepare_scraper_activity()
     return userdata, session

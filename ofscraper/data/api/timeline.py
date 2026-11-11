@@ -426,10 +426,7 @@ async def scrape_timeline_posts(
 
 
 def time_log(username, after):
-    log.info(scan_range.range_text(username, "timeline", after))
-    hint = scan_range.full_scan_hint(after)
-    if hint:
-        log.info(f"[yellow]{hint}[/yellow]")
+    scan_range.log_scan_range(log, username, "timeline", after)
 
 
 def filter_timeline_post(timeline_posts):
