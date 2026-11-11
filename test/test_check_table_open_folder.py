@@ -100,6 +100,9 @@ def test_each_creator_gets_its_own_folder(tmp_path):
         ("x_{model_username}-y/{date}", ["x_a_creator-y"]),
         ("{model_username}_x", ["a_creator_x"]),
         (f"{{model_username}}_archive{os.sep}{{media_type}}", ["a_creator_archive"]),
+        # escaped braces are part of the name, not fields (#434 re-review)
+        ("{model_username}_{{archive}}/{media_type}", ["a_creator_{archive}"]),
+        ("{{x}}/{model_username}}}{{/{date}", ["{x}", "a_creator}{"]),
     ],
 )
 def test_creator_folder_is_dir_format_up_to_the_username(tmp_path, dir_format, parts):
@@ -114,6 +117,7 @@ def test_creator_folder_is_dir_format_up_to_the_username(tmp_path, dir_format, p
         "{model_username}_archive/{media_type}",
         "OnlyFans/{model_username}-{model_username}/{date}/",
         "{user_name}",
+        "{model_username}_{{archive}}/{media_type}",
     ],
 )
 def test_creator_folder_holds_what_the_downloader_writes(tmp_path, dir_format):
@@ -143,6 +147,9 @@ def test_creator_folder_holds_what_the_downloader_writes(tmp_path, dir_format):
         "{first_letter}/{model_username}",
         # the username's folder name also depends on the post
         "{model_username}_{date}/{mediatype}",
+        # an escaped brace doesn't hide a later post-dependent placeholder
+        "{model_username}_{{x}}_{date}/{mediatype}",
+        "{model_username}}}{{{date}/{mediatype}",
         "{mediatype}",
         "",
     ],

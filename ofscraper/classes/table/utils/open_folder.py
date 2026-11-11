@@ -57,54 +57,62 @@ def get_dir_format():
 _SEPARATORS = {"/", os.sep}
 
 
-def _fill_username(field, spec, conv, username):
-    """One username placeholder, filled as str.format fills it."""
-    piece = "{0" + (f"!{conv}" if conv else "") + (f":{spec}" if spec else "") + "}"
-    return piece.format(username)
+def _folder_ends(template):
+    """Where each folder name in the raw template ends: at separators outside
+    braces. ``{{`` and ``}}`` are escaped braces, not fields."""
+    ends = []
+    depth = 0
+    i = 0
+    while i < len(template):
+        if depth == 0 and template.startswith(("{{", "}}"), i):
+            i += 2
+            continue
+        char = template[i]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth = max(depth - 1, 0)
+        elif depth == 0 and char in _SEPARATORS:
+            ends.append(i)
+        i += 1
+    ends.append(len(template))
+    return ends
 
 
-def _first_separator(text):
-    found = [text.index(sep) for sep in _SEPARATORS if sep in text]
-    return min(found) if found else None
+def _has_username(segment):
+    try:
+        return any(
+            field in USERNAME_FIELDS
+            for _, field, _, _ in string.Formatter().parse(segment)
+        )
+    except ValueError:
+        return False
 
 
 def creator_dir_prefix(dir_format, username):
-    """dir_format up to the end of the path part holding the username
+    """dir_format up to the end of the folder name holding the username
     placeholder, filled in: ``{model_username}_archive/{mediatype}`` gives
     ``<username>_archive``.
 
-    None when another placeholder comes before it or shares its part, or
-    there is none: those depend on the post, so the creator's folder isn't
+    None when another placeholder comes before it or shares its folder name,
+    or there is none: those depend on the post, so the creator's folder isn't
     known.
     """
-    if not username:
+    if not username or not dir_format:
         return None
+    start = 0
+    for end in _folder_ends(dir_format):
+        if _has_username(dir_format[start:end]):
+            break
+        start = end + 1
+    else:
+        return None
+    # filled as Placeholders.getmediadir fills it: str.format, so escaped
+    # braces come out single, and any other placeholder raises
     try:
-        parsed = list(string.Formatter().parse(dir_format or ""))
-    except ValueError:
+        return dir_format[:end].format(**dict.fromkeys(USERNAME_FIELDS, username))
+    except (ValueError, KeyError, IndexError, AttributeError, TypeError):
         return None
-    out = []
-    found = False
-    try:
-        for literal, field, spec, conv in parsed:
-            if found:
-                # the rest of the username's path part
-                cut = _first_separator(literal)
-                if cut is not None:
-                    out.append(literal[:cut])
-                    break
-                out.append(literal)
-            else:
-                out.append(literal)
-            if field is None:
-                break
-            if field not in USERNAME_FIELDS:
-                return None
-            out.append(_fill_username(field, spec, conv, username))
-            found = True
-    except (ValueError, KeyError, IndexError, AttributeError):
-        return None
-    return "".join(out) if found else None
 
 
 def absolute(path) -> pathlib.Path:
