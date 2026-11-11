@@ -1,5 +1,6 @@
 """A Yes to "redownload all files" applies to that run only (#433)."""
 
+import queue
 from types import SimpleNamespace
 
 import arrow
@@ -142,3 +143,73 @@ def test_no_restores_the_command_line_values(session, monkeypatch):
     main_menu(session, monkeypatch, runs=2)
 
     assert session.runs == [REDOWNLOAD, (given, False, True)]
+
+
+class Stop(BaseException):
+    """Ends the daemon loop, which logs and carries on after an Exception."""
+
+
+def run_daemon(session, monkeypatch, passes):
+    """scrapper() with --daemon: the first pass, then ``passes`` more that
+    the scheduler queues; the real daemon loop runs them all."""
+    session.args.daemon = 30
+    session.args.output_level = "NORMAL"
+    jobs = queue.Queue()
+    monkeypatch.setattr(scraper, "jobqueue", jobs)
+    monkeypatch.setattr(scraper.exit, "sigterm_as_keyboard_interrupt", lambda: None)
+    monkeypatch.setattr(scraper.checkers, "check_auth", lambda: None)
+    monkeypatch.setattr(scraper.actions, "select_areas", lambda: None)
+    monkeypatch.setattr(
+        scraper,
+        "live",
+        SimpleNamespace(enabled=lambda: False, watch_enabled=lambda: False),
+    )
+    monkeypatch.setattr(
+        scraper.manager,
+        "Manager",
+        SimpleNamespace(current_model_manager=SimpleNamespace(sync_models=lambda: None)),
+    )
+    monkeypatch.setattr(
+        scraper,
+        "DaemonWakeup",
+        lambda: SimpleNamespace(
+            stopped=False, install=lambda: None, restore=lambda: None
+        ),
+    )
+
+    def stop():
+        raise Stop
+
+    def schedule(*functs, wakeup=None):
+        # what schedule_helper queues for each later pass, then an end
+        for _ in range(passes):
+            for funct in functs:
+                jobs.put(funct)
+        jobs.put(stop)
+
+    monkeypatch.setattr(scraper, "set_schedule", schedule)
+    with pytest.raises(Stop):
+        scraper.scrapper()
+
+
+def test_interactive_daemon_yes_is_for_the_first_pass(session, monkeypatch):
+    session.answers = [DOWNLOAD, True]
+
+    run_daemon(session, monkeypatch, passes=2)
+
+    assert session.answers == []
+    assert session.runs == [REDOWNLOAD, NORMAL, NORMAL]
+    # the later passes scan incrementally again, so each gets the hint
+    assert session.log.hints() == [MENU_HINT, MENU_HINT]
+
+
+def test_command_line_daemon_keeps_its_values(session, monkeypatch):
+    # --daemon --action download --after 2000 --force-all: never asked
+    session.args.actions = {"download"}
+    session.args.after = YEAR_2000
+    session.args.force_all = True
+
+    run_daemon(session, monkeypatch, passes=2)
+
+    assert session.redownload_asked == 0
+    assert session.runs == [(YEAR_2000, True, False)] * 3

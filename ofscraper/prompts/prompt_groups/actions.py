@@ -46,6 +46,17 @@ def restore_session_values(args):
         setattr(args, key, value)
 
 
+def restore_session_args():
+    """Undo a redownload Yes before a run the prompt didn't start (a later
+    daemon pass). Nothing to undo when the prompt never ran: the values are
+    then the command line's own."""
+    if _session_values is None:
+        return
+    args = settings.get_args()
+    restore_session_values(args)
+    settings.update_args(args)
+
+
 def redownload_prompt(args=None):
     args = args or settings.get_args()
     answer = promptClasses.getChecklistSelection(
