@@ -59,6 +59,7 @@ def wrapper(prompt_funct):
 
             prompt_ = prompt_funct(*args, **kwargs)
             fix_validation_float(prompt_, kwargs["long_instruction"])
+            clear_on_resize(prompt_)
 
             # Shorten terminal escape-sequence waits, preserving the default
             # timeoutlen for multi-key submit chords. A lone Esc may still wait
@@ -113,6 +114,18 @@ def fix_validation_float(prompt_, long_instruction):
                 max(1, (len(line) + width - 1) // width)
                 for line in long_instruction.split("\n")
             )
+
+
+def clear_on_resize(prompt_):
+    app = prompt_._session.app if hasattr(prompt_, "_session") else prompt_.application
+
+    def on_resize():
+        # Resizing re-wraps old lines, so the renderer's last height is stale.
+        app.renderer.clear()
+        app._request_absolute_cursor_position()
+        app._redraw()
+
+    app._on_resize = on_resize
 
 
 def register_keys(prompt_, altx_action, altd_action, additional_keys, action):
