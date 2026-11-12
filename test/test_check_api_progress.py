@@ -23,7 +23,10 @@ def test_api_progress_during_check_fetch(
     monkeypatch, runner, activity, areas_per_creator, fetch_error
 ):
     creators = ["creator_one", "creator_two"]
-    state = SimpleNamespace(live=False, description=None, creator=None, calls=0)
+    state = SimpleNamespace(
+        live=False, description="", creator=None, calls=0,
+        id=0, completed=0, total=None, visible=False,
+    )
 
     @contextmanager
     def screen(name):
@@ -35,9 +38,10 @@ def test_api_progress_during_check_fetch(
         finally:
             state.live = False
 
-    def update_task(description, visible=True):
-        assert visible
-        state.description = description
+    def update_task(visible=True, **kwargs):
+        state.visible = visible
+        for key, value in kwargs.items():
+            setattr(state, key, value)
 
     def get_id(name):
         state.creator = name
@@ -50,6 +54,7 @@ def test_api_progress_during_check_fetch(
     async def fetch(*args, **kwargs):
         # Real retrievers reach these API boundaries before yielding to runners.
         assert state.live, "API screen must be open while fetching"
+        assert state.visible
         assert state.description == check.check_str.format(
             username=state.creator, activity=activity
         )
@@ -73,7 +78,10 @@ def test_api_progress_during_check_fetch(
         session=SimpleNamespace(aget_ofsession=session)
     ))
     monkeypatch.setattr(check.progress_utils, "setup_live", screen)
-    monkeypatch.setattr(check.progress_updater, "activity", SimpleNamespace(update_task=update_task))
+    monkeypatch.setattr(check.progress_updater, "activity", SimpleNamespace(
+        update_task=update_task, desc=SimpleNamespace(tasks=[state]),
+        get_desc_id=lambda: 0,
+    ))
     monkeypatch.setattr(check.auth_requests, "make_headers", lambda: None)
     monkeypatch.setattr(check, "read_check", lambda *args: None)
     monkeypatch.setattr(check, "set_check", lambda *args: None)

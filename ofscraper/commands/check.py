@@ -296,11 +296,12 @@ async def data_refill(model_id):
         retriver = partial(post_check_retriver, forced=True)
     else:
         return
-    # refresh only the creator whose download failed
-    async for username, refilled_id, final_post_array, *_ in retriver(
-        only_model_id=model_id
-    ):
-        await process_post_media(username, refilled_id, final_post_array)
+    with progress_utils.TemporaryTaskState(progress_updater.activity):
+        # refresh only the creator whose download failed
+        async for username, refilled_id, final_post_array, *_ in retriver(
+            only_model_id=model_id
+        ):
+            await process_post_media(username, refilled_id, final_post_array)
 
 
 def _other_creator(model_id, only_model_id):
@@ -350,7 +351,10 @@ def post_checker():
 
 @run
 async def post_check_runner():
-    with progress_utils.setup_live("api"):
+    with (
+        progress_utils.setup_live("api"),
+        progress_utils.TemporaryTaskState(progress_updater.activity),
+    ):
         async for (
             user_name,
             model_id,
@@ -587,7 +591,10 @@ def message_checker():
 
 @run
 async def message_checker_runner():
-    with progress_utils.setup_live("api"):
+    with (
+        progress_utils.setup_live("api"),
+        progress_utils.TemporaryTaskState(progress_updater.activity),
+    ):
         async for (
             user_name,
             model_id,
@@ -704,7 +711,10 @@ def purchase_checker():
 
 @run
 async def purchase_checker_runner():
-    with progress_utils.setup_live("api"):
+    with (
+        progress_utils.setup_live("api"),
+        progress_utils.TemporaryTaskState(progress_updater.activity),
+    ):
         async for (
             user_name,
             model_id,
@@ -781,7 +791,10 @@ def stories_checker():
 
 @run
 async def stories_checker_runner():
-    with progress_utils.setup_live("api"):
+    with (
+        progress_utils.setup_live("api"),
+        progress_utils.TemporaryTaskState(progress_updater.activity),
+    ):
         async for user_name, model_id, final_post_array in stories_check_retriver():
             await process_post_media(user_name, model_id, final_post_array)
             await make_changes_to_content_tables(
