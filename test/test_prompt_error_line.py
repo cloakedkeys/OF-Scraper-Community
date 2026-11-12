@@ -27,8 +27,12 @@ def test_validation_float_above_multiline_instruction(monkeypatch, prompt_type):
             float_ for float_ in container.floats
             if isinstance(float_, ValidationFloat)
         )
-        # One short row, one blank row, two wrapped rows, one exact-width row.
-        assert error_float.bottom == 5
+        # The wrapper may add its own help lines around ours, so count the
+        # help the prompt actually got: our lines take one short row, one
+        # blank row, two wrapped rows and one exact-width row.
+        rows = [max(1, -(-len(line) // 20)) for line in prompt._long_instruction.split("\n")]
+        assert sum(rows) >= 5
+        assert error_float.bottom == sum(rows)
         return "answer"
 
     prompt_class = (
