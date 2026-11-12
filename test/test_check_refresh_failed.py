@@ -77,10 +77,17 @@ def test_failed_message_uses_message_fetcher(monkeypatch, refresh_batch):
     assert [m.url for m in batch.calls[1]] == ["fresh", "fresh"]
 
 
-def test_unsupported_area_falls_back_once(monkeypatch, refresh_batch):
+@pytest.mark.parametrize("area", ["profile", "stories", "highlights"])
+def test_unsupported_area_falls_back_once(monkeypatch, refresh_batch, area):
     batch = refresh_batch
-    batch.collection.add_posts([check.posts_.Post(_post(100, [0, 1]), 1, "a creator", "profile")], overwrite=True)
+    batch.collection.add_posts([check.posts_.Post(_post(100, [0, 1]), 1, "a creator", area)], overwrite=True)
+    stories = AsyncMock(return_value=[])
+    highlights = AsyncMock(return_value=[])
+    monkeypatch.setattr(check.highlights, "get_individual_stories", stories)
+    monkeypatch.setattr(check.highlights, "get_individual_highlights", highlights)
     batch.go()
+    stories.assert_not_called()
+    highlights.assert_not_called()
     batch.refill.assert_called_once_with(1)
     assert len(batch.calls) == 2
 
@@ -114,4 +121,29 @@ def test_stop_during_refresh_restores_pending_rows(monkeypatch, refresh_batch):
         (("0", "[added]", "bold light_goldenrod2"),),
         (("1", "[added]", "bold light_goldenrod2"),),
         (("2", "[added]", "bold light_goldenrod2"),),
+    ]
+
+
+def test_stop_exception_during_paid_refresh_restores_pending_rows(monkeypatch, refresh_batch):
+    batch = refresh_batch
+    batch.collection.add_posts([
+        check.posts_.Post(_post(100, [0, 1]), 1, "a creator", "paid")
+    ], overwrite=True)
+
+    def fetch(username, model_id, post_id):
+        stop.request()
+        raise stop.DownloadsStopped
+
+    fetch = Mock(side_effect=fetch)
+    monkeypatch.setattr(check.paid_, "get_individual_paid_post", fetch)
+    batch.go()
+    fetch.assert_called_once_with("a creator", 1, 100)
+    assert len(batch.calls) == 1
+    batch.refill.assert_not_called()
+    check.time.sleep.assert_not_called()
+    assert batch.updates.call_args_list == [
+        (("2", "[downloaded]", "bold green"),),
+        (("3", "[downloaded]", "bold green"),),
+        (("0", "[added]", "bold light_goldenrod2"),),
+        (("1", "[added]", "bold light_goldenrod2"),),
     ]

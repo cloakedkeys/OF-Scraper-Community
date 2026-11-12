@@ -287,13 +287,13 @@ def _process_user_batch(
     failed = download_batch(indices)
     if failed and not stop.requested.is_set():
         log.debug("Refreshing data and retrying...")
-        if not _refresh_failed_posts(
-            username, model_id, [target_media[i] for i in failed]
-        ) and not stop.requested.is_set():
-            try:
+        try:
+            if not _refresh_failed_posts(
+                username, model_id, [target_media[i] for i in failed]
+            ) and not stop.requested.is_set():
                 data_refill(model_id)
-            except stop.DownloadsStopped:
-                pass  # Let download_batch restore the unreported rows below.
+        except stop.DownloadsStopped:
+            pass  # Let download_batch restore the unreported rows below.
         if not stop.requested.is_set():
             time.sleep(1)
             refresh_media(failed)
@@ -326,16 +326,11 @@ async def _refresh_failed_posts(username, model_id, media):
                 data = await asyncio.to_thread(
                     paid_.get_individual_paid_post, username, model_id, post_id
                 )
-            elif area in {"messages", "stories", "highlights"}:
+            elif area == "messages":
                 async with manager.Manager.session.aget_ofsession() as c:
-                    if area == "messages":
-                        data = await messages_.get_individual_messages_post(
-                            model_id, post_id, c
-                        )
-                    elif area == "stories":
-                        data = await highlights.get_individual_stories(post_id, c)
-                    else:
-                        data = await highlights.get_individual_highlights(post_id, c)
+                    data = await messages_.get_individual_messages_post(
+                        model_id, post_id, c
+                    )
             else:
                 return False
             if stop.requested.is_set():
