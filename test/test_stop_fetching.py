@@ -307,7 +307,7 @@ def test_check_fetch_remains_stoppable_until_rows_are_ready(monkeypatch, command
     monkeypatch.setattr(check, "set_after_check_mode", Mock())
     monkeypatch.setattr(check.settings, "get_settings", lambda: SimpleNamespace(command=command))
     monkeypatch.setattr(check.progress_utils, "setup_live", lambda *a, **k: nullcontext())
-    monkeypatch.setattr(check.progress_updater, "activity", Mock())
+    monkeypatch.setattr(check.progress_updater, "activity", Mock(desc=None))
     table = Mock()
     monkeypatch.setattr(check, "start_helper", table)
     real_runner = getattr(check, runner)
