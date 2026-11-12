@@ -12,6 +12,7 @@ r"""
 import asyncio
 import logging
 import traceback
+from urllib.parse import parse_qs, urlsplit
 
 from rich.console import Console
 
@@ -187,7 +188,9 @@ async def scrape_subscriptions_active(c, offset=0):
                 if response.get("hasMore") is not True or not subscriptions:
                     break
 
-                current_offset += len(subscriptions)
+                current_offset += int(
+                    parse_qs(urlsplit(url).query).get("limit", [len(subscriptions)])[0]
+                )
 
         except asyncio.TimeoutError:
             log.debug(f"Task timed out {url}")
@@ -225,7 +228,9 @@ async def scrape_subscriptions_disabled(c, offset=0):
                 if response.get("hasMore") is not True or not subscriptions:
                     break
 
-                current_offset += len(subscriptions)
+                current_offset += int(
+                    parse_qs(urlsplit(url).query).get("limit", [len(subscriptions)])[0]
+                )
 
         except asyncio.TimeoutError:
             log.debug(f"Task timed out {url}")
