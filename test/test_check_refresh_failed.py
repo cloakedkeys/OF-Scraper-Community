@@ -11,6 +11,9 @@ from ofscraper.commands.scraper.actions.download import stop
 from ofscraper.classes.of.media import Media
 from test.test_check_cart_batch import batch
 
+# The shared batch fixture fakes the refresh; these tests need the real one.
+_real_refresh_failed_posts = check._refresh_failed_posts
+
 
 def _post(post_id, media_ids, area="post", link="old"):
     return {"id": post_id, "responseType": area, "media": [
@@ -22,6 +25,7 @@ def _post(post_id, media_ids, area="post", link="old"):
 @pytest.fixture
 def refresh_batch(monkeypatch, batch):
     stop.clear()
+    monkeypatch.setattr(check, "_refresh_failed_posts", _real_refresh_failed_posts)
     collection = check.PostCollection(username="a creator", model_id=1)
     collection.add_posts([_post(100, [0, 1]), _post(101, [2]), _post(102, [3])])
     monkeypatch.setitem(check.check_user_dict, "1", {"collection": collection})
