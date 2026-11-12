@@ -97,8 +97,65 @@ def test_custom_endpoint_without_limit(monkeypatch, worker, endpoint_key):
 
 
 @pytest.mark.parametrize("worker,endpoint_key", WORKERS, ids=["active", "expired"])
-def test_empty_page_stops_even_with_has_more(worker, endpoint_key):
+def test_empty_page_with_has_more_reads_later_pages(worker, endpoint_key):
     server = SubscriptionServer(21, 10, hidden=range(10))
+
+    assert collect(worker, server) == list(range(10, 21))
+    assert server.offsets == [0, 10, 20]
+
+
+@pytest.mark.parametrize("worker,endpoint_key", WORKERS, ids=["active", "expired"])
+def test_empty_page_without_has_more_stops(worker, endpoint_key):
+    server = SubscriptionServer(10, 10, hidden=range(10))
+
+    assert collect(worker, server) == []
+    assert server.offsets == [0]
+
+
+class FixedPageServer:
+    def __init__(self, count):
+        self.count = count
+        self.offsets = []
+
+    @asynccontextmanager
+    async def requests_async(self, *, url):
+        offset = int(parse_qs(urlsplit(url).query)["offset"][0])
+        self.offsets.append(offset)
+        assert len(self.offsets) <= 2, "Paging did not advance"
+
+        async def json_():
+            return {
+                "list": [{"id": item} for item in range(offset, offset + self.count)],
+                "hasMore": offset == 0,
+            }
+
+        yield SimpleNamespace(status=200, json_=json_)
+
+
+@pytest.mark.parametrize("worker,endpoint_key", WORKERS, ids=["active", "expired"])
+@pytest.mark.parametrize("limit", ["0", "-1", "invalid", "1.5"])
+def test_invalid_limit_falls_back_to_count(monkeypatch, worker, endpoint_key, limit):
+    override_endpoint(
+        monkeypatch, endpoint_key,
+        f"https://example.test/subscriptions?limit={limit}&offset={{}}",
+    )
+    server = FixedPageServer(2)
+
+    assert collect(worker, server) == [0, 1, 2, 3]
+    assert server.offsets == [0, 2]
+
+
+@pytest.mark.parametrize("worker,endpoint_key", WORKERS, ids=["active", "expired"])
+@pytest.mark.parametrize("limit", ["0", "-1", "invalid", "1.5", None])
+def test_empty_page_without_positive_step_stops(
+    monkeypatch, worker, endpoint_key, limit
+):
+    query = "" if limit is None else f"limit={limit}&"
+    override_endpoint(
+        monkeypatch, endpoint_key,
+        f"https://example.test/subscriptions?{query}offset={{}}",
+    )
+    server = FixedPageServer(0)
 
     assert collect(worker, server) == []
     assert server.offsets == [0]

@@ -161,6 +161,14 @@ async def process_task(generators):
     return output
 
 
+def _subscription_page_step(url, count):
+    try:
+        step = int(parse_qs(urlsplit(url).query).get("limit", [count])[0])
+    except (TypeError, ValueError):
+        return count
+    return step if step > 0 else count
+
+
 async def scrape_subscriptions_active(c, offset=0):
     """
     Async Generator Worker Loop for active subscriptions.
@@ -185,12 +193,13 @@ async def scrape_subscriptions_active(c, offset=0):
                     )
                     yield subscriptions
 
-                if response.get("hasMore") is not True or not subscriptions:
+                if response.get("hasMore") is not True:
                     break
 
-                current_offset += int(
-                    parse_qs(urlsplit(url).query).get("limit", [len(subscriptions)])[0]
-                )
+                step = _subscription_page_step(url, len(subscriptions))
+                if step <= 0:
+                    break
+                current_offset += step
 
         except asyncio.TimeoutError:
             log.debug(f"Task timed out {url}")
@@ -225,12 +234,13 @@ async def scrape_subscriptions_disabled(c, offset=0):
                     )
                     yield subscriptions
 
-                if response.get("hasMore") is not True or not subscriptions:
+                if response.get("hasMore") is not True:
                     break
 
-                current_offset += int(
-                    parse_qs(urlsplit(url).query).get("limit", [len(subscriptions)])[0]
-                )
+                step = _subscription_page_step(url, len(subscriptions))
+                if step <= 0:
+                    break
+                current_offset += step
 
         except asyncio.TimeoutError:
             log.debug(f"Task timed out {url}")
