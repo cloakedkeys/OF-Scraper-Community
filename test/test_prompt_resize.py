@@ -1,4 +1,5 @@
 from contextlib import nullcontext
+from types import SimpleNamespace
 from unittest.mock import Mock, call
 
 import pytest
@@ -9,6 +10,24 @@ from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
 
 import ofscraper.prompts.promptConvert as promptConvert
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        SimpleNamespace(),
+        SimpleNamespace(_session=SimpleNamespace()),
+        SimpleNamespace(application=None),
+        SimpleNamespace(_session=SimpleNamespace(app=SimpleNamespace())),
+        SimpleNamespace(application=SimpleNamespace()),
+    ],
+)
+def test_prompt_resize_without_application_leaves_prompt_alone(prompt):
+    before = repr(prompt)
+
+    promptConvert.clear_on_resize(prompt)
+
+    assert repr(prompt) == before
 
 
 @pytest.mark.parametrize("prompt_type", ["fuzzy", "input"])

@@ -117,7 +117,11 @@ def fix_validation_float(prompt_, long_instruction):
 
 
 def clear_on_resize(prompt_):
-    app = prompt_._session.app if hasattr(prompt_, "_session") else prompt_.application
+    app = getattr(getattr(prompt_, "_session", None), "app", None)
+    if app is None:
+        app = getattr(prompt_, "application", None)
+    if app is None or getattr(app, "renderer", None) is None:
+        return
 
     def on_resize():
         # Resizing re-wraps old lines, so the renderer's last height is stale.
