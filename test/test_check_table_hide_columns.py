@@ -110,11 +110,11 @@ def test_hidden_media_id_filter_keeps_working_after_toggles():
             await pilot.click("#filter")
             await pilot.pause()
             assert [row["index"] for row in app._filtered_rows] == [2]
-            for _ in range(2):
+            for shown in (True, False):
                 assert app.table.row_count == 1
                 assert app.table.get_cell("2", "text").plain == "row 2"
                 await pilot.press("h")
-            _assert_columns(app, False)
+                _assert_columns(app, shown)
             assert app.table.row_count == 1
 
     asyncio.run(drive())
