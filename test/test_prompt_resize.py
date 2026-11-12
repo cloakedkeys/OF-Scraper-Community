@@ -47,7 +47,7 @@ def test_prompt_resize_clears_screen_and_redraws(monkeypatch, prompt_type):
 
         app._on_resize()
 
-        assert calls.mock_calls == [call.clear(), call.cursor(), call.redraw()]
+        assert calls.mock_calls == [call.clear(), call.redraw()]
         resized.append(app)
         return None
 

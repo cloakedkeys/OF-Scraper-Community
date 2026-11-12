@@ -126,7 +126,6 @@ def clear_on_resize(prompt_):
     def on_resize():
         # Resizing re-wraps old lines, so the renderer's last height is stale.
         app.renderer.clear()
-        app._request_absolute_cursor_position()
         app._redraw()
 
     app._on_resize = on_resize
