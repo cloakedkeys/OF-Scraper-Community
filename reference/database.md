@@ -6,11 +6,11 @@ Each creator has one SQLite file, `user_data.db`. It sits in the folder given by
 
 - **Connections:** `ofscraper/db/operations_/wrapper.py` opens a connection for each operation, in WAL mode, so `user_data.db-wal` and `-shm` files sit next to the database. Writes go through one worker thread and are retried on "database is locked".
 - **Backups:** they go to a `backup` folder beside the database (`ofscraper/db/backup.py`).
-  - At the start of a per-creator run, `table_init_create` copies the database to `backup/user_data_copy_N.db`, with N rotating through 1 to 5. It copies when the `DBINTERVAL` setting (default 86400 seconds) has passed since the last copy, or when the backup folder is empty.
-  - Before any pending schema migration, it also writes `backup/old_schema_{model_id}_{timestamp}_db_backup.db`. The name is `old_schema_db_backup.db` when there is no model id. It checks that the copy has the same size, and restores it if the migration raises.
+  - At the start of a per-creator run, `table_init_create` copies the database to `backup/user_data_copy_N.db`, with N rotating through 1 to 5. It copies when the `DBINTERVAL` setting (default 86400 seconds) has passed since the last copy, or when the backup folder is empty. It makes no copy of a database created in that run.
+  - Before any pending schema migration, it also writes `backup/old_schema_{model_id}_{timestamp}_db_backup.db`. The name is `old_schema_db_backup.db` when there is no model id. It checks that the copy has the same size, and restores it if the migration raises. A database created in that run (a first scrape, or a new Merge Databases target) gets no `old_schema_*` backup.
 - **Merging:** the Merge Databases menu option (`ofscraper/db/merge.py`) creates and migrates a target `user_data.db`. It then copies in rows from every `user_data.db` found under a chosen folder, skipping rows whose key is already present. Each source must contain exactly one numeric model id in `profiles`.
 - **Fansly:** Fansly runs use separate files. When the `metadata` template has no site-specific field (`save_location`, `root`, `site_name`, `model_id` and their aliases), a `Fansly` subfolder is added before `user_data.db`, so Fansly rows don't land in the OnlyFans file. Fansly databases carry a `schema_flags` row `site=fansly`.
-- **Read-only users:** the `db` command and the hash-based duplicate checks only read the database.
+- **Read-only users:** the `db` command and the hash-based duplicate checks only read the database. The exception is `db --unmark-permanent-skips`, which un-marks the selected permanent skips.
 
 The tables and columns below are what a new database has after `ofscraper.db.operations.create_tables` and `ofscraper.db.transition.modify_tables` run. The create statements are in `ofscraper/db/operations_/`.
 
@@ -47,9 +47,10 @@ One row per media item (image, video, audio) seen in a post, message, story or o
 **Written by:** Scraping calls `batch_mediainsert` (`ofscraper/db/operations_/media.py`). Scraping means any action-mode run (download, like, unlike), the `metadata` command, manual/url mode and the check/table mode. The callers are `ofscraper/data/posts/post.py`, `commands/manual.py` and `commands/check.py`.
 
 - **New and existing rows:** `(media_id, post_id)` pairs not yet in the table are inserted with API fields only. Pairs already present get their API fields (`link`, `linked`, `api_type`, `media_type`, `preview`, `created_at`, `posted_at`, `duration`, `unlocked`) updated on every scrape, not only in metadata mode.
-- **After a download:** once a file is written, `mark_media_as_downloaded` applies the API fields again and sets `directory`, `filename`, `size`, `downloaded` and `hash`. The callers are `main_download.py`, `alt_download.py` (for DRM), `fansly_stream_download.py` and `downloadmanager._force_download` (for zero-size or known-bad URLs). This update matches on `media_id` and `model_id` only, so every row for that media under the creator is updated.
+- **After a download:** once a file is written, `mark_media_as_downloaded` applies the API fields again and sets `directory`, `filename`, `size`, `downloaded`, `hash` and `skip_permanent`. The callers are `main_download.py`, `alt_download.py` (for DRM), `fansly_stream_download.py` and `downloadmanager._force_download` (for zero-size or known-bad URLs). This update matches on `media_id` and `model_id` only, so every row for that media under the creator is updated.
 - **Metadata command:** `commands/metadata/manager.py` uses the same function to set download status and filename from files on disk, without downloading.
 - **Stray media:** `batch_set_media_downloaded` sets `unlocked=0`. Despite its name, it does not touch `downloaded`. `clean_stray_media` in `post.py` calls it on every scrape for not-yet-downloaded unlocked rows. These are rows whose post was just scraped but whose media id was not returned. The `metadata` command calls it for strays when `mark_stray` is on.
+- **Permanent skips undone:** `unmark_permanent_skips` sets `downloaded` and `skip_permanent` back to `NULL` on rows with `skip_permanent = 1` only. `ofscraper db --unmark-permanent-skips` calls it for the rows it selects, and a `--retry-permanent-skips` run calls it when the script no longer skips a file for good.
 - **Collision recovery:** the offline tool `python -m ofscraper.commands.recover_collisions` sets `downloaded=0` for rows that share one file path, and writes an undo file.
 - **Migration and merge:** migration rebuilds the table once (`rebuild_media_table`). It copies every row into the new table in one transaction before the old table is dropped. The Merge Databases menu copies rows in.
 - **Deletes:** nothing in the app deletes rows.
@@ -77,6 +78,7 @@ One row per media item (image, video, audio) seen in a post, message, story or o
 | `unlocked` | BOOL |  |  | 1 if the account can view the media (API `canView` and a link exists). Set to 0 when stray-media cleanup decides the item is gone. |
 | `hash` | VARCHAR |  |  | The file hash recorded at download, when hashing is enabled. Used to find duplicate files. |
 | `model_id` | INTEGER |  |  | The creator account id the row belongs to. |
+| `skip_permanent` | BOOL |  |  | 1 when `skip_download_script` printed `skip-permanent`: the item is saved as downloaded with no file and isn't asked about again. `NULL` for every other row, including real downloads, other items saved as downloaded with no file, and rows saved before the column existed. A later download write clears it; the `metadata` command keeps it while the item stays downloaded with no file on disk. `--retry-permanent-skips` and `ofscraper db --unmark-permanent-skips` undo it. |
 
 ## `messages`
 
@@ -84,7 +86,7 @@ One row per direct message seen in the chat with the creator, from either side.
 
 **Written by:** `make_messages_table_changes` (`ofscraper/db/operations_/messages.py`) runs when the Messages area is scraped (`process_messages` in `ofscraper/data/posts/post.py`). Manual/url mode and the check command also run it.
 
-- **New and existing rows:** new message ids are inserted. Existing rows are updated (and `is_deleted` reset to 0) only under the `metadata` command.
+- **New and existing rows:** new message ids are inserted. Existing rows are updated (and `is_deleted` reset to 0) only under the `metadata` command. On every scan, an existing row whose `group_id` is still `NULL` gets the value the scan found; the metadata update doesn't change it.
 - **Deleted messages:** the messages scanner (`ofscraper/data/api/messages.py`) sets `is_deleted=1` for messages it expected but the API skipped past.
 - **Migration and merge:** migration rebuilds the table once, in one transaction, and keeps every column including `is_deleted`. The Merge Databases menu copies rows in, `is_deleted` included.
 - **Deletes:** the app never deletes rows.
@@ -104,6 +106,7 @@ One row per direct message seen in the chat with the creator, from either side.
 | `user_id` | INTEGER |  |  | The id of the sender (`fromUser`). It lets you tell the creator's messages from the account's own. |
 | `model_id` | INTEGER |  |  | The creator account id the chat belongs to. |
 | `is_deleted` | BOOLEAN |  | `0` | 1 when a scan decided the message no longer exists. Default 0. |
+| `group_id` | VARCHAR |  |  | Fansly only: the conversation id (`groupId`), so a message's page is its conversation's, `https://fansly.com/messages/<group_id>`. `NULL` for OnlyFans messages and for rows saved before the column existed; the next messages scan that sees the message fills it in. `stash_sync` uses it for a Fansly message's link. |
 
 ## `models`
 
@@ -143,7 +146,7 @@ One row per timeline, pinned, archived, streams, paid or label post seen for the
 
 **Written by:** `make_post_table_changes` (`ofscraper/db/operations_/posts.py`) runs on every scrape from `ofscraper/data/posts/post.py`. It covers the timeline, pinned, archived, streams and paid areas, and the posts inside labels via `make_label_table_changes`. Manual/url mode and the check command reach it through `make_changes_to_content_tables`.
 
-- **New and existing rows:** new post ids are inserted. Existing rows are updated (and `is_deleted` reset to 0) only when a metadata mode is set, that is, under the `metadata` command.
+- **New and existing rows:** new post ids are inserted. Existing rows are updated (and `is_deleted` reset to 0) only when a metadata mode is set, that is, under the `metadata` command. On every scan, an existing row whose `purchase_type` or `mentions` is still `NULL` gets the value the scan found; a scan without one leaves the stored value alone. The metadata update also replaces `mentions` with the scan's list when it has one, and never changes `purchase_type`.
 - **Deleted posts:** `mark_post_as_deleted` sets `is_deleted=1` for posts that the timeline, archived and streams scanners (`ofscraper/data/api/`) expected from the database but the API skipped past.
 - **Migration and merge:** migration rebuilds the table once. It copies every row into the new table in one transaction before the old table is dropped. The Merge Databases menu copies rows in.
 - **Deletes:** the app never deletes rows.
@@ -165,6 +168,8 @@ One row per timeline, pinned, archived, streams, paid or label post seen for the
 | `created_at` | TIMESTAMP |  |  | The post date (`postedAt`, else `createdAt`). |
 | `model_id` | INTEGER |  |  | The creator account id the row belongs to. |
 | `is_deleted` | BOOLEAN |  | `0` | 1 when a scan decided the post no longer exists on the site. Such posts are left out of the date lookups that drive later scans. Default 0. |
+| `purchase_type` | VARCHAR |  |  | For an OnlyFans purchase, whether the bought item was a `post` or a `message` (the purchase's `responseType`). `NULL` for rows not saved from a purchases list (the Purchased area, `paid_check`, or the purchases `msg_check` fetches); a bought message saved by those two commands goes to `messages` as before, without a purchase type, for Fansly purchases, and for rows saved before the column existed. A later timeline or messages scan never clears it, and a purchase scan fills it in for a row that already exists. `stash_sync` links a bought post's file to its page when this is `post`. |
+| `mentions` | VARCHAR |  |  | Fansly only: the post's `accountMentions` list as JSON text, exactly as the API sent it (`[]` when the post tags nobody). `NULL` for OnlyFans posts, Fansly purchases, and rows saved before the column existed; the next scan that sees the post fills it in. |
 
 ## `products`
 
@@ -228,6 +233,10 @@ Flag names:
 - `posts_is_deleted`: `posts.is_deleted` column added.
 - `messages_model_id`: `messages.model_id` column added.
 - `messages_is_deleted`: `messages.is_deleted` column added.
+- `posts_purchase_type`: `posts.purchase_type` column added.
+- `posts_mentions`: `posts.mentions` column added.
+- `messages_group_id`: `messages.group_id` column added.
+- `media_skip_permanent`: `medias.skip_permanent` column added.
 - `stories_model_id`: `stories.model_id` column added.
 - `labels_model_id`: `labels.model_id` column added.
 - `products_model_id`: `products.model_id` column added.
@@ -241,6 +250,7 @@ Flag names:
 - `products_model_id_constraint_added`: `products` rebuilt with `UNIQUE (post_id, model_id)`.
 - `media_post_id_constraint_added`: `medias` rebuilt with `UNIQUE (media_id, model_id, post_id)`. Written together with `media_bool_changes`.
 - `media_bool_changes`: `medias` rebuilt with its boolean columns. Written together with `media_post_id_constraint_added`. If either flag is missing, the one rebuild runs.
+- `media_size_skip_repaired`: a one-time repair, run after the changes above (`repair_tables`). Before #326 a file skipped by a size limit was saved as downloaded with no file, and its row got the media type `Forced_skippeds`. The repair sets `downloaded` back to NULL on the rows of that media (same `media_id` and `model_id`, any post) that are downloaded with no `directory`, `filename`, `size` or `hash`. It finds the media by that label in `medias`, and in the `user_data_copy_N.db` and `old_schema_*` backups, which it opens read-only and reads before the run writes any backup (a new copy can replace the one that still has the label). Media with a file recorded in any of its rows, or with a permanent `skip_download_script` skip (`skip_permanent = 1`), is left alone, and so is every other row downloaded with no file. The `old_schema_*` backup taken first holds the rows as they were. The flag is written in the same transaction.
 - `site`: not a migration flag. The value is the site name (`fansly`) for a Fansly database. The row is absent for OnlyFans.
 
 **Unique:** (`flag_name`)

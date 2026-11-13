@@ -21,6 +21,7 @@ import ofscraper.classes.labels as labels_class
 import ofscraper.db.utils.convert as convert
 import ofscraper.db.operations_.posts as post_
 import ofscraper.db.operations_.wrapper as wrapper
+import ofscraper.db.utils.columns as db_columns
 import ofscraper.db.utils.rebuild as rebuild
 from ofscraper.db.operations_.profile import get_single_model_via_profile
 import ofscraper.utils.settings as settings
@@ -53,19 +54,15 @@ labelPostsID = """
 SELECT post_id  FROM  labels where model_id=(?) and label_id=(?)
 """
 
-labelSelectTransition = """
-SELECT
-    CASE WHEN EXISTS (SELECT 1 FROM pragma_table_info('labels') WHERE name = 'label_id')
-        THEN label_id
-        ELSE id
-    END AS label_id,
-        CASE WHEN EXISTS (SELECT 1 FROM pragma_table_info('labels') WHERE name = 'model_id')
-        THEN model_id
-        ELSE Null
-    END AS model_id,
-    name, type, post_id
-FROM labels;
-"""
+# columns a later version added are (name, stand-in when missing): see
+# db_columns.select_all. Before label_id, the label's id was the row id.
+labelSelectTransition = [
+    ("label_id", "id"),
+    ("model_id", "NULL"),
+    "name",
+    "type",
+    "post_id",
+]
 
 
 @wrapper.operation_wrapper_async
@@ -174,23 +171,7 @@ def get_all_labels_transition(
     model_id=None, username=None, conn=None, database_model=None, **kwargs
 ) -> list:
     with contextlib.closing(conn.cursor()) as cur:
-        # Check for column existence (label_id)
-        cur.execute("PRAGMA table_info('labels')")
-        columns = [row[1] for row in cur.fetchall()]  # Get column names
-
-        # Build SELECT clause dynamically
-        select_clause = "label_id" if "label_id" in columns else "id"
-        select_clause += ", model_id"  # Add model_id for clarity
-
-        # Build the full query
-        sql = f"""
-        SELECT
-            {select_clause},
-            name, type, post_id
-        FROM labels;
-        """
-        cur.execute(sql)
-        # Execute the query
+        cur.execute(db_columns.select_all(cur, "labels", labelSelectTransition))
         data = [dict(row) for row in cur.fetchall()]
         return [
             dict(
@@ -218,7 +199,7 @@ async def rebuild_labels_table(model_id=None, username=None, db_path=None, **kwa
 
 
 async def make_label_table_changes(
-    labels, model_id=None, username=None, posts=True, **kwargs
+    labels, model_id=None, username=None, posts=True, from_api=False, **kwargs
 ):
     labels = list(
         map(
@@ -249,5 +230,5 @@ async def make_label_table_changes(
     if posts:
         all_posts = [post for label in labels for post in label.posts]
         await post_.make_post_table_changes(
-            all_posts, model_id=model_id, username=username
+            all_posts, model_id=model_id, username=username, from_api=from_api
         )

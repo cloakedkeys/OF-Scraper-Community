@@ -1,6 +1,7 @@
 import arrow
 import schedule
 import logging
+from dateutil import tz
 import time
 import traceback
 import signal
@@ -43,6 +44,8 @@ class DaemonWakeup:
 
 def set_schedule(*functs, wakeup=None):
     sleep = min(max(settings.get_settings().daemon / 5, 1), 60)
+    # after an error, wait the normal interval even when polling fast (#379)
+    error_wait = sleep
     # Poll a plain flag: setting an Event from a Python signal handler can
     # re-enter a lock held by the interrupted main thread.
     if wakeup is not None and wakeup.installed:
@@ -52,7 +55,10 @@ def set_schedule(*functs, wakeup=None):
             jobqueue.join()
             if wakeup is not None and wakeup.stopped:
                 return
-            next = arrow.now().shift(minutes=settings.get_settings().daemon)
+            # the local zone with its daylight saving rules (arrow 1.4's
+            # arrow.now() has a fixed offset): the time is handed to schedule
+            # as a local wall-clock time
+            next = arrow.now(tz.tzlocal()).shift(minutes=settings.get_settings().daemon)
             log.debug(f"Next run at ~ {next.format('MM-DD hh:mm:ss A')}")
             job = schedule.every().day.at(next.format("HH:mm:ss")).do(
                 schedule_helper, *functs, wakeup=wakeup
@@ -70,8 +76,12 @@ def set_schedule(*functs, wakeup=None):
                     schedule.run_pending()
                 time.sleep(sleep)
         except Exception as E:
+            # the scheduler carries on (#379), after its normal interval, so
+            # a repeating error neither spins nor floods the output
+            log.warning(f"Daemon scheduler failed: {type(E).__name__}: {E}")
             log.traceback_(E)
             log.traceback_(traceback.format_exc())
+            time.sleep(error_wait)
 
 
 def schedule_helper(*functs, wakeup=None):

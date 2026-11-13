@@ -12,10 +12,10 @@ r"""
 """
 
 import asyncio
+from ofscraper.commands.scraper.actions.download import stop
 import logging
 import traceback
 from functools import partial
-import arrow
 
 import ofscraper.data.api.archive as archive
 import ofscraper.data.api.highlights as highlights
@@ -59,6 +59,15 @@ from ofscraper.managers.postcollection import PostCollection
 log = logging.getLogger("shared")
 
 
+def log_area_failure(username, area, error):
+    """Say at normal output that one area of a creator failed (#379); the
+    area then comes back empty, as before. The traceback stays at traceback
+    level. Call it from an except block."""
+    log.warning(f"[{username}] {area} failed: {type(error).__name__}: {error}")
+    log.traceback_(error)
+    log.traceback_(traceback.format_exc())
+
+
 @run
 async def post_media_process(ele, c=None) -> PostCollection:
 
@@ -66,6 +75,9 @@ async def post_media_process(ele, c=None) -> PostCollection:
     model_id = ele.id
     await operations.table_init_create(model_id=model_id, username=username)
     postcollection = await process_areas(ele, model_id, username, c=c)
+    if postcollection is None:
+        # the scrape failed and has said so; there's nothing to compare
+        return None
     await clean_stray_media(username, model_id, postcollection)
     return postcollection
 
@@ -115,11 +127,11 @@ async def process_paid_post(model_id, username, c):
             paid_content,
             model_id=model_id,
             username=username,
+            from_api=True,
         )
         return (paid_content, paid.API)
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Purchased", E)
 
 
 @free.space_checker
@@ -136,13 +148,13 @@ async def process_messages(model_id, username, c):
             messages_,
             model_id=model_id,
             username=username,
+            from_api=True,
         )
         set_after_checks(model_id, messages.API)
 
         return messages_, messages.API
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Messages", E)
 
 
 @free.space_checker
@@ -165,8 +177,7 @@ async def process_stories(model_id, username, c):
 
         return stories, highlights.API_S
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Stories", E)
 
 
 @free.space_checker
@@ -189,8 +200,7 @@ async def process_highlights(model_id, username, c):
 
         return (highlights_, highlights.API_H)
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Highlights", E)
 
 
 @free.space_checker
@@ -217,12 +227,12 @@ async def process_timeline_posts(model_id, username, c):
             timeline_only_posts,
             model_id=model_id,
             username=username,
+            from_api=True,
         )
         set_after_checks(model_id, timeline.API)
         return (timeline_only_posts, timeline.API)
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Timeline", E)
 
 
 @free.space_checker
@@ -242,13 +252,13 @@ async def process_archived_posts(model_id, username, c):
             archived_posts,
             model_id=model_id,
             username=username,
+            from_api=True,
         )
 
         set_after_checks(model_id, archive.API)
         return (archived_posts, archive.API)
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Archived", E)
 
 
 @free.space_checker
@@ -268,13 +278,13 @@ async def process_streamed_posts(model_id, username, c):
             streams_posts,
             model_id=model_id,
             username=username,
+            from_api=True,
         )
 
         set_after_checks(model_id, streams.API)
         return (streams_posts, streams.API)
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Streams", E)
 
 
 @free.space_checker
@@ -290,12 +300,12 @@ async def process_pinned_posts(model_id, username, c):
             pinned_posts,
             model_id=model_id,
             username=username,
+            from_api=True,
         )
 
         return (pinned_posts, pinned.API)
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Pinned", E)
 
 
 @free.space_checker
@@ -326,9 +336,7 @@ async def process_profile(username) -> list:
         ]
         return posts_array, profile.API
     except Exception as E:
-        log.traceback_(f"Failed to process profile for {username}")
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Profile", E)
         return [], profile.API
 
 
@@ -391,6 +399,7 @@ async def process_all_paid():
                 temp_postcollection.posts,
                 model_id=model_id,
                 username=username,
+                from_api=True,
             )
             await batch_mediainsert(
                 temp_postcollection.all_unique_media,
@@ -433,6 +442,7 @@ async def process_labels(model_id, username, c):
             labelled_posts_labels,
             model_id=model_id,
             username=username,
+            from_api=True,
         )
 
         log.debug(
@@ -464,11 +474,11 @@ async def process_labels(model_id, username, c):
     except Exception as E:
         # label rows weren't saved, so no label may be marked finished
         labels_api.discard_finished_labels(model_id)
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "Labels", E)
 
 
 @run
+@stop.fetching
 async def process_areas(ele, model_id, username, c=None):
     try:
         username = ele.name
@@ -483,23 +493,22 @@ async def process_areas(ele, model_id, username, c=None):
         labels_api.commit_finished_labels(model_id)
         return postcollection
     except Exception as E:
-        log.traceback_(E)
-        log.traceback_(traceback.format_exc())
+        log_area_failure(username, "scrape", E)
     finally:
         # anything not committed above (an error, or a cancelled pass) is
         # dropped, so a later pass in the same process can't trust it
         labels_api.discard_finished_labels(model_id)
 
 
-def process_single_task(func):
+def process_single_task(func, username=None, area=None):
     async def inner(sem=None):
         data = None
         await sem.acquire()
         try:
             data = await func()
         except Exception as E:
-            log.traceback_(E)
-            log.traceback_(traceback.format_exc())
+            # e.g. the free-space check, which runs before the area's own try
+            log_area_failure(username, area, E)
         finally:
             sem.release()
         return data
@@ -544,23 +553,25 @@ async def process_tasks(model_id, username, ele, c=None):
         # remain accessible after expiration.
         if "Profile" in final_post_areas:
             tasks.append(
-                asyncio.create_task(
-                    process_single_task(partial(process_profile, username))(sem=sem)
+                stop.create_fetch_task(
+                    process_single_task(
+                        partial(process_profile, username), username, "Profile"
+                    )(sem=sem)
                 )
             )
         if "Purchased" in final_post_areas:
             tasks.append(
-                asyncio.create_task(
+                stop.create_fetch_task(
                     process_single_task(
-                        partial(process_paid_post, model_id, username, c)
+                        partial(process_paid_post, model_id, username, c), username, "Purchased"
                     )(sem=sem)
                 )
             )
         if "Messages" in final_post_areas:
             tasks.append(
-                asyncio.create_task(
+                stop.create_fetch_task(
                     process_single_task(
-                        partial(process_messages, model_id, username, c)
+                        partial(process_messages, model_id, username, c), username, "Messages"
                     )(sem=sem)
                 )
             )
@@ -570,54 +581,58 @@ async def process_tasks(model_id, username, ele, c=None):
         if not skip_wall:
             if "Pinned" in final_post_areas:
                 tasks.append(
-                    asyncio.create_task(
+                    stop.create_fetch_task(
                         process_single_task(
-                            partial(process_pinned_posts, model_id, username, c)
+                            partial(process_pinned_posts, model_id, username, c), username, "Pinned"
                         )(sem=sem)
                     )
                 )
 
             if "Timeline" in final_post_areas:
                 tasks.append(
-                    asyncio.create_task(
+                    stop.create_fetch_task(
                         process_single_task(
-                            partial(process_timeline_posts, model_id, username, c=c)
+                            partial(process_timeline_posts, model_id, username, c=c),
+                            username,
+                            "Timeline",
                         )(sem=sem)
                     )
                 )
 
             if "Archived" in final_post_areas:
                 tasks.append(
-                    asyncio.create_task(
+                    stop.create_fetch_task(
                         process_single_task(
-                            partial(process_archived_posts, model_id, username, c=c)
+                            partial(process_archived_posts, model_id, username, c=c),
+                            username,
+                            "Archived",
                         )(sem=sem)
                     )
                 )
 
             if "Highlights" in final_post_areas:
                 tasks.append(
-                    asyncio.create_task(
+                    stop.create_fetch_task(
                         process_single_task(
-                            partial(process_highlights, model_id, username, c)
+                            partial(process_highlights, model_id, username, c), username, "Highlights"
                         )(sem=sem)
                     )
                 )
 
             if "Stories" in final_post_areas:
                 tasks.append(
-                    asyncio.create_task(
+                    stop.create_fetch_task(
                         process_single_task(
-                            partial(process_stories, model_id, username, c)
+                            partial(process_stories, model_id, username, c), username, "Stories"
                         )(sem=sem)
                     )
                 )
 
             if "Labels" in final_post_areas and ele.active:
                 tasks.append(
-                    asyncio.create_task(
+                    stop.create_fetch_task(
                         process_single_task(
-                            partial(process_labels, model_id, username, c)
+                            partial(process_labels, model_id, username, c), username, "Labels"
                         )(sem=sem)
                     )
                 )
@@ -628,9 +643,9 @@ async def process_tasks(model_id, username, ele, c=None):
 
             if "Streams" in final_post_areas and ele.active:
                 tasks.append(
-                    asyncio.create_task(
+                    stop.create_fetch_task(
                         process_single_task(
-                            partial(process_streamed_posts, model_id, username, c)
+                            partial(process_streamed_posts, model_id, username, c), username, "Streams"
                         )(sem=sem)
                     )
                 )
@@ -641,8 +656,12 @@ async def process_tasks(model_id, username, ele, c=None):
 
         # Gather results and add to postcollection
         for result in asyncio.as_completed(tasks):
+            area = "an area"
             try:
-                posts, area = await result
+                data = await result
+                if data is None:
+                    continue  # the area failed and has already said so
+                posts, area = data
                 area_title = area.capitalize()
                 actions_for_this_batch = []
                 command = settings.get_settings().command
@@ -660,5 +679,5 @@ async def process_tasks(model_id, username, ele, c=None):
                 if actions_for_this_batch:
                     postcollection.add_posts(posts, actions=actions_for_this_batch)
             except Exception as E:
-                log.debug(E)
+                log_area_failure(username, area, E)
     return postcollection

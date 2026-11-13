@@ -11,6 +11,7 @@ import psutil
 from humanfriendly import format_size
 import aiohttp
 
+from ofscraper.commands.scraper.actions.download import stop
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.commands.scraper.actions.utils.general as common
 import ofscraper.commands.scraper.actions.utils.globals as common_globals
@@ -26,7 +27,6 @@ import ofscraper.utils.auth.request as auth_requests
 import ofscraper.utils.cache.cache as cache
 import ofscraper.utils.dates as dates
 import ofscraper.utils.of_env.of_env as of_env
-import ofscraper.utils.system.system as system
 from ofscraper.utils.system.subprocess import async_run
 from ofscraper.utils.system.ffprobe import verify_media_integrity
 import ofscraper.utils.live.updater as progress_updater
@@ -57,6 +57,7 @@ class AltDownloadManager(DownloadManager):
         # Acquire semaphore at the very beginning of the process
         await common_globals.sem.acquire()
         try:
+            stop.started(ele)
             common_globals.log.debug(
                 f"{common_logs.get_medialog(ele)} Downloading with protected media downloader"
             )
@@ -70,11 +71,45 @@ class AltDownloadManager(DownloadManager):
             video = await ele.mpd_video
             path_to_file_logger(sharedPlaceholderObj, ele)
 
-            # Only attempt to download tracks that actually exist
+            # Only attempt to download tracks that actually exist. The size
+            # limits are for the whole video (#316): they're checked once the
+            # last track's size is known, on its size plus the audio's
+            mediatype = ele.mediatype
             if audio:
-                audio = await self._alt_download_downloader(audio, c, ele)
-            if video:
-                video = await self._alt_download_downloader(video, c, ele)
+                audio = await self._alt_download_downloader(
+                    audio, c, ele, before=None if video else 0
+                )
+                stop.check()
+            if video and audio and audio["total"] == 0:
+                # skip_download_script skipped the audio track, which skips
+                # the whole video: the video track isn't downloaded (#343).
+                # Its part from an earlier run is removed with the audio's
+                placeholderObj = await placeholder.tempFilePlaceholder(
+                    ele, f"{video['name']}.part"
+                ).init()
+                video["path"] = placeholderObj.tempfilepath
+                video["total"] = 0
+            elif video:
+                video = await self._alt_download_downloader(
+                    video, c, ele, before=audio["total"] if audio else 0
+                )
+                stop.check()
+            if ele.mediatype != mediatype or any(
+                track and track["total"] == 0 for track in (audio, video)
+            ):
+                # a size limit changes the mediatype; skip_download_script
+                # skips a track without changing it, and leaves its total 0
+                # (#325). Either way the item is skipped and its tracks
+                # aren't kept: a DRM video is no use with a track missing.
+                # Nothing after this reads ele.mpd, which a new mediatype
+                # makes None
+                for track in (audio, video):
+                    if track:
+                        pathlib.Path(track["path"]).unlink(missing_ok=True)
+                if self._skipped_by_script(ele):
+                    # saved as done only when the script skips it for good
+                    return await self._script_skip_result(ele, username, model_id)
+                return "forced_skipped", 0
 
             # Safely calculate total size
             audio_size = audio["total"] if audio else 0
@@ -87,15 +122,33 @@ class AltDownloadManager(DownloadManager):
             if post_result:
                 return post_result
 
+            stop.check()
+            parts = [track["path"] for track in (audio, video) if track]
             await self._media_item_keys_alt(c, audio, video, ele)
-
-            return await self._handle_result_alt(
-                sharedPlaceholderObj, ele, audio, video, username, model_id
-            )
+            try:
+                result = await self._handle_result_alt(
+                    sharedPlaceholderObj, ele, audio, video, username, model_id
+                )
+            except (Exception, asyncio.CancelledError) as exc:
+                # After decryption, only a requested stop keeps encrypted
+                # parts for Resume. Key failures above also keep the parts.
+                if not (
+                    isinstance(exc, asyncio.CancelledError)
+                    and stop.requested.is_set()
+                ):
+                    for part in parts:
+                        part.unlink(missing_ok=True)
+                raise
+            for part in parts:
+                part.unlink(missing_ok=True)
+            return result
         finally:
             common_globals.sem.release()
 
-    async def _alt_download_downloader(self, item, c, ele):
+    async def _alt_download_downloader(self, item, c, ele, before=0):
+        """Download one track. before is the size of the tracks already
+        downloaded: the size limits are checked on it plus this track's
+        size. None checks no limits (another track comes after this one)."""
         self._downloadspace()
         placeholderObj = await placeholder.tempFilePlaceholder(
             ele, f"{item['name']}.part"
@@ -103,6 +156,7 @@ class AltDownloadManager(DownloadManager):
         item["path"] = placeholderObj.tempfilepath
         item["total"] = None
         item["validator"] = None
+        item["before"] = before
 
         _attempt = self._alt_attempt_get(item)
         _attempt.set(0)
@@ -140,6 +194,9 @@ class AltDownloadManager(DownloadManager):
                     common_globals.log.debug(
                         f" {get_medialog(ele)} [attempt {_attempt.get()}/{get_download_retries()}] Open Files -> {list(map(lambda x:(x.path,x.fd),psutil.Process().open_files()))}"
                     )
+                    if self._skipped_by_size(ele, E):
+                        item["total"] = 0
+                        return item
                     raise E
                 except Exception as E:
                     common_globals.log.traceback_(
@@ -148,6 +205,10 @@ class AltDownloadManager(DownloadManager):
                     common_globals.log.traceback_(
                         f"{get_medialog(ele)} [attempt {_attempt.get()}/{get_download_retries()}] {E}"
                     )
+                    if self._skipped_by_size(ele, E):
+                        # alt_download removes both tracks' parts
+                        item["total"] = 0
+                        return item
                     raise E
 
     async def _alt_download_sendreq(self, item, c, ele, placeholderObj):
@@ -247,7 +308,12 @@ class AltDownloadManager(DownloadManager):
                     f"{get_medialog(ele)} total from request {format_size(data.get('content-total')) if data.get('content-total') else 'unknown'}"
                 )
                 temp_file_logger(placeholderObj, ele)
-                if await self._check_forced_skip(ele, total) == 0:
+                if (
+                    await self._check_forced_skip(
+                        ele, total, item.get("before", 0), item["type"]
+                    )
+                    == 0
+                ):
                     if asked and not resume_size:
                         # a whole-file reply to a resume: the part is stale
                         pathlib.Path(placeholderObj.tempfilepath).unlink(
@@ -272,6 +338,20 @@ class AltDownloadManager(DownloadManager):
                     if total is None:
                         total = self._size_written(ele, written)
                         item["total"] = total
+                        # the size is known only now: check the size limits
+                        # and skip_download_script on it, as for a reply that
+                        # gave its size (#336)
+                        if (
+                            await self._check_forced_skip(
+                                ele, total, item.get("before", 0), item["type"]
+                            )
+                            == 0
+                        ):
+                            pathlib.Path(placeholderObj.tempfilepath).unlink(
+                                missing_ok=True
+                            )
+                            item["total"] = 0
+                            return item
                     await self._total_change_helper(total)
 
             await self._size_checker(placeholderObj.tempfilepath, ele, total)
@@ -325,7 +405,7 @@ class AltDownloadManager(DownloadManager):
                     break  # Exit loop when no more chunks
 
         # Catch native aiohttp socket read timeouts
-        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError) as E:
+        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError):
             common_globals.log.info(
                 f"{common_logs.get_medialog(ele)}⚠️ CDN went silent (sock_read timeout). Connection stalled, forcing retry!"
             )
@@ -393,6 +473,7 @@ class AltDownloadManager(DownloadManager):
                 f"{common_logs.get_medialog(ele)} ffmpeg {t.stdout.decode()}"
             )
 
+        stop.check()
         # Clean up temp tracks
         if video:
             video["path"].unlink(missing_ok=True)
@@ -491,7 +572,12 @@ class AltDownloadManager(DownloadManager):
                 pass
             return item, False
 
-        if await self._check_forced_skip(ele, total) == 0:
+        if (
+            await self._check_forced_skip(
+                ele, total, item.get("before", 0), item["type"]
+            )
+            == 0
+        ):
             item["total"] = 0
             return item, True
         elif total == resume_size:

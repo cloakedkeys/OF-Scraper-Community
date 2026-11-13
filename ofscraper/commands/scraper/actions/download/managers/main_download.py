@@ -8,13 +8,13 @@ import psutil
 from humanfriendly import format_size
 import aiohttp
 
+from ofscraper.commands.scraper.actions.download import stop
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.commands.scraper.actions.utils.general as common
 import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.commands.scraper.actions.utils.paths as common_paths
 import ofscraper.commands.scraper.actions.utils.log as common_logs
 import ofscraper.utils.dates as dates
-import ofscraper.utils.system.system as system
 import ofscraper.utils.cache.cache as cache
 import ofscraper.utils.settings as settings
 from ofscraper.utils.system.ffprobe import verify_media_integrity
@@ -43,6 +43,7 @@ class MainDownloadManager(DownloadManager):
     async def main_download(self, c, ele: Media, username, model_id):
         await common_globals.sem.acquire()
         try:
+            stop.started(ele)
             common_globals.log.debug(
                 f"{common_logs.get_medialog(ele)} Downloading with normal downloader"
             )
@@ -57,9 +58,15 @@ class MainDownloadManager(DownloadManager):
                 return ele.mediatype, 0
 
             result = await self._main_download_downloader(c, ele)
+            stop.check()
             ele.add_size(result[0])
 
             if result[0] == 0:
+                if self._skipped_by_script(ele):
+                    # skipped as a DRM video the script skips is (#331),
+                    # leaving no part
+                    pathlib.Path(result[1]).unlink(missing_ok=True)
+                    return await self._script_skip_result(ele, username, model_id)
                 if ele.mediatype.capitalize() != "Forced_skipped":
                     await self._force_download(ele, username, model_id)
                 return ele.mediatype.capitalize(), 0
@@ -119,6 +126,9 @@ class MainDownloadManager(DownloadManager):
                     common_globals.log.debug(
                         f"[{common_logs.get_medialog(ele)}] [attempt {common_globals.attempt.get()}/{get_download_retries()}] Number of Open Files -> { len(psutil.Process().open_files())}"
                     )
+                    if self._skipped_by_size(ele, E):
+                        pathlib.Path(tempholderObj.tempfilepath).unlink(missing_ok=True)
+                        return (0, tempholderObj.tempfilepath, None)
                     raise E
                 except Exception as E:
                     common_globals.log.traceback_(
@@ -127,6 +137,9 @@ class MainDownloadManager(DownloadManager):
                     common_globals.log.traceback_(
                         f"{common_logs.get_medialog(ele)} [attempt {common_globals.attempt.get()}/{get_download_retries()}] {E}"
                     )
+                    if self._skipped_by_size(ele, E):
+                        pathlib.Path(tempholderObj.tempfilepath).unlink(missing_ok=True)
+                        return (0, tempholderObj.tempfilepath, None)
                     raise E
 
     async def _main_download_sendreq(
@@ -225,6 +238,14 @@ class MainDownloadManager(DownloadManager):
                     )
                     if total is None:
                         total = self._size_written(ele, written)
+                        # the size is known only now: check the size limits
+                        # and skip_download_script on it, as for a reply that
+                        # gave its size (#336)
+                        if await self._check_forced_skip(ele, total) == 0:
+                            pathlib.Path(tempholderObj.tempfilepath).unlink(
+                                missing_ok=True
+                            )
+                            return (0, tempholderObj.tempfilepath, placeholderObj)
                     await self._total_change_helper(total)
             await self._size_checker(tempholderObj.tempfilepath, ele, total)
             return (total, tempholderObj.tempfilepath, placeholderObj)
@@ -293,7 +314,7 @@ class MainDownloadManager(DownloadManager):
                     break
 
         # Catch native aiohttp socket read timeouts
-        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError) as E:
+        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError):
             common_globals.log.info(
                 f"{common_logs.get_medialog(ele)}⚠️ CDN went silent (sock_read timeout). Connection stalled, forcing retry!"
             )
@@ -318,6 +339,7 @@ class MainDownloadManager(DownloadManager):
         return written
 
     async def _handle_result_main(self, result, ele, username, model_id):
+        stop.check()
         total, temp, placeholderObj = result
         path_to_file = placeholderObj.trunicated_filepath
 
@@ -334,7 +356,9 @@ class MainDownloadManager(DownloadManager):
             and settings.get_settings().verify_all_integrity
         ):
             expected_duration = ele.duration
-            if not verify_media_integrity(temp, expected_duration):
+            valid = verify_media_integrity(temp, expected_duration)
+            stop.check()
+            if not valid:
                 common_globals.log.warning(
                     f"Removing corrupted/truncated standard video: {temp}"
                 )
@@ -345,6 +369,7 @@ class MainDownloadManager(DownloadManager):
             f"{common_logs.get_medialog(ele)} renaming {pathlib.Path(temp).absolute()} -> {path_to_file}"
         )
 
+        stop.check()
         # 3. Move the verified file to final path; it can end up under another
         # name if a different file already has this one (#48)
         path_to_file = await asyncio.get_event_loop().run_in_executor(
@@ -430,6 +455,9 @@ class MainDownloadManager(DownloadManager):
 
         check = None
         if await self._check_forced_skip(ele, total) == 0:
+            # skipped on the saved size, without a request: the part left by
+            # the earlier run is removed, as a DRM video's are (#348)
+            pathlib.Path(tempholderObj.tempfilepath).unlink(missing_ok=True)
             total = 0
             common_logs.path_to_file_logger(placeholderObj, ele, common_globals.log)
             check = True

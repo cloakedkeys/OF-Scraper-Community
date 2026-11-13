@@ -14,7 +14,7 @@ r"""
 from InquirerPy.base import Choice
 from InquirerPy.separator import Separator
 from InquirerPy.validator import EmptyInputValidator, PathValidator
-from prompt_toolkit.shortcuts import prompt as prompt
+from ofscraper.prompts.promptConvert import prompt
 from rich.console import Console
 from humanfriendly import parse_size
 
@@ -72,8 +72,10 @@ def funct(prompt_):
     It outputs the desired filename or path.
 
     skip_download_script: A script that determines whether to skip or continue a download. 
-    It executes before the download process begins, and should return "False" or an empty string via stdout to 
-    signal that the download should be skipped.
+    It executes before the download process begins. Printing "False" or nothing to stdout skips the file
+    in this run only: the next run asks again. Printing "skip-permanent" skips it for good: it's saved as
+    downloaded with no file and not asked about again (--retry-permanent-skips or
+    "ofscraper db --unmark-permanent-skips" undo that). Any other output lets the download proceed.
 
     naming_script: A script to dynamically generate the final filename and path for a media item before download
     after_download_script: A script that executes after each individual media download is complete
@@ -404,7 +406,7 @@ def performance_config():
                 "min_allowed": 1,
                 "max_allowed": 15,
                 "validate": EmptyInputValidator(),
-                "option_instruction": f"Value can be 1-15",
+                "option_instruction": "Value can be 1-15",
                 "default": data.get_download_semaphores(),
             }
         ],

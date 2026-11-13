@@ -37,8 +37,16 @@ class Media(base.base):
         self._hls = None
         self._lock = asyncio.Lock()
         self._cached_mpd = None
+        # a size limit replaces the type with "Forced_skipped" for the download
+        self._type = media.get("type")
+        # skip_download_script's answers in the current download call, by
+        # (track, size); run.download resets them
+        self.skip_script_answers = {}
 
         self.download_attempted = False
+        self.download_unstarted = False
+        self.download_stopped = False
+        self.download_started = False
         self.download_succeeded = (
             None  # Using tri-state: None (not attempted), True, False
         )
@@ -66,12 +74,16 @@ class Media(base.base):
         """Sets the flags to represent a skipped download."""
         self.download_attempted = False
         self.download_succeeded = None
+        self.update_download_status()
 
     def update_download_status(self):
         """
         Updates the download status string in the internal media dictionary
         based on the two download flags.
         """
+        # the download is over: give the item its own type back (#332, #341)
+        if str(self._media.get("type")).lower() == "forced_skipped":
+            self._media["type"] = self._type
         if self.download_attempted and self.download_succeeded:
             self.media["download_status"] = "succeeded"
         elif self.download_attempted and not self.download_succeeded:
@@ -154,7 +166,8 @@ class Media(base.base):
             return "Images"
         elif media_type == "gif":
             return "Videos"
-        elif media_type == "forced_skipped":
+        elif media_type.lower() == "forced_skipped":
+            # a size limit sets "Forced_skipped": read it back unchanged
             return "Forced_skipped"
         elif media_type in {"audio", "audios"}:
             return "Audios"
@@ -265,7 +278,7 @@ class Media(base.base):
     def formatted_date(self):
         date_val = self._media.get("createdAt") or self._media.get("postedAt")
         if date_val:
-            return arrow.get(date_val).format("YYYY-MM-DD hh:mm:ss")
+            return arrow.get(date_val).format("YYYY-MM-DD HH:mm:ss")
         return None
 
     @property
@@ -417,7 +430,7 @@ class Media(base.base):
         filename = re.sub(r"\.mpd$", "", filename_part)
 
         if self.responsetype == "Profile":
-            date_str = arrow.get(self.date).format("YYYY_MM_DD")
+            date_str = arrow.get(self.date or 0).format("YYYY_MM_DD")
             return f"{filename}_{date_str}"
         return filename
 
@@ -586,11 +599,12 @@ class Media(base.base):
         self._log = val
 
     def get_text(self):
+        # an undated item falls back to 0 (1970), as its file name does
         if self.responsetype != "Profile":
-            date_str = arrow.get(self.date).format(data.get_date())
+            date_str = arrow.get(self.date or 0).format(data.get_date())
             text = self._post.file_sanitized_text or self.filename or date_str
         else:
-            date_str = arrow.get(self.date).format()
+            date_str = arrow.get(self.date or 0).format()
             text = f"{date_str} {self.text or self.filename}"
         return text
 
