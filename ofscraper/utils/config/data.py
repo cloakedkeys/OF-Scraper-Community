@@ -37,6 +37,16 @@ def strip_path_quotes(val):
     return val
 
 
+def _lookup(config, path):
+    """the value at a "key" or "section.key" path; a section that isn't a
+    dict, e.g. a hand-edited null, counts as empty"""
+    section, _, key = path.rpartition(".")
+    if not section:
+        return config.get(key)
+    values = config.get(section)
+    return values.get(key) if isinstance(values, dict) else None
+
+
 def _first(config, *paths):
     """
     The value at the first path that holds a truthy one, else the value at
@@ -46,8 +56,7 @@ def _first(config, *paths):
     """
     val = None
     for path in paths:
-        section, _, key = path.rpartition(".")
-        val = config.get(section, {}).get(key) if section else config.get(key)
+        val = _lookup(config, path)
         if val:
             break
     return val
@@ -60,8 +69,7 @@ def _first_set(config, *paths):
     later ones are only read when needed.
     """
     for path in paths:
-        section, _, key = path.rpartition(".")
-        val = config.get(section, {}).get(key) if section else config.get(key)
+        val = _lookup(config, path)
         if val is not None:
             return val
     return None
@@ -219,15 +227,13 @@ def get_InfiniteLoop(config=None):
 def get_incremental_downloads(config=None):
     if config is False:
         return of_env.getattr("INCREMENTAL_DOWNLOADS_DEFAULT")
-    # check each place for None, not falsiness, so a saved false is kept
-    for val in (
-        config.get("incremental_downloads"),
-        config.get("advanced_options", {}).get("incremental_downloads"),
-        config.get("advanced_options", {}).get("enable_auto_after"),
-    ):
-        if val is not None:
-            return val
-    return of_env.getattr("INCREMENTAL_DOWNLOADS_DEFAULT")
+    val = _first_set(
+        config,
+        "incremental_downloads",
+        "advanced_options.incremental_downloads",
+        "advanced_options.enable_auto_after",
+    )
+    return val if val is not None else of_env.getattr("INCREMENTAL_DOWNLOADS_DEFAULT")
 
 
 @wrapper.config_reader
@@ -251,7 +257,10 @@ def get_logs_expire(config=None):
     if not config:
         return 0
     val = _first_set(config, "logs_expire_time", "advanced_options.logs_expire_time")
-    return int(val) if val is not None else 0
+    try:
+        return int(val) if val is not None else 0
+    except (ValueError, TypeError):
+        return 0
 
 
 @wrapper.config_reader
@@ -259,10 +268,8 @@ def get_ssl_verify(config=None):
     if not config:
         return of_env.getattr("SSL_VALIDATION_DEFAULT")
 
-    # 1. Safely check for the key (avoiding 'or' so we don't accidentally skip a literal False)
-    val = config.get("ssl_verify")
-    if val is None:
-        val = config.get("advanced_options", {}).get("ssl_verify")
+    # 1. Check for None, not falsiness, so a literal False reaches step 2
+    val = _first_set(config, "ssl_verify", "advanced_options.ssl_verify")
 
     # 2. Legacy Migration: Convert JSON booleans (True/False) to the new default
     if isinstance(val, bool):
@@ -402,7 +409,8 @@ def get_filter(config=None):
     if isinstance(final_filter, str):
         return [x.capitalize().strip() for x in final_filter.split(",")]
     elif isinstance(final_filter, list):
-        return [x.capitalize() for x in final_filter]
+        # an entry that isn't a media type name is left out
+        return [x.capitalize() for x in final_filter if isinstance(x, str)]
     return []
 
 
@@ -531,7 +539,8 @@ def get_key_mode(config=None):
     )
     return (
         final_value.lower()
-        if final_value and final_value.lower() in of_env.getattr("KEY_OPTIONS")
+        if isinstance(final_value, str)
+        and final_value.lower() in of_env.getattr("KEY_OPTIONS")
         else of_env.getattr("KEY_DEFAULT")
     )
 
@@ -548,7 +557,8 @@ def get_dynamic(config=None):
     )
     return (
         final_value.lower()
-        if final_value and final_value.lower() in of_env.getattr("DYNAMIC_OPTIONS_ALL")
+        if isinstance(final_value, str)
+        and final_value.lower() in of_env.getattr("DYNAMIC_OPTIONS_ALL")
         else of_env.getattr("DYNAMIC_RULE_DEFAULT")
     )
 
@@ -621,7 +631,8 @@ def cache_mode_helper(config=None):
     final_data = _truthy_value(
         config, "CACHEDEFAULT", "cache-mode", "advanced_options.cache-mode"
     )
-    if final_data in {"sqlite", "json", "disabled", "api_disabled"}:
+    modes = {"sqlite", "json", "disabled", "api_disabled"}
+    if isinstance(final_data, str) and final_data in modes:
         return final_data
     else:
         return of_env.getattr("CACHEDEFAULT")
@@ -653,7 +664,7 @@ def get_textType(config=None):
     )
     return (
         final_value
-        if final_value in {"letter", "word"}
+        if isinstance(final_value, str) and final_value in {"letter", "word"}
         else of_env.getattr("TEXT_TYPE_DEFAULT")
     )
 
