@@ -394,8 +394,7 @@ def get_discord(config=None):
 
 @wrapper.config_reader
 def get_filter(config=None):
-    if config is False:
-        return of_env.getattr("FILTER_DEFAULT")
+    # config=False goes through _value() too, so the default is normalised
     final_filter = _value(
         config,
         "FILTER_DEFAULT",
