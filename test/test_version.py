@@ -32,8 +32,13 @@ def test_version_comes_from_the_ofscraper_community_distribution(monkeypatch):
     assert asked == ["ofscraper-community"]
 
 
-@pytest.mark.parametrize("installed", [{}, {"ofscraper": "3.14.7"}])
-def test_version_falls_back_when_not_installed(monkeypatch, installed):
-    # upstream's 'ofscraper' metadata is never mistaken for the fork's version
-    version, _ = _load(monkeypatch, installed)
+def test_version_comes_from_the_ofscraper_distribution(monkeypatch):
+    # datawhores/OF-Scraper publishes the same code to PyPI as 'ofscraper'
+    version, asked = _load(monkeypatch, {"ofscraper": "3.16.14"})
+    assert version == "3.16.14"
+    assert asked == ["ofscraper-community", "ofscraper"]
+
+
+def test_version_falls_back_when_not_installed(monkeypatch):
+    version, _ = _load(monkeypatch, {})
     assert version == "0.0.0"
