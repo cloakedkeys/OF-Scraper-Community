@@ -8,6 +8,7 @@ and "false" modes in sessionManager._get_ssl_context() don't use cert.py.
 """
 
 import asyncio
+import select
 import socket
 import ssl
 import struct
@@ -25,10 +26,26 @@ from ofscraper.managers.sessionmanager.cert import create_custom_ssl_context
 # are deprecated
 OLD_PROTOCOL_BITS = 0x02000000 | 0x04000000 | 0x10000000
 HOST = "localhost"
-# Listen on whatever localhost resolves to first (often ::1), so clients don't
-# wait for a refused address before falling back.
-_FAMILY, *_, _SOCKADDR = socket.getaddrinfo(HOST, None, type=socket.SOCK_STREAM)[0]
-LOOPBACK = _SOCKADDR[0]
+# Listen on every address localhost resolves to. Clients don't agree on which
+# one to use: aiohttp resolves with AI_ADDRCONFIG, which leaves out ::1 on a
+# machine with no IPv6 network address, while a plain lookup lists ::1 first.
+LOOPBACKS = list(
+    dict.fromkeys(
+        (info[0], info[4][0])
+        for info in socket.getaddrinfo(HOST, None, type=socket.SOCK_STREAM)
+    )
+)
+
+
+def _listeners():
+    servers, port = [], 0
+    for family, address in LOOPBACKS:
+        srv = socket.socket(family)
+        srv.bind((address, port))
+        srv.listen(4)
+        port = srv.getsockname()[1]
+        servers.append(srv)
+    return servers
 
 
 def _raw(ctx, port):
@@ -58,13 +75,14 @@ TRANSPORTS = {"raw": _raw, "httpx": _httpx, "aiohttp": _aiohttp}
 
 
 def _client_hello(ctx, transport):
-    srv = socket.socket(_FAMILY)
-    srv.bind((LOOPBACK, 0))
-    srv.listen(4)
+    servers = _listeners()
     out = {}
 
     def accept():
-        conn, _ = srv.accept()
+        ready, _, _ = select.select(servers, [], [], 10)
+        if not ready:
+            return
+        conn, _ = ready[0].accept()
         data = b""
         while len(data) < 5 or len(data) < 5 + struct.unpack(">H", data[3:5])[0]:
             chunk = conn.recv(65536)
@@ -76,12 +94,15 @@ def _client_hello(ctx, transport):
 
     t = threading.Thread(target=accept)
     t.start()
+    error = None
     try:
-        TRANSPORTS[transport](ctx, srv.getsockname()[1])
-    except Exception:
-        pass  # the fake server hangs up after the ClientHello
-    t.join(timeout=10)
-    srv.close()
+        TRANSPORTS[transport](ctx, servers[0].getsockname()[1])
+    except Exception as exc:
+        error = exc  # expected: the fake server hangs up after the ClientHello
+    t.join(timeout=15)
+    for srv in servers:
+        srv.close()
+    assert "hello" in out, f"{transport} never reached the test server: {error!r}"
     return out["hello"]
 
 
