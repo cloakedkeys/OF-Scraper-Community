@@ -389,10 +389,7 @@ def get_ffmpeg(config=None):
 
 @wrapper.config_reader
 def get_discord(config=None):
-    if config is False:
-        return of_env.getattr("DISCORD_DEFAULT")
-    val = config.get("discord")
-    return val if val is not None else of_env.getattr("DISCORD_DEFAULT", "")
+    return _value(config, "DISCORD_DEFAULT", "discord")
 
 
 @wrapper.config_reader
