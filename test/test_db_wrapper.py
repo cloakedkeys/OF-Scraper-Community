@@ -273,3 +273,20 @@ def test_close_error_is_ignored(tmp_path, wrap, monkeypatch):
         ),
     )
     assert wrap(lambda conn=None, **kwargs: "result")(db_path=path) == "result"
+
+
+def test_interrupt_while_closing_is_not_swallowed(tmp_path, monkeypatch):
+    # the sync wrapper's close guard was a bare except, which also caught
+    # KeyboardInterrupt and returned as if nothing happened
+    path = tmp_path / "user_data.db"
+    make_db(path)
+    real_connect = wrapper._connect
+    monkeypatch.setattr(
+        wrapper,
+        "_connect",
+        lambda *args, **kwargs: CloseFails(
+            real_connect(*args, **kwargs), KeyboardInterrupt()
+        ),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        wrapper.operation_wrapper(lambda conn=None, **kwargs: "result")(db_path=path)
