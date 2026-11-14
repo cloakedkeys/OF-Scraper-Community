@@ -198,8 +198,19 @@ def _run_operation(func, args, kwargs, *, read_only, db_timeout, check_same_thre
                 pass
 
 
+def _refuse_conn(func, kwargs):
+    """A wrapped function gets its connection from the wrapper, which
+    opens one for each try; a conn from the caller can't be used."""
+    if "conn" in kwargs:
+        raise TypeError(
+            f"{func.__name__}() was passed conn=, but its database wrapper"
+            " opens and supplies the connection itself; call it without conn"
+        )
+
+
 def operation_wrapper_async(func: abc.Callable):
     async def inner(*args, **kwargs):
+        _refuse_conn(func, kwargs)
         loop = asyncio.get_event_loop()
         db_timeout = of_env.getattr("DATABASE_TIMEOUT")
         read_only = kwargs.get("read_only", False)
@@ -224,15 +235,20 @@ def operation_wrapper_async(func: abc.Callable):
 
 
 def operation_wrapper(func: abc.Callable):
-    @_retry
     def inner(*args, **kwargs):
-        return _run_operation(
-            func,
-            args,
-            kwargs,
-            read_only=kwargs.get("read_only", False),
-            db_timeout=of_env.getattr("DATABASE_TIMEOUT"),
-            check_same_thread=True,
-        )
+        _refuse_conn(func, kwargs)
+
+        @_retry
+        def _db_work():
+            return _run_operation(
+                func,
+                args,
+                kwargs,
+                read_only=kwargs.get("read_only", False),
+                db_timeout=of_env.getattr("DATABASE_TIMEOUT"),
+                check_same_thread=True,
+            )
+
+        return _db_work()
 
     return inner

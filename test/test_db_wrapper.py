@@ -333,16 +333,28 @@ def test_switch_to_wal_while_another_connection_reads_is_retried(
     assert len(no_wait) == 4
 
 
-def test_supplied_conn_is_refused(tmp_path, wrap, opened, no_wait):
-    # the wrapper always opens its own connection; a caller's conn clashes
+@pytest.mark.parametrize("supplied", ["connection", "None"])
+def test_supplied_conn_is_refused(tmp_path, wrap, opened, no_wait, supplied):
+    # the wrapper supplies the connection; a caller's conn is refused
+    # before the wrapper opens one, and isn't retried or used
     path = tmp_path / "user_data.db"
     make_db(path)
+    called = []
+
+    def supplies_its_own(conn=None, **kwargs):
+        called.append(conn)
+
     with contextlib.closing(sqlite3.connect(path)) as own:
-        with pytest.raises(TypeError, match="multiple values for keyword"):
-            wrap(lambda conn=None, **kwargs: None)(db_path=path, conn=own)
+        conn = own if supplied == "connection" else None
+        with pytest.raises(TypeError) as raised:
+            wrap(supplies_its_own)(db_path=path, conn=conn)
         assert not is_closed(own)
-    assert len(opened) == 1
-    assert is_closed(opened[0])
+    assert str(raised.value) == (
+        "supplies_its_own() was passed conn=, but its database wrapper"
+        " opens and supplies the connection itself; call it without conn"
+    )
+    assert called == []
+    assert opened == []
     assert no_wait == []
 
 
