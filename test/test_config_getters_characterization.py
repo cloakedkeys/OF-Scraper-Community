@@ -8,6 +8,10 @@ older key names, broken sections) and the results are compared, as a digest,
 with the ones recorded from the code before the getters were refactored. The
 written config is pinned the same way for a few representative files.
 
+A deliberate behaviour change updates the digests: dump the results before
+and after it, diff them, check every changed row comes from that change, and
+record the new digests in the same commit.
+
 The built-in defaults are used throughout (of_env.builtin_defaults), so the
 environment doesn't change the results. To see the full results, e.g. to diff
 two versions of the code, set CONFIG_GETTER_SNAPSHOT_DUMP to a file path.
@@ -309,14 +313,14 @@ def _dump(name, obj):
 
 
 # getter -> (number of cases, digest of the results), from the code before
-# the refactor
+# the refactor and updated only by deliberate fixes
 EXPECTED_GETTERS = {
     "get_main_profile": (25, "13e26f74f27d2d82"),
-    "get_filesize_max": (712, "c3896826372763a5"),
-    "get_filesize_min": (403, "ebc7652106fd54eb"),
+    "get_filesize_max": (712, "3befc3c3fb9c23ee"),
+    "get_filesize_min": (403, "fca3b3b2b9ba338a"),
     "get_min_length": (403, "4d5a30e8d85d9401"),
     "get_max_length": (403, "4cc84ab46714f702"),
-    "get_system_freesize": (166, "a94114f1b528c78b"),
+    "get_system_freesize": (166, "71199173556df3b6"),
     "get_dirformat": (166, "f0cf87305a683b76"),
     "get_fileformat": (166, "4a0c2e21968ceab4"),
     "get_textlength": (166, "89ed486c626f9c93"),
@@ -334,7 +338,7 @@ EXPECTED_GETTERS = {
     "get_after_download_script": (736, "8578bb0b73fc1479"),
     "get_env_files": (736, "ecffce695e5a1442"),
     "get_metadata": (25, "ecd7e87b9954b3f6"),
-    "get_download_limit": (166, "ef32a9dd29869cb8"),
+    "get_download_limit": (166, "6fcbe7b81fe16595"),
     "get_ffmpeg": (166, "2fe9cf18a0e4fce1"),
     "get_discord": (25, "4a67da123ed05ee2"),
     "get_filter": (403, "fcb037445d933184"),
@@ -486,8 +490,7 @@ SCHEMA_CONFIGS = {
         "content_filter_options": {
             "block_ads": False,
             "file_size_max": 0,
-            # "" would raise humanfriendly.InvalidSize, which isn't caught
-            "file_size_min": 0,
+            "file_size_min": "",
             "length_max": 0,
             "length_min": False,
         },

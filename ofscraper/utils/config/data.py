@@ -12,7 +12,7 @@ r"""
 """
 
 from ofscraper.utils.cache.safe_disk import SafeDisk, SafeJSONDisk
-from humanfriendly import parse_size
+from humanfriendly import InvalidSize, parse_size
 
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.config.file as config_file
@@ -91,7 +91,9 @@ def get_filesize_max(config=None):
             "content_filter_options.file_size_max",
         )
         return parse_size(str(size))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, InvalidSize):
+        # parse_size's InvalidSize isn't a ValueError; an unparsable size,
+        # e.g. "", counts as 0
         return 0
 
 
@@ -108,7 +110,9 @@ def get_filesize_min(config=None):
             "content_filter_options.file_size_min",
         )
         return parse_size(str(size))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, InvalidSize):
+        # parse_size's InvalidSize isn't a ValueError; an unparsable size,
+        # e.g. "", counts as 0
         return 0
 
 
@@ -146,7 +150,9 @@ def get_system_freesize(config=None):
             "download_options.system_free_min",
         )
         return parse_size(str(size))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, InvalidSize):
+        # parse_size's InvalidSize isn't a ValueError; an unparsable size,
+        # e.g. "", counts as 0
         return 0
 
 
@@ -342,7 +348,9 @@ def get_download_limit(config=None):
             "performance_options.download_limit",
         )
         return parse_size(str(limit))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, InvalidSize):
+        # parse_size's InvalidSize isn't a ValueError; an unparsable size,
+        # e.g. "", counts as 0
         return 0
 
 
