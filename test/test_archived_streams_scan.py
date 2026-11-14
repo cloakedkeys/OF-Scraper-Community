@@ -223,6 +223,17 @@ def test_scan_range_names_the_area(area, monkeypatch):
     assert calls == [(USER, area.scan_name, 5.0)]
 
 
+@pytest.fixture
+def event_loop():
+    # the @run entry points use the current loop and leave it open; without
+    # one they create a loop that nothing closes
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield loop
+    asyncio.set_event_loop(None)
+    loop.close()
+
+
 def entry_setup(area, monkeypatch):
     monkeypatch.setattr(area.module, "get_after", AsyncMock(return_value=123.0))
     monkeypatch.setattr(area.module, "time_log", Mock())
@@ -234,7 +245,7 @@ def entry_setup(area, monkeypatch):
     return saved, checked
 
 
-def test_few_post_ids_are_fetched_individually(area, monkeypatch):
+def test_few_post_ids_are_fetched_individually(area, monkeypatch, event_loop):
     saved, checked = entry_setup(area, monkeypatch)
     found = [{"id": 1}]
     monkeypatch.setattr(area.module, "process_posts_as_individual", lambda: found)
@@ -250,7 +261,7 @@ def test_few_post_ids_are_fetched_individually(area, monkeypatch):
     assert area.max_key in area.keys
 
 
-def test_many_post_ids_scan_the_area(area, monkeypatch):
+def test_many_post_ids_scan_the_area(area, monkeypatch, event_loop):
     saved, checked = entry_setup(area, monkeypatch)
     monkeypatch.setattr(area.module, "get_split_array", AsyncMock(return_value=[]))
     recording = of_env.getattr
