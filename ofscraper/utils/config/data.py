@@ -22,9 +22,9 @@ import ofscraper.utils.config.utils.wrapper as wrapper
 # back, so each must return what belongs in the file. Environment fallbacks
 # that shouldn't be saved go in settings.merged_settings instead.
 #
-# _first, _value and _truthy_value are the lookups most getters share; the
-# reference builder (scripts/reference/build_reference.py) reads their
-# arguments to list each key's older names and environment default.
+# _first, _first_set, _value and _truthy_value are the lookups most getters
+# share; the reference builder (scripts/reference/build_reference.py) reads
+# their arguments to list each key's older names and environment default.
 
 
 def strip_path_quotes(val):
@@ -53,17 +53,33 @@ def _first(config, *paths):
     return val
 
 
+def _first_set(config, *paths):
+    """
+    The value at the first path that isn't None, else None, so a saved
+    false, 0 or "" is kept wherever it is. Paths are as for _first(), and
+    later ones are only read when needed.
+    """
+    for path in paths:
+        section, _, key = path.rpartition(".")
+        val = config.get(section, {}).get(key) if section else config.get(key)
+        if val is not None:
+            return val
+    return None
+
+
 def _value(config, env_key, *paths):
-    """_first(), falling back to the env_key default only when it's None, so
-    a saved false, 0 or "" is kept"""
+    """_first_set(), falling back to the env_key default when nothing is set"""
     if config is False:
         return of_env.getattr(env_key)
-    val = _first(config, *paths)
+    val = _first_set(config, *paths)
     return val if val is not None else of_env.getattr(env_key)
 
 
 def _truthy_value(config, env_key, *paths):
-    """_first(), falling back to the env_key default when it's falsy"""
+    """
+    _first(), falling back to the env_key default when it's falsy: for keys
+    where no falsy value is a valid setting, so one means unset
+    """
     if config is False:
         return of_env.getattr(env_key)
     return _first(config, *paths) or of_env.getattr(env_key)
@@ -234,7 +250,7 @@ def get_default_blacklist(config=None):
 def get_logs_expire(config=None):
     if not config:
         return 0
-    val = _first(config, "logs_expire_time", "advanced_options.logs_expire_time")
+    val = _first_set(config, "logs_expire_time", "advanced_options.logs_expire_time")
     return int(val) if val is not None else 0
 
 
@@ -358,7 +374,7 @@ def get_download_limit(config=None):
 def get_ffmpeg(config=None):
     if config is False:
         return of_env.getattr("FFMPEG_DEFAULT")
-    val = strip_path_quotes(_first(config, "ffmpeg", "binary_options.ffmpeg"))
+    val = strip_path_quotes(_first_set(config, "ffmpeg", "binary_options.ffmpeg"))
     # "" is kept as-is so a config rewrite doesn't save OFSC_FFMPEG_DEFAULT
     # into the file; settings applies that fallback at runtime
     return val if val is not None else of_env.getattr("FFMPEG_DEFAULT")
@@ -510,7 +526,7 @@ def get_client_id(config=None):
 def get_key_mode(config=None):
     if config is False:
         return of_env.getattr("KEY_DEFAULT")
-    final_value = _value(
+    final_value = _truthy_value(
         config, "KEY_DEFAULT", "key-mode-default", "cdm_options.key-mode-default"
     )
     return (
@@ -524,7 +540,7 @@ def get_key_mode(config=None):
 def get_dynamic(config=None):
     if config is False:
         return of_env.getattr("DYNAMIC_RULE_DEFAULT")
-    final_value = _value(
+    final_value = _truthy_value(
         config,
         "DYNAMIC_RULE_DEFAULT",
         "dynamic-mode-default",
@@ -551,7 +567,7 @@ def get_dynamic_configured(config=None):
 def get_part_file_clean(config=None):
     if config is False:
         return of_env.getattr("RESUME_DEFAULT")
-    val = _first(config, "auto_resume", "download_options.auto_resume")
+    val = _first_set(config, "auto_resume", "download_options.auto_resume")
     if val is not None:
         return val
     legacy_val = config.get("partfileclean")
@@ -566,7 +582,7 @@ def get_download_semaphores(config=None):
         return of_env.getattr("DOWNLOAD_SEM_DEFAULT")
     try:
         final_sem = int(
-            _value(
+            _truthy_value(
                 config,
                 "DOWNLOAD_SEM_DEFAULT",
                 "download_sems",
@@ -602,7 +618,7 @@ def cache_mode_helper(config=None):
         return of_env.getattr("CACHEDEFAULT")
     if config is None:
         config = config_file.open_config()
-    final_data = _value(
+    final_data = _truthy_value(
         config, "CACHEDEFAULT", "cache-mode", "advanced_options.cache-mode"
     )
     if final_data in {"sqlite", "json", "disabled", "api_disabled"}:
@@ -629,7 +645,7 @@ def get_sanitizeDB(config=None):
 def get_textType(config=None):
     if config is False:
         return of_env.getattr("TEXT_TYPE_DEFAULT")
-    final_value = _value(
+    final_value = _truthy_value(
         config,
         "TEXT_TYPE_DEFAULT",
         "text_type_default",
@@ -646,7 +662,7 @@ def get_textType(config=None):
 def get_TempDir(config=None):
     if config is False:
         return of_env.getattr("TEMP_FOLDER_DEFAULT")
-    val = _first(config, "temp_dir", "advanced_options.temp_dir")
+    val = _first_set(config, "temp_dir", "advanced_options.temp_dir")
     return strip_path_quotes(val) if val is not None else of_env.getattr("TEMP_FOLDER_DEFAULT")
 
 
