@@ -369,16 +369,64 @@ def test_locked_database(tmp_path, wrap, opened, no_wait, monkeypatch, caplog):
     assert len(opened) == 5
     assert all(is_closed(conn) for conn in opened)
     assert len(no_wait) == 4
-    messages = [
+    # both wrappers log each try's failure, and that the database is busy
+    assert (
+        logged(caplog)
+        == [
+            (logging.DEBUG, "Database operation failed: database is locked"),
+            (logging.INFO, "Database is busy. Current timeout is 0.05s."),
+        ]
+        * 5
+    )
+
+
+def logged(caplog):
+    return [
         (record.levelno, record.getMessage())
         for record in caplog.records
         if record.name == "shared"
     ]
-    if wrap.kind == "sync":
-        expected = (logging.INFO, "Database is busy. Current timeout is 0.05s.")
-    else:
-        expected = (logging.DEBUG, "Database operation failed: database is locked")
-    assert messages == [expected] * 5
+
+
+@pytest.mark.parametrize(
+    "error,tries",
+    [
+        (sqlite3.OperationalError("no such table: elsewhere"), 1),
+        (sqlite3.OperationalError("disk I/O error"), 5),
+        (sqlite3.IntegrityError("UNIQUE constraint failed: t.x"), 1),
+        (ValueError("not a database error"), 1),
+    ],
+    ids=["sql", "retried", "integrity", "other"],
+)
+def test_failure_that_is_not_busy_is_logged_at_debug_only(
+    tmp_path, wrap, opened, no_wait, caplog, error, tries
+):
+    # the busy message is only for a busy or locked database; every
+    # failure is logged at debug, by both wrappers
+    path = tmp_path / "user_data.db"
+    make_db(path)
+
+    def func(conn=None, **kwargs):
+        raise error
+
+    with caplog.at_level(logging.DEBUG, logger="shared"):
+        with pytest.raises(type(error)):
+            wrap(func)(db_path=path)
+    assert (
+        logged(caplog)
+        == [(logging.DEBUG, f"Database operation failed: {error}")] * tries
+    )
+
+
+def test_converted_failure_logs_the_original_error(tmp_path, wrap, caplog):
+    path = tmp_path / "user_data.db"
+    path.mkdir()
+    with caplog.at_level(logging.DEBUG, logger="shared"):
+        with pytest.raises(wrapper.DatabaseUnreadable):
+            wrap(lambda conn=None, **kwargs: None)(db_path=path)
+    assert logged(caplog) == [
+        (logging.DEBUG, "Database operation failed: unable to open database file")
+    ]
 
 
 class CloseFails:
