@@ -117,6 +117,11 @@ def _has_code(error, codes, messages):
     return str(error).startswith(messages)
 
 
+def _busy(error):
+    """Whether `error` is a busy or locked database."""
+    return _has_code(error, _BUSY_CODES, _BUSY_MESSAGES)
+
+
 def _retryable(error):
     """Whether a retry can fix `error`: a busy or locked database, or
     another condition that clears up on its own. A mistake in the wrapped
@@ -136,16 +141,23 @@ def _retry(work):
     )(work)
 
 
-def _run_operation(
-    func, args, kwargs, *, read_only, db_timeout, check_same_thread, log_failure
-):
+def _log_failure(error, db_timeout):
+    """Log a failed try the same way for both wrappers: every failure at
+    debug, and a busy or locked database at info, with the timeout that
+    ran out."""
+    log.debug(f"Database operation failed: {error}")
+    if _busy(error):
+        log.info(f"Database is busy. Current timeout is {db_timeout}s.")
+
+
+def _run_operation(func, args, kwargs, *, read_only, db_timeout, check_same_thread):
     """One try of a database operation: open the database, configure it,
     begin a transaction, call func(*args, **kwargs, conn=conn) and close
     the connection. The wrapper doesn't commit: func commits what it keeps,
     and closing rolls back the rest.
 
-    log_failure(error, failure) is called for an error before it's raised;
-    failure is what is raised (see _final_error), `from error` if it differs.
+    An error is logged (see _log_failure) and raised as _final_error makes
+    it, `from` the error if that differs.
     """
     conn = None
     database_path = None
@@ -173,8 +185,8 @@ def _run_operation(
         # 3. Execute the database logic
         return func(*args, **kwargs, conn=conn)
     except Exception as E:
+        _log_failure(E, db_timeout)
         failure = _final_error(E, read_only, database_path)
-        log_failure(E, failure)
         if failure is not E:
             raise failure from E
         raise
@@ -184,10 +196,6 @@ def _run_operation(
                 conn.close()
             except Exception:
                 pass
-
-
-def _log_async_failure(error, failure):
-    log.debug(f"Database operation failed: {error}")
 
 
 def operation_wrapper_async(func: abc.Callable):
@@ -207,7 +215,6 @@ def operation_wrapper_async(func: abc.Callable):
                 db_timeout=db_timeout,
                 # the connection is opened on the pool's thread
                 check_same_thread=False,
-                log_failure=_log_async_failure,
             )
 
         # Submit the safe retry block to the single-worker pool
@@ -219,21 +226,13 @@ def operation_wrapper_async(func: abc.Callable):
 def operation_wrapper(func: abc.Callable):
     @_retry
     def inner(*args, **kwargs):
-        db_timeout = of_env.getattr("DATABASE_TIMEOUT")
-
-        def log_failure(error, failure):
-            # a busy or locked database, which is retried
-            if isinstance(error, sqlite3.OperationalError) and failure is error:
-                log.info(f"Database is busy. Current timeout is {db_timeout}s.")
-
         return _run_operation(
             func,
             args,
             kwargs,
             read_only=kwargs.get("read_only", False),
-            db_timeout=db_timeout,
+            db_timeout=of_env.getattr("DATABASE_TIMEOUT"),
             check_same_thread=True,
-            log_failure=log_failure,
         )
 
     return inner
