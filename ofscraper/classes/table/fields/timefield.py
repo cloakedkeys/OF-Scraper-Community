@@ -24,16 +24,7 @@ class TimeField(Container):
     .min_length,.max_length{
     width:1fr;
     }
-
-    /* the unit names stay above the boxes once a value hides the placeholder */
-    TimeField .length_unit{
-    width:1fr;
-    padding-left:1;
-    color:$text-muted;
-    }
     """
-
-    UNITS = ("Hours", "Minutes", "Seconds")
 
     def __init__(self, name: str) -> None:
         name = name.lower()
@@ -42,10 +33,6 @@ class TimeField(Container):
         self.timeconversions = [60 * 60, 60, 1]
 
     def compose(self):
-        with Horizontal(id="unitHeader"):
-            yield Label("", classes="length_label")
-            for unit in self.UNITS:
-                yield Label(unit, classes="length_unit")
         with Horizontal(id="minContainer"):
             yield Label("Min length", classes="length_label")
             yield IntegerInput(placeholder="Hours", classes="min_length", id="min_hour")

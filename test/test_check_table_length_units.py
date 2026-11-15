@@ -1,9 +1,10 @@
 """Check table filter sidebar (Ctrl+S): which Length box is hours, minutes, seconds.
 
-The Min/Max length boxes only said Hour/Min/Sec as placeholder text, which
-disappears once a box has a value, and a saved or picked length filled all
-three with "0". The unit names now sit above the boxes, and a zero part is
-left empty so its placeholder shows. These tests drive the real InputApp.
+The Min/Max length boxes name their unit only as placeholder text, which a
+value hides, and a saved or picked length filled all three with "0", zeros
+included, so no box said which it was. A zero part is now left empty, so its
+placeholder (Hours/Minutes/Seconds) shows. These tests drive the real
+InputApp.
 """
 
 import asyncio
@@ -96,28 +97,14 @@ MIN = ("min_hour", "min_minute", "min_second")
 MAX = ("max_hour", "max_minute", "max_second")
 
 
-def test_unit_names_sit_above_their_boxes_and_stay_with_a_value(start):
+def test_each_box_names_its_unit(start):
     async def steps(app, pilot, field):
-        for box in MIN + MAX:
-            app.query_one(f"#{box}", Input).value = "5"
-        await _settle(pilot)
-
-        header = list(field.query_one("#unitHeader").query(".length_unit"))
-        assert [str(label.render()) for label in header] == [
-            "Hours",
-            "Minutes",
-            "Seconds",
-        ]
-        for label, lo, hi in zip(header, MIN, MAX):
-            lo_box = app.query_one(f"#{lo}", Input).region
-            hi_box = app.query_one(f"#{hi}", Input).region
-            region = label.region
-            assert label.display and region.height >= 1
-            assert field.region.contains_region(region)
-            # above both rows, in the same column
-            assert region.bottom <= lo_box.y < hi_box.y
-            assert lo_box.x <= region.x < lo_box.right
-            assert not region.overlaps(lo_box)
+        for row in (MIN, MAX):
+            assert [app.query_one(f"#{b}", Input).placeholder for b in row] == [
+                "Hours",
+                "Minutes",
+                "Seconds",
+            ]
 
     _drive(steps)
 
