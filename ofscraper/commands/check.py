@@ -512,6 +512,9 @@ async def post_check_retriver(forced=False, only_model_id=None):
                 model_id = profile.get_id(user_name)
                 user_dict.setdefault(model_id, {})["model_id"] = model_id
                 user_dict.setdefault(model_id, {})["username"] = user_name
+            # no such account: get_id warned, go on with the next creator
+            if model_id is None:
+                continue
             if _other_creator(model_id, only_model_id):
                 continue
             if user_dict.get(model_id) and model_id and user_name:
@@ -659,7 +662,7 @@ async def post_check_retriver(forced=False, only_model_id=None):
             if name_match and num_match:
                 user_name = name_match.group(1)
                 model_id = profile.get_id(user_name)
-                if _other_creator(model_id, only_model_id):
+                if model_id is None or _other_creator(model_id, only_model_id):
                     continue
                 progress_updater.activity.update_task(
                     description=check_str.format(
@@ -849,8 +852,10 @@ async def purchase_check_retriver(forced=False, only_model_id=None):
     ) as c:
         for name in check_usernames():
             user_name = profile.scrape_profile(name)["username"]
-            model_id = name if name.isnumeric() else profile.get_id(user_name)
-            if _other_creator(model_id, only_model_id):
+            model_id = (
+                name if name.isnumeric() else profile.get_id(user_name, asked_for=name)
+            )
+            if model_id is None or _other_creator(model_id, only_model_id):
                 continue
             progress_updater.activity.update_task(
                 description=check_str.format(
@@ -917,10 +922,10 @@ async def stories_check_retriver(forced=False, only_model_id=None):
     async with manager.Manager.session.aget_ofsession(
         sem_count=of_env.getattr("API_REQ_CHECK_MAX"),
     ) as c:
-        for user_name in check_usernames():
-            user_name = profile.scrape_profile(user_name)["username"]
-            model_id = profile.get_id(user_name)
-            if _other_creator(model_id, only_model_id):
+        for name in check_usernames():
+            user_name = profile.scrape_profile(name)["username"]
+            model_id = profile.get_id(user_name, asked_for=name)
+            if model_id is None or _other_creator(model_id, only_model_id):
                 continue
             progress_updater.activity.update_task(
                 description=check_str.format(
