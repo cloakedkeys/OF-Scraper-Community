@@ -37,15 +37,32 @@ LOOPBACKS = list(
 )
 
 
-def _listeners():
+def _listen_once():
+    """One listener per loopback address, all on the port the first got."""
     servers, port = [], 0
-    for family, address in LOOPBACKS:
-        srv = socket.socket(family)
-        srv.bind((address, port))
-        srv.listen(4)
-        port = srv.getsockname()[1]
-        servers.append(srv)
+    try:
+        for family, address in LOOPBACKS:
+            srv = socket.socket(family)
+            servers.append(srv)
+            srv.bind((address, port))
+            srv.listen(4)
+            port = srv.getsockname()[1]
+    except OSError:
+        for srv in servers:
+            srv.close()
+        raise
     return servers
+
+
+def _listeners(attempts=20):
+    # the port free on the first address can be taken on another one; pick
+    # a new port and try again
+    for attempt in range(attempts):
+        try:
+            return _listen_once()
+        except OSError:
+            if attempt == attempts - 1:
+                raise
 
 
 def _raw(ctx, port):
@@ -181,3 +198,51 @@ def test_httpx_transport_offers_h2():
     # the raw socket sends no ALPN; httpx with http2=True offers h2 and http/1.1
     exts = _fingerprint(_client_hello(create_custom_ssl_context(), "httpx"))["extensions"]
     assert b"h2" in exts[16] and b"http/1.1" in exts[16]
+
+
+def test_listeners_retry_when_the_port_is_taken_on_another_address(monkeypatch):
+    real = _listen_once
+    tries = []
+
+    def listen_once():
+        tries.append(1)
+        if len(tries) < 3:
+            raise OSError("address already in use")  # taken on the 2nd address
+        return real()
+
+    monkeypatch.setitem(globals(), "_listen_once", listen_once)
+    servers = _listeners()
+    try:
+        assert len(tries) == 3
+        assert len(servers) == len(LOOPBACKS)
+        assert len({srv.getsockname()[1] for srv in servers}) == 1
+    finally:
+        for srv in servers:
+            srv.close()
+
+
+def test_a_failed_attempt_closes_what_it_opened(monkeypatch):
+    opened = []
+    real_socket = socket.socket
+
+    class _Socket(real_socket):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            opened.append(self)
+
+        def bind(self, addr):
+            if len(opened) > 1:  # the second address: port taken
+                raise OSError("address already in use")
+            return super().bind(addr)
+
+    monkeypatch.setitem(
+        globals(), "LOOPBACKS", [(socket.AF_INET, "127.0.0.1")] * 2
+    )
+    monkeypatch.setattr(socket, "socket", _Socket)
+    try:
+        _listen_once()
+    except OSError:
+        pass
+    else:
+        raise AssertionError("the second bind should have failed")
+    assert len(opened) == 2 and all(s.fileno() == -1 for s in opened)
