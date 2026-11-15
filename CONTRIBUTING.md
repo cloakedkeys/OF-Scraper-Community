@@ -9,7 +9,7 @@ Thanks for helping. This is a community-maintained fork of [datawhores/OF-Scrape
 
 ### 🚀 Quick start
 1. **Branch** off the latest `main`.
-2. **Set up** with `uv sync --python 3.15 --extra test`. Python 3.11 is the minimum, and 3.15 is the newest supported version.
+2. **Set up** with `uv sync --python 3.15 --extra test`. Python 3.11.5 is the minimum, and 3.15 is the newest supported version.
 3. **Test** with `python -m pytest test`. Warnings count as failures.
 4. **Open a PR** against `main`.
 
