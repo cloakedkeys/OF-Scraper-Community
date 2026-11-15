@@ -97,13 +97,19 @@ def _hint(app, field):
 
 
 def _active_unit(app, field):
-    pressed = [
-        b.id.rsplit("_", 1)[1]
-        for b in app.query_one(f"#{field}").query(Button)
-        if b.variant == "primary"
-    ]
+    buttons = list(app.query_one(f"#{field}").query(Button))
+    pressed = [b for b in buttons if b.has_class("-selected")]
     assert len(pressed) == 1
-    return int(pressed[0])
+    chosen = pressed[0]
+    # ticked, and only that one
+    assert str(chosen.label).startswith("✓ ")
+    assert not any(str(b.label).startswith("✓") for b in buttons if b is not chosen)
+    # inverted, so it stands out whatever the theme's "primary" colour is
+    others = [b for b in buttons if b is not chosen]
+    assert chosen.styles.background != others[0].styles.background
+    foreground = str(app.get_css_variables()["foreground"]).lower()
+    assert chosen.styles.background.hex.lower() == foreground
+    return int(chosen.id.rsplit("_", 1)[1])
 
 
 # --- the helpers ----------------------------------------------------------

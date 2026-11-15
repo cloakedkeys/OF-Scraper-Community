@@ -42,8 +42,16 @@ class SizeField(Vertical):
     }
 
     SizeField .size_units Button {
-        min-width: 7;
+        min-width: 9;
         margin-right: 1;
+    }
+
+    /* the "primary" variant is a grey barely lighter than the others in this
+       theme, so the chosen unit is inverted and ticked instead */
+    SizeField .size_units Button.-selected {
+        background: $foreground;
+        color: $background;
+        text-style: bold;
     }
 
     SizeField .size_hint {
@@ -86,11 +94,12 @@ class SizeField(Vertical):
             )
         with Horizontal(classes="size_units"):
             for label, unit in UNITS:
+                chosen = unit == self.unit
                 yield Button(
-                    label,
+                    self._unit_label(label, chosen),
                     id=self._button_id(unit),
                     compact=True,
-                    variant="primary" if unit == self.unit else "default",
+                    classes="-selected" if chosen else "",
                 )
         yield Static(HINT, classes="size_hint")
 
@@ -98,6 +107,10 @@ class SizeField(Vertical):
 
     def _button_id(self, unit):
         return f"{self.filter_name}_unit_{unit}"
+
+    @staticmethod
+    def _unit_label(label, chosen):
+        return f"✓ {label}" if chosen else label
 
     @property
     def input(self):
@@ -159,9 +172,11 @@ class SizeField(Vertical):
 
     def set_unit(self, unit):
         self.unit = unit
-        for _, value in UNITS:
+        for label, value in UNITS:
             button = self.query_one(f"#{self._button_id(value)}", Button)
-            button.variant = "primary" if value == unit else "default"
+            chosen = value == unit
+            button.set_class(chosen, "-selected")
+            button.label = self._unit_label(label, chosen)
 
     # --- events -----------------------------------------------------------
 
