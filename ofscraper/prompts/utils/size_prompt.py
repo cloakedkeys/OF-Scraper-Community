@@ -58,6 +58,11 @@ class Scale:
     def choices(self):
         return [Choice(unit, label) for label, _, unit in self.units]
 
+    def entered(self, amount, unit):
+        """``amount`` in ``unit`` as typed, e.g. "5 bits/s"."""
+        short = next(s for _, s, u in self.units if u == unit)
+        return f"{amount:,} {short}"
+
 
 SIZE = Scale(
     units=(
@@ -82,19 +87,26 @@ SPEED = Scale(
 )
 
 
-def size_error(size, maximum, minimum=1, what="This value", scale=SIZE):
-    """Why ``size`` bytes isn't allowed, or None. 0 (no limit) always is."""
-    if size == 0:
+def size_error(
+    size, maximum, minimum=1, what="This value", scale=SIZE, entered=None
+):
+    """Why ``size`` bytes isn't allowed, or None. 0 (no limit) always is.
+
+    ``entered`` is the value as typed ("5 bits/s"). A non-zero entry can
+    round down to 0 bytes (1 to 7 bits/s), which is too small, not "no
+    limit"."""
+    shown = entered or scale.format(size)
+    if size == 0 and not entered:
         return None
     if size < minimum:
         return (
             f"{what} must be 0 (no limit) or at least {scale.format(minimum)}; "
-            f"{scale.format(size)} is too small to be useful."
+            f"{shown} is too small to be useful."
         )
     if size > maximum:
         return (
             f"{what} can be at most {scale.format(maximum)}; "
-            f"{scale.format(size)} is too large."
+            f"{shown} is too large."
         )
     return None
 
@@ -129,6 +141,7 @@ def ask_size(
             **prompt_kwargs,
         )[name]
         amount = int(amount or 0)
+        entered = None
         if amount == 0:
             size = 0
         else:
@@ -143,7 +156,8 @@ def ask_size(
                 **prompt_kwargs,
             )[f"{name}_unit"]
             size = scale.to_bytes(amount, unit)
-        error = size_error(size, maximum, minimum, what, scale)
+            entered = scale.entered(amount, unit)
+        error = size_error(size, maximum, minimum, what, scale, entered)
         if error is None and check is not None:
             error = check(size)
         if error is None:

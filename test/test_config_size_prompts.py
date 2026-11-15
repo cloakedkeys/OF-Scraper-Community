@@ -154,6 +154,50 @@ def test_a_speed_below_the_minimum_is_refused(monkeypatch):
     assert "at least 64 Kbps" in answers.messages[0]
 
 
+@pytest.mark.parametrize("bits", [1, 5, 7])
+def test_a_speed_that_rounds_to_zero_bytes_is_refused_not_saved_as_no_limit(
+    monkeypatch, bits
+):
+    """1 to 7 bits/s is 0 whole bytes a second, and 0 means "no limit"."""
+    answers = _Answers(
+        monkeypatch,
+        [
+            ("download_limit", bits),
+            ("download_limit_unit", 1),
+            ("download_limit", 0),  # then really no limit
+        ],
+    )
+
+    size = size_prompt.ask_size(
+        "download_limit", "speed: ", "bits", 0,
+        maximum=config_prompts.SPEED_MAX, minimum=config_prompts.SPEED_MIN,
+        what="The speed limit", scale=SPEED,
+    )
+
+    assert size == 0
+    assert len(answers.messages) == 1
+    assert f"{bits} bits/s is too small" in answers.messages[0]
+    assert "at least 64 Kbps" in answers.messages[0]
+    # asked again: number, unit, number
+    assert [q["name"] for q in answers.asked] == [
+        "download_limit", "download_limit_unit", "download_limit",
+    ]
+
+
+def test_the_refusal_shows_the_speed_as_typed(monkeypatch):
+    """9 bits/s rounds to 1 byte a second; the message says 9 bits/s, not 8."""
+    answers = _Answers(
+        monkeypatch,
+        [("download_limit", 9), ("download_limit_unit", 1), ("download_limit", 0)],
+    )
+    size_prompt.ask_size(
+        "download_limit", "speed: ", "bits", 0,
+        maximum=config_prompts.SPEED_MAX, minimum=config_prompts.SPEED_MIN,
+        what="The speed limit", scale=SPEED,
+    )
+    assert "9 bits/s is too small" in answers.messages[0]
+
+
 # --- the config menus -----------------------------------------------------
 
 
