@@ -127,7 +127,7 @@ class SizeField(Vertical):
         if error:
             hint.update(f"{error} Not applied.")
             return
-        hint.update(HINT if size == 0 else f"{HINT} = {size:,} bytes")
+        hint.update(HINT)
         self.applied = size
         args = settings.get_args()
         setattr(args, self.SETTING, size)

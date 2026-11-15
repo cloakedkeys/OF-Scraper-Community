@@ -141,8 +141,9 @@ def test_number_and_unit_set_the_size_in_bytes(args):
     async def steps(app, pilot):
         await _set(pilot, app, "download_size_max", "50", MB)
         assert args.size_max == 50 * MB
+        # the hint doesn't repeat the size in bytes
         assert _hint(app, "download_size_max") == (
-            f"Whole numbers only. Empty or 0 = no limit. = {50 * MB:,} bytes",
+            "Whole numbers only. Empty or 0 = no limit.",
             False,
         )
 
