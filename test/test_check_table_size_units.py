@@ -2,8 +2,8 @@
 
 The Min/Max size boxes took a raw byte count. They now take a whole number
 and a Bytes/KB/MB/GB button (1024-based); the setting is still saved in bytes.
-A value that isn't allowed (over 1 TB, or min above max) is shown as an error
-and not applied. These tests drive the real InputApp headless.
+Every change is applied at once; only over 1 TB is refused. A min above the
+max is applied with a warning. These tests drive the real InputApp headless.
 """
 
 import asyncio
@@ -141,8 +141,9 @@ def test_number_and_unit_set_the_size_in_bytes(args):
     async def steps(app, pilot):
         await _set(pilot, app, "download_size_max", "50", MB)
         assert args.size_max == 50 * MB
+        # the hint doesn't repeat the size in bytes
         assert _hint(app, "download_size_max") == (
-            f"Whole numbers only. Empty or 0 = no limit. = {50 * MB:,} bytes",
+            "Whole numbers only. Empty or 0 = no limit.",
             False,
         )
 
@@ -190,19 +191,45 @@ def test_more_than_a_terabyte_is_refused_and_not_applied(args):
     _drive(steps)
 
 
-def test_min_above_max_is_refused_until_it_makes_sense(args):
+def _warning(app, field):
+    hint = app.query_one(f"#{field}").query_one(".size_hint", Static)
+    return hint.has_class("-warning")
+
+
+def test_min_above_max_is_applied_at_once_with_a_warning(args):
     async def steps(app, pilot):
         await _set(pilot, app, "download_size_max", "10", MB)
         await _set(pilot, app, "download_size_min", "20", MB)
+        # applied straight away, not held back
+        assert args.size_min == 20 * MB
         text, error = _hint(app, "download_size_min")
-        assert error and "above the max (10 MB)" in text
-        assert not args.size_min
+        assert not error and _warning(app, "download_size_min")
+        assert "above the max (10 MB)" in text and "Not applied" not in text
 
-        # raising the max makes the waiting min valid, and it's applied
+        # raising the max clears the warning
         await _set(pilot, app, "download_size_max", "30")
         assert args.size_max == 30 * MB
         assert args.size_min == 20 * MB
-        assert _hint(app, "download_size_min")[1] is False
+        assert not _warning(app, "download_size_min")
+        assert _hint(app, "download_size_min")[0] == (
+            "Whole numbers only. Empty or 0 = no limit."
+        )
+
+    _drive(steps)
+
+
+def test_number_typed_before_its_unit_is_applied_at_each_step(args):
+    """Min 2 GB, then typing a max of 10 GB: "1", "10" (MB), then GB."""
+
+    async def steps(app, pilot):
+        await _set(pilot, app, "download_size_min", "2", GB)
+        await _set(pilot, app, "download_size_max", "10")
+        assert args.size_max == 10 * MB
+        assert _warning(app, "download_size_max")
+        await _set(pilot, app, "download_size_max", unit=GB)
+        assert args.size_max == 10 * GB
+        assert not _warning(app, "download_size_max")
+        assert not _warning(app, "download_size_min")
 
     _drive(steps)
 

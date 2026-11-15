@@ -12,9 +12,11 @@ MAX_SIZE = TB
 class SizeField(Vertical):
     """A download size limit: a whole number and a Bytes/KB/MB/GB button.
 
-    The setting is still saved in bytes (0 for no limit). A value that isn't
-    allowed (too large, or a minimum above the maximum) is shown as an error
-    under the box and not applied, so the previous value stays in effect.
+    The setting is still saved in bytes (0 for no limit), as soon as the box
+    or the unit changes. Only a size over 1 TB is refused (shown as an error,
+    and the previous value stays in effect). A minimum above the maximum is
+    applied with a warning: the number is often typed before its unit, so the
+    two boxes pass through such a state while they're being filled in.
     """
 
     DEFAULT_CSS = """
@@ -51,6 +53,11 @@ class SizeField(Vertical):
 
     SizeField .size_hint.-error {
         color: $error;
+        text-style: bold;
+    }
+
+    SizeField .size_hint.-warning {
+        color: $warning;
         text-style: bold;
     }
     """
@@ -102,13 +109,15 @@ class SizeField(Vertical):
         return None if number is None else number * self.unit
 
     def error_for(self, size):
+        """Why ``size`` can't be applied at all, or None."""
         if size is None:
             return "Enter a whole number (0, 1, 2, ...)."
         if size > MAX_SIZE:
             return f"At most {format_size(MAX_SIZE)}; {format_size(size)} is too large."
-        return self.range_error(size)
+        return None
 
-    def range_error(self, size):
+    def range_warning(self, size):
+        """Why ``size`` together with the other box downloads nothing, or None."""
         return None
 
     def _other(self):
@@ -119,23 +128,34 @@ class SizeField(Vertical):
         except Exception:
             return None
 
-    def apply(self, recheck_other=True):
+    def _show(self, text, state=None):
+        hint = self.query_one(".size_hint", Static)
+        hint.set_class(state == "error", "-error")
+        hint.set_class(state == "warning", "-warning")
+        hint.update(text)
+
+    def show_range(self):
+        warning = self.range_warning(self.applied)
+        if warning:
+            self._show(warning, "warning")
+        else:
+            self._show(HINT)
+
+    def apply(self):
         size = self.requested_size()
         error = self.error_for(size)
-        hint = self.query_one(".size_hint", Static)
-        hint.set_class(error is not None, "-error")
         if error:
-            hint.update(f"{error} Not applied.")
+            self._show(f"{error} Not applied.", "error")
             return
-        hint.update(HINT if size == 0 else f"{HINT} = {size:,} bytes")
         self.applied = size
         args = settings.get_args()
         setattr(args, self.SETTING, size)
         settings.update_args(args)
-        # the other box's min/max check may have changed
-        other = self._other() if recheck_other else None
-        if other is not None:
-            other.apply(recheck_other=False)
+        self.show_range()
+        # the warning on the other box may have changed too
+        other = self._other()
+        if other is not None and other.applied == other.requested_size():
+            other.show_range()
 
     def set_unit(self, unit):
         self.unit = unit
@@ -176,11 +196,11 @@ class SizeMaxField(SizeField):
     LABEL = "Max size"
     SETTING = "size_max"
 
-    def range_error(self, size):
+    def range_warning(self, size):
         other = self._other()
         low = other.applied if other is not None else 0
         if size and low and size < low:
-            return f"Max is below the min ({format_size(low)}); nothing would download."
+            return f"Max is below the min ({format_size(low)}); nothing will download."
         return None
 
 
@@ -188,11 +208,11 @@ class SizeMinField(SizeField):
     LABEL = "Min size"
     SETTING = "size_min"
 
-    def range_error(self, size):
+    def range_warning(self, size):
         other = self._other()
         high = other.applied if other is not None else 0
         if size and high and size > high:
-            return f"Min is above the max ({format_size(high)}); nothing would download."
+            return f"Min is above the max ({format_size(high)}); nothing will download."
         return None
 
 
