@@ -177,7 +177,7 @@ def get_id_helper(c, username, asked_for=None):
             # the session passes a 404 through instead of raising
             try:
                 data = r.json()
-            except Exception:
+            except ValueError:  # not JSON (JSONDecodeError, bad encoding)
                 data = None
             id = data.get("id") if isinstance(data, dict) else None
             if r.status == 404 or not id:
