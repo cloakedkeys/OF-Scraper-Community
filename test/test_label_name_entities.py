@@ -68,3 +68,29 @@ def test_label_filter_matches_the_name_as_written(api, monkeypatch):
 
     asyncio.run(run())
     assert seen["labels"] == ["Nudes & Sexy Videos"]
+
+
+# --- {label} in folder and file names ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name, folder",
+    [
+        # decoded names can now hold characters Windows won't put in a name
+        ("Q&A <3", "Q&A 3"),
+        ('"best" <of> 2024?', "best of 2024"),
+        ("pics/vids", "picsvids"),  # a slash would add a folder
+        ("a:b|c*d\\e", "abcde"),
+        # everything else is kept, so existing label folders keep their names
+        ("Nudes & Sexy Videos", "Nudes & Sexy Videos"),
+        ("26 years old - B-G", "26 years old - B-G"),
+        ("it's #1 (new)", "it's #1 (new)"),
+        # nothing left: the same "None" as a post without a label
+        ("<>", "None"),
+        ("None", "None"),
+    ],
+)
+def test_label_placeholder_is_safe_in_a_path(name, folder):
+    from ofscraper.classes.placeholder import path_safe_label
+
+    assert path_safe_label(name) == folder
