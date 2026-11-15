@@ -12,16 +12,17 @@ class PostiveIntegerInput(FilterInput):
         )
 
     def _on_click(self, event: events.Click) -> None:
-        # a right-click pastes what a right-click in the table copied, in
-        # place of the box's value. Other text comes in by the terminal's
-        # own paste, which only the terminal can read
+        # a right-click pastes what was last copied in the app (a right-click
+        # in the table, or Ctrl+C in a text box), in place of the box's
+        # value. Other text comes in by the terminal's own paste, which only
+        # the terminal can read
         if event.button != 3 or self.id not in ("media_id_input", "post_id_input"):
             return
         event.stop()
         text = self.app.clipboard
         if not text:
             self.app.notify(
-                "Nothing copied from the table yet. "
+                "Nothing copied here yet. "
                 "Use your terminal's paste key for other text."
             )
             return
