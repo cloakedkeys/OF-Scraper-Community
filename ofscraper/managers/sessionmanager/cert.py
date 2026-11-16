@@ -1,8 +1,11 @@
+import os
 import ssl
 import logging
 import random
 import hashlib            
 import getpass
+
+import certifi
 
 import ofscraper.utils.auth.request as auth_requests
 
@@ -18,6 +21,31 @@ def get_default_cipher_names():
     """
     temp_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
     return [c["name"] for c in temp_ctx.get_ciphers()]
+
+
+def load_certifi_if_no_ca_certs(context: ssl.SSLContext) -> bool:
+    """
+    Loads certifi's CA bundle when the context has no system CA certificates,
+    and returns whether it did.
+
+    A python.org build on macOS has none until "Install Certificates.command"
+    is run, so every HTTPS request fails certificate verification. The CA
+    store isn't part of the ClientHello, so this leaves the TLS fingerprint
+    alone.
+    """
+    if context.verify_mode == ssl.CERT_NONE:
+        return False
+    if context.cert_store_stats()["x509_ca"]:
+        return False
+    # certificates in a CA directory load on demand and aren't counted above
+    capath = ssl.get_default_verify_paths().capath
+    try:
+        if capath and os.listdir(capath):
+            return False
+    except OSError:
+        pass
+    context.load_verify_locations(cafile=certifi.where())
+    return True
 
 
 def _fansly_seed():
@@ -149,5 +177,8 @@ def create_custom_ssl_context(
             if not cache["logged_certs"]:
                 log.debug(f"Warning: Could not load default CAcerts: {e}.")
                 cache["logged_certs"] = True
+        if load_certifi_if_no_ca_certs(context) and not cache["logged_certs"]:
+            log.debug("No system CA certificates found, using certifi's")
+            cache["logged_certs"] = True
 
     return context

@@ -13,6 +13,7 @@ r"""
 
 import json
 import logging
+import ssl
 import traceback
 
 import httpx
@@ -47,12 +48,31 @@ def _host(e: httpx.HTTPError) -> str:
         return "the server"
 
 
+def _cert_error(e: BaseException) -> ssl.SSLCertVerificationError | None:
+    """The certificate verification failure behind e, if there is one."""
+    seen = set()
+    while e is not None and id(e) not in seen:
+        if isinstance(e, ssl.SSLCertVerificationError):
+            return e
+        seen.add(id(e))
+        e = e.__cause__ or e.__context__
+    return None
+
+
 def unavailable_message(e: Exception) -> str | None:
     """
     Returns a message for a failure that says nothing about the auth
     (network errors, server errors, a reply that isn't JSON), else None.
     """
     if isinstance(e, httpx.TransportError):
+        cert_error = _cert_error(e)
+        if cert_error:
+            # the server was reached: the connection isn't the problem
+            return (
+                f"Couldn't verify the certificate of {_host(e)} "
+                f"({cert_error.verify_message}). A proxy, VPN or antivirus may be "
+                "intercepting HTTPS, or this Python has no CA certificates."
+            )
         reason = (
             "timed out"
             if isinstance(e, httpx.TimeoutException)
