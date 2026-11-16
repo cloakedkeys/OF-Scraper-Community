@@ -1,5 +1,7 @@
 import os
 import ssl
+import sys
+import time
 import logging
 import random
 import hashlib            
@@ -46,6 +48,37 @@ def load_certifi_if_no_ca_certs(context: ssl.SSLContext) -> bool:
         pass
     context.load_verify_locations(cafile=certifi.where())
     return True
+
+
+_WINDOWS = sys.platform == "win32"
+
+
+def load_system_ca_certs(context: ssl.SSLContext) -> None:
+    """
+    Loads the system's CA certificates, as load_default_certs does, but on
+    Windows leaves out the expired ones and adds certifi's bundle.
+
+    Python loads the whole Windows store, expired certificates included, and
+    OpenSSL prefers a stored issuer to the one the server sends. An expired
+    intermediate left in the store then fails a valid chain with "certificate
+    has expired". Windows also fetches root certificates on demand, so a root
+    can be missing from the store until something else has used it.
+    """
+    if not _WINDOWS:
+        context.load_default_certs(ssl.Purpose.SERVER_AUTH)
+        return
+    store = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    store.load_default_certs(ssl.Purpose.SERVER_AUTH)
+    now = time.time()
+    # both calls list the store in the same order
+    for der, info in zip(store.get_ca_certs(binary_form=True), store.get_ca_certs()):
+        try:
+            if ssl.cert_time_to_seconds(info["notAfter"]) <= now:
+                continue
+        except (KeyError, ValueError):
+            pass
+        context.load_verify_locations(cadata=der)
+    context.load_verify_locations(cafile=certifi.where())
 
 
 def _fansly_seed():
@@ -172,7 +205,7 @@ def create_custom_ssl_context(
     context.verify_mode = verify_mode
     if load_default_ca_certs:
         try:
-            context.load_default_certs(ssl.Purpose.SERVER_AUTH)
+            load_system_ca_certs(context)
         except Exception as e:
             if not cache["logged_certs"]:
                 log.debug(f"Warning: Could not load default CAcerts: {e}.")
