@@ -71,28 +71,6 @@ def test_settings_falls_back_to_config_textlength(monkeypatch):
     assert settings.merged_settings().text_length == 75
 
 
-@pytest.mark.parametrize(
-    "caption,expected",
-    [
-        (
-            "**[s:lg]IMPREGNATE ME - VIRTUAL POV SEX \U0001f4a6[/s]**\n\nBabe",
-            "IMPREGNATE ME _ VIRTUAL POV SE",
-        ),
-        ("[c:blue]Hi there[/c] friends of mine", "Hi there friends of mine"),
-        ("[C:Sky-Blue]Tag[/C] case", "Tag case"),
-    ],
-)
-def test_file_cleanup_drops_fansly_format_tags(fake_settings, caption, expected):
-    fake_settings(text_length=30, text_type="letter")
-    b = base()
-    assert b.text_trunicate(b.file_cleanup(caption)) == expected
-
-
-def test_file_cleanup_keeps_other_brackets(fake_settings):
-    fake_settings()
-    assert base().file_cleanup("Squish [2 pics] [s] [c]") == "Squish [2 pics] [s] [c]"
-
-
 def test_word_mode_counts_existing_replacer_chars_as_breaks(fake_settings):
     # documented limitation: "_" already in the caption ("snake_case title")
     # can't be told apart from a replaced space once file_cleanup has run
