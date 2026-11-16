@@ -7,6 +7,9 @@ import ofscraper.utils.settings as settings
 
 html_parser = "lxml" if importlib.util.find_spec("lxml") else "html.parser"
 
+# Fansly caption formatting: [s:lg]large[/s], [c:blue]colour[/c]
+FANSLY_FORMAT_TAG = re.compile(r"\[(?:[sc]:[\w-]+|/[sc])\]", re.IGNORECASE)
+
 
 class base:
     def __init__(self):
@@ -40,6 +43,8 @@ class base:
     def file_cleanup(self, text):
         text = str(text)
         text = re.sub("<[^>]*>", "", text)
+        # before ":" and "/" are dropped, which would leave "[slg]" and "[s]"
+        text = FANSLY_FORMAT_TAG.sub("", text)
         text = re.sub(r'[\n<>:"/\|?*:;]+', "", text)
         text = re.sub("-+", "_", text)
         text = re.sub(" +", " ", text)
