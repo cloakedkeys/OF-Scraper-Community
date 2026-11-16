@@ -78,7 +78,13 @@ def unavailable_message(e: Exception) -> str | None:
             if isinstance(e, httpx.TimeoutException)
             else "connection failed"
         )
-        return f"Couldn't reach {_host(e)} ({reason}). Check your connection or VPN."
+        message = f"Couldn't reach {_host(e)} ({reason}). Check your connection or VPN."
+        # the cause (DNS, refused, reset, proxy, TLS) is otherwise only in the
+        # debug log
+        detail = " ".join(str(e).split())[:200]
+        if detail and not isinstance(e, httpx.TimeoutException):
+            message += f" Error: {detail}"
+        return message
     if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
         return f"{_host(e)} is rate limiting requests. Try again later."
     if isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500:

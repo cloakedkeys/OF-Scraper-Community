@@ -94,9 +94,20 @@ def test_certificate_failure_is_not_called_a_connection_failure():
     assert "connection failed" not in message
 
 
-def test_other_connect_errors_keep_their_message():
-    message = unavailable_message(_connect_error(OSError("Network is unreachable")))
+def test_connect_error_message_carries_the_cause():
+    message = unavailable_message(
+        _connect_error(OSError("[Errno 11001] getaddrinfo failed"))
+    )
     assert message == (
         "Couldn't reach raw.githubusercontent.com (connection failed). "
+        "Check your connection or VPN. Error: [Errno 11001] getaddrinfo failed"
+    )
+
+
+def test_connect_error_without_text_has_no_empty_cause():
+    request = httpx.Request("GET", "https://onlyfans.com/api2/v2/users/me")
+    message = unavailable_message(httpx.ReadError("", request=request))
+    assert message == (
+        "Couldn't reach onlyfans.com (connection failed). "
         "Check your connection or VPN."
     )
