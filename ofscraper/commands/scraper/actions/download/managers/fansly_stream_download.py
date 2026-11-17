@@ -127,6 +127,17 @@ def _hide_folder(folder):
         common_globals.log.debug(f"Could not hide stream segments folder: {type(e).__name__}")
 
 
+def _refused(e) -> bool:
+    """True when the CDN refused the request (401 or 403) somewhere in the chain."""
+    seen = set()
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if is_provided_exception_number(e, 401, 403):
+            return True
+        e = e.__cause__ or e.__context__
+    return False
+
+
 def _prepare_segments(folder, playlists):
     # Keep playlist boundaries, local names and timing as well as unsigned URLs.
     manifest = [
@@ -216,6 +227,41 @@ def _packet_times(ffprobe, path, stream):
     return times
 
 
+def _has_packets(ffprobe, path, stream) -> bool:
+    """True when ``path`` has at least one packet of ``stream``; reads only the first."""
+    out = subprocess.run(
+        [str(ffprobe), "-v", "error", "-select_streams", stream,
+         "-read_intervals", "%+#1", "-show_entries", "packet=stream_index",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True,
+    )
+    return out.returncode == 0 and bool(out.stdout.strip())
+
+
+def _codec(ffprobe, path, stream):
+    out = subprocess.run(
+        [str(ffprobe), "-v", "error", "-select_streams", stream,
+         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True,
+    )
+    return out.stdout.strip().split("\n")[0].strip(",") if out.returncode == 0 else ""
+
+
+def _frame(times) -> float:
+    """The usual step between packets (one frame), in seconds."""
+    ts = sorted(times)
+    steps = [b - a for a, b in zip(ts, ts[1:]) if b > a]
+    steps.sort()
+    return steps[len(steps) // 2] if steps else 0.0
+
+
+# audio an MP4 takes as it is (``-c copy``); anything else is not re-encoded
+COPYABLE_AUDIO = {"aac", "mp3", "ac3", "eac3", "alac", "flac", "opus"}
+# how many frames the direct file's video may differ in length from the
+# stream's before its sound is taken as out of step
+SOUND_FRAMES = 2
+
+
 class FanslyStreamDownloadManager(DownloadManager):
     async def stream_download(self, c, ele, username, model_id):
         await self.ctx.sem.acquire()
@@ -226,6 +272,9 @@ class FanslyStreamDownloadManager(DownloadManager):
 
     async def _stream_download(self, c, ele, username, model_id):
         medialog = common_logs.get_medialog(ele)
+        # the direct file can give the sound a refused audio track can't
+        self.ele = ele
+        self.audio_refused = None
         best = fansly_video.select_best(fansly_video.raw_media(ele))
         if not best or not best.is_stream:
             raise fansly_video.StreamError("no HLS or DASH stream to download")
@@ -321,7 +370,17 @@ class FanslyStreamDownloadManager(DownloadManager):
             f"{medialog} Fetching {sum(len(p.files) for p in playlists if p)} stream "
             f"files, {segment_limit()} at a time"
         )
-        await self._parallel_copy(c, playlists, temp, best.cookies, timeout)
+        await self._parallel_copy(c, playlists, temp, best.cookies, timeout, medialog)
+
+    def _audio_was_refused(self, medialog, what):
+        # the warning waits: the direct file may still give the sound
+        self.audio_refused = what
+        self.ctx.log.info(f"{medialog} the CDN refused {what}")
+
+    def _warn_silent(self, medialog):
+        self.ctx.log.warning(
+            f"{medialog} the CDN refused {self.audio_refused}; saving the video without sound"
+        )
 
     async def _local_playlists(self, c, url, audio_url, cookies, medialog):
         """(video, audio or None) LocalPlaylists, or None to leave it to ffmpeg.
@@ -334,17 +393,26 @@ class FanslyStreamDownloadManager(DownloadManager):
             )
             audio = None
             if audio_url:
-                audio = fansly_video.local_playlist(
-                    await self._fetch_text(c, audio_url, cookies), audio_url, "a", shared
-                )
+                try:
+                    text = await self._fetch_text(c, audio_url, cookies)
+                except fansly_video.StreamError as e:
+                    if not _refused(e):
+                        raise
+                    self._audio_was_refused(medialog, "its audio playlist")
+                else:
+                    audio = fansly_video.local_playlist(text, audio_url, "a", shared)
             return video, audio
         except fansly_video.UnexpectedPlaylist as e:
             self.ctx.log.info(f"{medialog} {e}; ffmpeg fetches the stream instead")
             return None
 
-    async def _parallel_copy(self, c, playlists, temp, cookies, timeout):
+    async def _parallel_copy(self, c, playlists, temp, cookies, timeout, medialog=""):
         """Fetch every file of the playlists into a folder next to ``temp``,
-        then join them with ffmpeg. Keep completed files if the copy fails."""
+        then join them with ffmpeg. Keep completed files if the copy fails.
+
+        The video's files come first. If the CDN then refuses the separate
+        audio track, the sound is taken from the direct file; failing that,
+        the video is saved without sound and a warning says why."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout  # one limit for the fetch and the join
         folder = segment_folder(temp)
@@ -352,11 +420,21 @@ class FanslyStreamDownloadManager(DownloadManager):
         try:
             _prepare_segments(folder, playlists)
             video, audio = playlists
-            jobs = video.files + (audio.files if audio else [])
             try:
                 await asyncio.wait_for(
-                    self._fetch_segments(c, jobs, folder, cookies), timeout
+                    self._fetch_segments(c, video.files, folder, cookies), timeout
                 )
+                if audio:
+                    try:
+                        await asyncio.wait_for(
+                            self._fetch_segments(c, audio.files, folder, cookies),
+                            max(0.01, deadline - loop.time()),
+                        )
+                    except SegmentError as e:
+                        if not _refused(e):
+                            raise
+                        self._audio_was_refused(medialog, "its audio track")
+                        audio = None
             except asyncio.TimeoutError:
                 raise StreamTimeout(
                     f"the stream's segments took longer than {timeout:.0f}s and were stopped"
@@ -394,6 +472,11 @@ class FanslyStreamDownloadManager(DownloadManager):
                 cmd, temp, max(1.0, deadline - loop.time()),
                 "join the stream's segments", cwd=folder,
             )
+            if not audio and await self._needs_sound(temp):
+                await self._sound_from_direct(
+                    c, folder, temp, cmd[cmd.index("-i") + 1],
+                    isinstance(video, fansly_video.LocalDashTrack), deadline, medialog,
+                )
             complete = True
         finally:
             if isinstance(playlists[0], fansly_video.LocalDashTrack):
@@ -401,6 +484,141 @@ class FanslyStreamDownloadManager(DownloadManager):
                     (folder / name).unlink(missing_ok=True)
             if complete or not settings.get_settings().auto_resume:
                 shutil.rmtree(folder, ignore_errors=True)
+
+    async def _probe(self, fn, *args):
+        return await asyncio.get_running_loop().run_in_executor(
+            self.ctx.thread, partial(fn, *args)
+        )
+
+    async def _needs_sound(self, temp):
+        """True when the joined copy should have sound it lacks: its separate
+        audio track was refused, or its playlist says the video segments
+        carry sound and they don't."""
+        if getattr(self, "audio_refused", None):
+            return True
+        if not getattr(self, "audio_inside", False):
+            return False
+        ffprobe = get_ffprobe()
+        return bool(ffprobe) and not await self._probe(_has_packets, ffprobe, temp, "a:0")
+
+    async def _sound_from_direct(self, c, folder, temp, video_input, dash, deadline, medialog):
+        """Add the direct file's sound to the joined stream video.
+
+        The stream is chosen for its larger video; the direct MP4 of the same
+        upload usually carries the sound the stream's audio track lacks. The
+        result replaces ``temp`` only if it passes the checks; otherwise
+        ``temp`` stays the silent copy and a warning says why (for a refused
+        track)."""
+        ele = getattr(self, "ele", None)
+        raw = fansly_video.raw_media(ele) if ele is not None else None
+        ffprobe = get_ffprobe()
+        loop = asyncio.get_running_loop()
+        problem = None
+        joined = temp.with_name(temp.name + ".sound")
+        try:
+            if not (ele.url if ele is not None else None) or not fansly_video.has_direct(raw):
+                problem = "there is no direct file to take the sound from"
+                return
+            if not ffprobe:
+                problem = "ffprobe is not found to check the direct file's sound"
+                return
+            direct = folder / "direct.mp4"
+            try:
+                await self._fetch_direct(c, ele, direct, deadline)
+            except (SegmentError, asyncio.TimeoutError) as e:
+                problem = f"the direct file could not be fetched for its sound: {e}"
+                return
+            if not await self._probe(_has_packets, ffprobe, direct, "a:0"):
+                # evidence the video has no sound at all: nothing was lost
+                self.ctx.log.info(
+                    f"{medialog} the direct file has no sound either; "
+                    "saving the video as it is"
+                )
+                self.audio_refused = None
+                self.audio_inside = False
+                return
+            codec = await self._probe(_codec, ffprobe, direct, "a:0")
+            if codec not in COPYABLE_AUDIO:
+                problem = f"the direct file's sound ({codec or 'unknown'}) can't be copied into MP4"
+                return
+            cmd = fansly_video.local_join_command(
+                get_ffmpeg(), video_input, joined.absolute(), dash=dash,
+                audio_file=direct.name,
+            )
+            try:
+                await self._run_cmd(
+                    cmd, joined, max(1.0, deadline - loop.time()),
+                    "add the direct file's sound", cwd=folder,
+                )
+            except StreamTimeout:
+                raise
+            except Exception as e:
+                problem = str(e)
+                return
+            problem = await self._sound_mismatch(ffprobe, direct, joined, ele)
+            if problem:
+                return
+            joined.replace(temp)
+            self.ctx.log.info(
+                f"{medialog} took the sound from the direct file"
+                + (f" (the CDN refused {self.audio_refused})" if self.audio_refused else "")
+            )
+            self.audio_refused = None
+        finally:
+            joined.unlink(missing_ok=True)
+            if problem:
+                self.ctx.log.info(f"{medialog} {problem}")
+                if getattr(self, "audio_refused", None):
+                    self._warn_silent(medialog)
+
+    async def _fetch_direct(self, c, ele, path, deadline):
+        """The direct file into ``path``, kept for resume. A signed link the
+        CDN refuses gets a new one, once."""
+        loop = asyncio.get_running_loop()
+        for ask in range(2):
+            if path.is_file():
+                return
+            try:
+                # a signed URL: no CloudFront cookies
+                await asyncio.wait_for(
+                    self._fetch_segment(c, fansly_video.check_url(ele.url), path, None),
+                    max(0.01, deadline - loop.time()),
+                )
+                return
+            except fansly_video.StreamError as e:
+                raise SegmentError(str(e)) from e
+            except SegmentError as e:
+                if ask or not _refused(e) or not await refresh_media_link(ele):
+                    raise
+
+    async def _sound_mismatch(self, ffprobe, direct, joined, ele):
+        """Why the joined copy can't be kept, or None.
+
+        Both files come from one upload and ffmpeg starts each input at zero,
+        so their videos should line up. A trimmed or re-timed rendition would
+        put the sound out of step by the difference in length."""
+        direct_video, joined_video, joined_audio = [
+            await self._probe(_packet_times, ffprobe, path, stream)
+            for path, stream in ((direct, "v:0"), (joined, "v:0"), (joined, "a:0"))
+        ]
+        frame = max(_frame(direct_video), _frame(joined_video))
+        margin = SOUND_FRAMES * frame + 0.001
+        stream_length = fansly_video.timeline(joined_video)[0]
+        direct_length = fansly_video.timeline(direct_video)[0]
+        if not stream_length or not direct_length:
+            return "the joined copy could not be measured"
+        if abs(stream_length - direct_length) > margin:
+            return (
+                f"the direct file's video ({direct_length:.2f}s) and the stream's "
+                f"({stream_length:.2f}s) differ in length, so the sound would be out of step"
+            )
+        if fansly_video.timeline(joined_audio)[0] > stream_length + margin:
+            return "the direct file's sound is longer than the stream's video"
+        reason = fansly_video.incomplete_reason(
+            joined_video, joined_audio,
+            fansly_video.expected_duration(fansly_video.raw_media(ele)),
+        )
+        return f"the copy with the direct file's sound is incomplete: {reason}" if reason else None
 
     def _check_join_space(self, folder, temp, dash=False):
         """Fail with a clear message when the .part's drive can't hold the
@@ -481,7 +699,9 @@ class FanslyStreamDownloadManager(DownloadManager):
         """(video url, separate audio url or None) to give ffmpeg."""
         manifest = await self._fetch_text(c, fansly_video.check_url(best.url), best.cookies)
         if best.kind == fansly_video.HLS:
-            url, audio_url = fansly_video.best_rendition(manifest, best.url)
+            url, audio_url, self.audio_inside = fansly_video.best_rendition_info(
+                manifest, best.url
+            )
             return (fansly_video.check_url(url),
                     fansly_video.check_url(audio_url) if audio_url else None)
         if fansly_video.dash_is_protected(manifest):
@@ -529,6 +749,14 @@ class FanslyStreamDownloadManager(DownloadManager):
             )
             for stream in ("v:0", "a:0")
         ]
+        if getattr(self, "audio_inside", False) and not audio_times:
+            # the playlist said the video segments carry the sound: keep the
+            # video, as the website would play it, and say why it is silent
+            self.ctx.log.warning(
+                f"{common_logs.get_medialog(ele)} the stream's video segments have no "
+                "audio, though its playlist lists an audio format; saving the video "
+                "without sound"
+            )
         reason = fansly_video.incomplete_reason(
             video_times,
             audio_times,
