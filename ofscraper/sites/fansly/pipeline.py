@@ -11,7 +11,9 @@ about a page plus the queue, scan and download overlap, and the first file
 starts within seconds.
 
 Used for plain Fansly download runs (``applies``). Runs that need the whole
-list first (``--max-count``, a sort) and every other command take the
+list first (``--max-count``, a sort; ``ordered``) scan and select as before,
+then download through the same queue and workers, fetching each chunk's
+links again just before it is queued. Every other command takes the
 scan-then-download path.
 """
 
@@ -38,6 +40,7 @@ import ofscraper.utils.system.free as free
 from ofscraper.commands.scraper.actions.download import stop
 from ofscraper.commands.scraper.actions.download.download import save_path_str
 from ofscraper.commands.scraper.actions.download.run import handle_one
+from ofscraper.commands.scraper.actions.download.utils import refresh
 from ofscraper.commands.scraper.actions.download.utils.desc import desc
 from ofscraper.commands.scraper.actions.download.utils.text import textDownloader
 from ofscraper.commands.scraper.actions.utils.paths import setDirectoriesDate
@@ -49,6 +52,7 @@ from ofscraper.data.posts import post as post_area
 from ofscraper.db.operations_.media import batch_mediainsert
 from ofscraper.managers.postcollection import PostCollection
 from ofscraper.scripts.after_download_action_script import after_download_action_script
+from ofscraper.sites.fansly import api as fansly_api
 from ofscraper.sites.fansly import incremental
 from ofscraper.sites.fansly import scrape as fansly_scrape
 from ofscraper.sites.fansly import video as fansly_video
@@ -94,11 +98,23 @@ def applies() -> bool:
     elif getattr(s, "text_only", False):
         reason = "--text-only"
     else:
-        reason = needs_whole_list(s)
+        reason = None
     if reason:
         log.debug(f"Fansly: scanning everything before downloading because of {reason}")
         return False
     return True
+
+
+def ordered() -> bool:
+    """Whether the run needs the whole list before the first download: it
+    then scans first and fetches each chunk's links just before queuing it."""
+    reason = needs_whole_list(settings.get_settings())
+    if reason:
+        log.debug(
+            f"Fansly: {reason} needs the whole list; scanning first, then "
+            "fetching each chunk's links before it downloads"
+        )
+    return reason is not None
 
 
 def areas_for(ele, username):
@@ -305,6 +321,8 @@ async def _scan_area(run, area, download, early_stop=None):
 
 @stop.fetching
 async def _produce(run):
+    """Page through the areas, queuing each page's media as it comes."""
+    run.selector = Selector(run.model_id, run.username)
     download_area = get_download_area()
     areas = areas_for(run.ele, run.username)
     # read what is recorded before this run writes any rows
@@ -320,6 +338,50 @@ async def _produce(run):
         except Exception as E:
             # pages already queued still download; the next area runs
             post_area.log_area_failure(run.username, area, E)
+
+
+def _account_media_id(item):
+    details = item.media.get("fansly") if isinstance(item.media, dict) else None
+    if not details or not details.get("media"):
+        return None
+    return details.get("accountMediaId")
+
+
+async def _fresh_links(run, chunk):
+    """Give the chunk's items the links of one ``account/media`` answer.
+
+    An item without an accountMedia id, or whose answer is missing or for
+    another file, keeps the links from the scan; a 403 still refreshes it.
+    """
+    ids = list(dict.fromkeys(i for i in map(_account_media_id, chunk) if i))
+    if not ids:
+        return
+    try:
+        found = await fansly_api.account_media(run.c, ids)
+    except Exception as E:
+        log.debug(f"[{run.username}] fetching new links failed, using the scan's: {E}")
+        return
+    answers = {str(x.get("id")): x for x in found or [] if isinstance(x, dict)}
+    fresh = 0
+    for item in chunk:
+        answer = answers.get(str(_account_media_id(item)))
+        if answer and refresh.apply_fansly_item(item, answer):
+            fresh += 1
+    log.debug(f"[{run.username}] {fresh} of {len(chunk)} files have newly signed links")
+
+
+@stop.fetching
+async def _produce_ordered(run):
+    """Queue the selected list in its order, a chunk at a time, fetching
+    each chunk's links just before it is queued. The queue is bounded, so
+    the next chunk's call waits until this chunk is nearly downloaded."""
+    size = fansly_api.ACCOUNT_MEDIA_BATCH
+    for start in range(0, len(run.media), size):
+        chunk = run.media[start : start + size]
+        await _fresh_links(run, chunk)
+        for item in chunk:
+            await run.queue.put((run.download_session, item, run.model_id, run.username))
+        await asyncio.sleep(0)
 
 
 # ------------------------------------------------------------------ workers
@@ -383,8 +445,9 @@ def _zero_desc():
     )
 
 
-async def _download(run):
-    """Scan and download together. Returns True when a stop request ended it."""
+async def _download(run, produce):
+    """Run ``produce`` and the download workers together. Returns True when a
+    stop request ended it."""
     stopped = False
     count = get_max_workers()
     log.info(f"Downloading up to {count} {'file' if count == 1 else 'files'} at a time")
@@ -394,13 +457,12 @@ async def _download(run):
             async with manager.Manager.session.get_download_session() as dc:
                 run.download_session = dc
                 run.task = progress_updater.download.add_overall_task(
-                    _zero_desc(), total=0, visible=True
+                    _zero_desc(), total=run.queued(), visible=True
                 )
                 run.queue = asyncio.Queue(maxsize=QUEUE_PER_WORKER * count)
-                run.selector = Selector(run.model_id, run.username)
                 workers = [asyncio.create_task(_worker(run)) for _ in range(count)]
                 try:
-                    producer = asyncio.create_task(_produce(run))
+                    producer = asyncio.create_task(produce(run))
                     try:
                         await producer
                     except stop.DownloadsStopped:
@@ -436,10 +498,24 @@ async def _commit(run):
         labels_api.discard_finished_labels(run.model_id)
 
 
-async def run(ele, c):
-    """Download one Fansly creator, each page as it is scanned."""
+async def run(ele, c, collection=None):
+    """Download one Fansly creator, each page as it is scanned.
+
+    ``collection``: the creator's finished scan, for a run that needs the
+    whole list (``ordered``). Its selected media download in order, with
+    each chunk's links fetched again just before it is queued; the scan
+    already recorded its areas.
+    """
     run_ = _Run(ele, c)
     username, model_id = run_.username, run_.model_id
+    produce = _produce
+    if collection is not None:
+        produce = _produce_ordered
+        run_.collection = collection
+        run_.media = list(collection.get_media_to_download())
+        for item in run_.media:
+            item.download_unstarted = True
+            item.download_stopped = False
     await operations.table_init_create(model_id=model_id, username=username)
     with progress_utils.setup_live("main_activity", clear=False):
         progress_updater.activity.update_task(
@@ -449,12 +525,12 @@ async def run(ele, c):
         )
         log.warning(download_activity_str.format(username=username))
         try:
-            stopped = await _download(run_)
+            stopped = await _download(run_, produce)
         finally:
-            if stop.requested.is_set():
+            if stop.requested.is_set() and collection is None:
                 # an interrupted scan isn't recorded as finished
                 labels_api.discard_finished_labels(model_id)
-        if not stopped:
+        if not stopped and collection is None:
             await _commit(run_)
         text_posts = run_.collection.get_posts_for_text_download()
         if settings.get_settings().text and not stopped:
