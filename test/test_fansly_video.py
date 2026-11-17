@@ -261,6 +261,7 @@ class Server:
         # paths answered with a 404 this many more times; seconds to wait
         # before sending a path; how many requests were open at once, at most
         self.fail = {}
+        self.refuse = set()  # paths always answered with a 403
         self.delay = {}
         self.active = self.peak = 0
         self.count_lock = threading.Lock()
@@ -283,6 +284,9 @@ class Server:
                 if outer.fail.get(path):
                     outer.fail[path] -= 1
                     self.send_error(404)
+                    return
+                if path in outer.refuse:
+                    self.send_error(403)
                     return
                 if outer.delay.get(path):
                     time.sleep(outer.delay[path])
@@ -794,23 +798,59 @@ def test_audio_inside_the_video_is_used_and_the_copy_is_not_fetched(env, tmp_pat
 
 
 @needs_ffmpeg
-def test_video_without_the_audio_its_playlist_lists_fails(env, tmp_path):
-    # the playlist says the segments carry sound but they don't: fail rather
-    # than save a silent video that is never fetched again
+def test_video_without_the_audio_its_playlist_lists_is_saved_and_logged(env, tmp_path, caplog):
+    # the playlist says the segments carry sound but they don't: keep the
+    # video, as the website plays it, and log why it is silent
     segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
     raw = raw_media()
     with Server({}) as srv:
         serve_hls(srv, raw, IN_BAND_AUDIO_MASTER, {"r2160": segments})
-        ele = make_ele(raw, direct=False)
+        ele = make_ele(raw)
+        with caplog.at_level(logging.WARNING):
+            result = download_locally(ele)
+    assert result[0] == "Videos" and result[1] > 0
+    out = env.out / f"{ele.filename}.mp4"
+    assert [s["codec_type"] for s in probe(out)["streams"]] == ["video"]
+    assert "segments have no audio" in caplog.text and "without sound" in caplog.text
 
-        async def go():
-            async with ofsession.download_session() as c:
-                return await stream_mod.FanslyStreamDownloadManager().stream_download(
-                    c, ele, "a-creator", 100000000000000002)
 
-        with pytest.raises(video.MissingAudio):
-            asyncio.run(go())
-    assert files_in(env.out, env.temp) == []
+@needs_ffmpeg
+@pytest.mark.parametrize("refused", ["playlist", "segment"])
+def test_refused_audio_track_saves_the_video_and_logs_why(env, tmp_path, caplog, refused):
+    video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    audio_segments = make_segments(tmp_path, "a", "-vn")
+    raw = raw_media()
+    with Server({}) as srv:
+        root = serve_hls(srv, raw, SPLIT_AUDIO_MASTER,
+                         {"r2160": video_segments, "audio": audio_segments})
+        target = (f"{root}/audio/media.m3u8" if refused == "playlist"
+                  else f"{root}/audio/{next(iter(audio_segments))}")
+        srv.refuse.add(target)
+        ele = make_ele(raw)
+        with caplog.at_level(logging.WARNING):
+            result = download_locally(ele)
+    assert result[0] == "Videos" and result[1] > 0
+    out = env.out / f"{ele.filename}.mp4"
+    assert files_in(env.out, env.temp) == [out.name]
+    assert [s["codec_type"] for s in probe(out)["streams"]] == ["video"]
+    assert "refused" in caplog.text and "without sound" in caplog.text
+    assert len(env.marks) == 1
+
+
+@needs_ffmpeg
+def test_audio_track_that_fails_for_another_reason_still_fails_the_file(env, tmp_path, monkeypatch):
+    # a 404 or a dropped connection may work next run: don't save it silent
+    fast_retries(monkeypatch, attempts=2)
+    video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    audio_segments = make_segments(tmp_path, "a", "-vn")
+    raw = raw_media()
+    with Server({}) as srv:
+        root = serve_hls(srv, raw, SPLIT_AUDIO_MASTER,
+                         {"r2160": video_segments, "audio": audio_segments})
+        srv.fail[f"{root}/audio/{next(iter(audio_segments))}"] = 99
+        result = download_locally(make_ele(raw))
+    assert result == ("skipped", 0)
+    assert list(env.out.iterdir()) == [] and env.marks == []
 
 
 def test_audio_codecs_in_a_rendition_mean_its_segments_carry_the_sound():
