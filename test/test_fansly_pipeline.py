@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import copy
 import logging
+import pathlib
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
@@ -363,8 +364,8 @@ def test_areas_run_in_order_one_after_another(harness):
     harness.pages["Labels"] = [page(post_dict(4, [104]))]
     harness.run()
     pages = [e for e in harness.events if e.endswith("page 1")]
-    assert pages == ["Purchased page 1", "Messages page 1", "Timeline page 1", "Labels page 1"]
-    assert harness.downloads == [101, 102, 103, 104]
+    assert pages == ["Messages page 1", "Labels page 1", "Timeline page 1", "Purchased page 1"]
+    assert harness.downloads == [102, 104, 103, 101]
 
 
 def test_a_media_on_two_pages_or_in_two_areas_downloads_once(harness):
@@ -405,14 +406,14 @@ def test_an_area_that_fails_part_way_keeps_its_pages_and_the_next_area_runs(
     harness, caplog
 ):
     level.addtraceback()
-    harness.areas = ["Messages", "Timeline", "Labels"]
+    harness.areas = ["Messages", "Timeline", "Purchased"]
     harness.pages["Messages"] = [page(post_dict(1, [101], from_user=MODEL_ID))]
     harness.pages["Timeline"] = [
         page(post_dict(2, [102])),
         page(post_dict(3, [103])),
         ValueError("boom"),
     ]
-    harness.pages["Labels"] = [page(post_dict(4, [104]))]
+    harness.pages["Purchased"] = [page(post_dict(4, [104]))]
     with caplog.at_level(logging.WARNING, logger="shared"):
         harness.run()
     assert harness.downloads == [101, 102, 103, 104]
@@ -444,11 +445,11 @@ def test_end_of_creator_steps_run_once_with_everything(harness, settings_stub):
     assert len(stats) == 1
     username, action, media_ = stats[0][0]
     assert (username, action) == (NAME, "download")
-    assert [m.id for m in media_] == [101, 102, 103, 104, 105]
+    assert [m.id for m in media_] == [101, 105, 102, 103, 104]
     script = harness.calls["after script"]
     assert len(script) == 1
     args, kwargs = script[0]
-    assert [m.id for m in args[1]] == [101, 102, 103, 104, 105]
+    assert [m.id for m in args[1]] == [101, 105, 102, 103, 104]
     assert sorted(p.id for p in args[2]) == [1, 2, 3, 5]
     assert kwargs == {"action": "download"}
     assert len(harness.calls["processed"]) == 1
@@ -534,15 +535,20 @@ def test_a_stop_during_a_stream_does_not_wait_for_the_video(harness, monkeypatch
 
 
 @pytest.mark.parametrize(
-    "downloading, message",
+    "site, downloading, message",
     [
-        (False, "Stopping the fetch. A second Ctrl+C quits."),
-        (True, "Stopping downloads; Part files are kept for Resume. A second Ctrl+C quits."),
+        ("fansly", False, "Stopping the fetch. A second Ctrl+C quits."),
+        ("fansly", True,
+         "Stopping downloads; Part files are kept for Resume. A second Ctrl+C quits."),
+        # OnlyFans keeps the message it had
+        ("onlyfans", True, "Stopping the fetch. A second Ctrl+C quits."),
     ],
 )
 def test_ctrl_c_while_scanning_and_downloading_says_downloads_stop(
-    settings_stub, caplog, downloading, message
+    settings_stub, caplog, site, downloading, message
 ):
+    settings_stub.site = site
+
     async def go():
         @stop.fetching
         async def fetch():
@@ -658,11 +664,32 @@ def test_the_pipeline_scans_the_areas_the_scan_first_path_would(
     assert pipeline_lines == [m for m in scan_first_lines if "skipping" in m.lower()]
 
 
-# ------------------------------------------------------------------ same media as the full list
+# ------------------------------------------------------------------ same files, same folders
+
+
+def purchase_dict(media_id, hours_ago):
+    """A purchase: Fansly's purchases become Paid posts dated when bought."""
+    created = arrow.get(BASE - hours_ago * 3600).isoformat()
+    out = post_dict(media_id, [media_id])
+    out.update({"createdAt": created, "postedAt": created, "text": "",
+                "responseType": "purchased"})
+    for item in out["media"]:
+        item["createdAt"] = created
+    return out
+
+
+RESPONSE_TYPES = {"Timeline": "Timeline", "Purchased": "Paid"}
+
+
+def build(area, posts):
+    return [
+        Post(copy.deepcopy(p), MODEL_ID, NAME, RESPONSE_TYPES.get(area)) for p in posts
+    ]
 
 
 def equivalence_pages():
-    """Pages of two areas with repeats, types, dates and a locked item."""
+    """Pages in the pipeline's order, with repeats, types, dates, a locked
+    item and bought files."""
     kinds = {201: "video", 203: "audio", 205: "video", 212: "video"}
     return [
         ("Messages", [
@@ -672,21 +699,71 @@ def equivalence_pages():
         ("Timeline", [post_dict(10, [204, 205, 202], kinds), post_dict(30, [206], kinds)]),
         ("Timeline", [post_dict(60, [207, 208], kinds, locked=(208,)), post_dict(90, [209])]),
         ("Timeline", [post_dict(120, [210, 204]), post_dict(150, [211, 212], kinds)]),
+        # 201 bought in a message, 230 bought and found nowhere else
+        ("Purchased", [purchase_dict(201, 0.5), purchase_dict(230, 0.25)]),
     ]
 
 
-def full_list_ids(pages):
+# Files the pipeline files under another post than the scan-first path,
+# which keeps the oldest copy: the pipeline keeps the first copy it sees.
+DIFFERENT_POST = {
+    202,  # in a message and in an older timeline post: filed with the message
+    204,  # in two timeline posts: filed under the newer one, seen first
+}
+
+
+@pytest.fixture
+def saved_paths(monkeypatch, tmp_path):
+    """Where each media is saved, with a layout that shows the area, the
+    post and the label."""
+    quiet = SimpleNamespace(
+        **{name: (lambda *a, **k: None) for name in ("trace", "debug", "info", "warning", "error")}
+    )
+
+    async def no_script(*a, **k):
+        return None
+
+    m = monkeypatch
+    m.setattr(placeholder, "log", quiet)
+    m.setattr(placeholder, "naming_script", no_script)
+    m.setattr(placeholder.me, "parse_user", lambda: ("1", "me"))
+    m.setattr(placeholder.me, "get_id", lambda: 1)
+    m.setattr(placeholder.profile_data, "get_active_profile", lambda: "main_profile")
+    m.setattr(placeholder.common_paths, "get_config_home", lambda: tmp_path / "cfg")
+    m.setattr(placeholder.common_paths, "get_save_location", lambda *a, **k: str(tmp_path / "data"))
+    m.setattr(placeholder.config_file, "open_config", lambda: {})
+    m.setattr(placeholder.settings, "get_args", lambda: SimpleNamespace())
+    m.setattr(
+        placeholder.manager, "Manager",
+        SimpleNamespace(current_model_manager=SimpleNamespace(get_model=lambda _u: None)),
+    )
+    m.setattr(placeholder.data, "get_date", lambda *a, **k: "YYYY-MM-DD")
+    m.setattr(placeholder.data, "get_dirformat",
+              lambda *a, **k: "{model_username}/{responsetype}/{label}/{mediatype}")
+    m.setattr(placeholder.data, "get_fileformat", lambda *a, **k: "{date}_{post_id}_{media_id}.{ext}")
+    root = tmp_path / "data"
+
+    def where(items):
+        async def go():
+            out = {}
+            for item in items:
+                names = await placeholder.Placeholders(item, "bin").init()
+                out[item.id] = (item.post_id, pathlib.Path(names.filepath).relative_to(root).as_posix())
+            return out
+
+        return asyncio.run(go())
+
+    return where
+
+
+def full_list_media(pages):
     collection = PostCollection(model_id=MODEL_ID, username=NAME)
     for area, posts in pages:
-        responsetype = "Timeline" if area == "Timeline" else None
-        collection.add_posts(
-            [Post(copy.deepcopy(p), MODEL_ID, NAME, responsetype) for p in posts],
-            actions=["download"],
-        )
-    return sorted(m.id for m in collection.get_media_to_download())
+        collection.add_posts(build(area, posts), actions=["download"])
+    return collection.get_media_to_download()
 
 
-def pipeline_ids(monkeypatch, pages):
+def pipeline_media(monkeypatch, pages):
     async def no_rows(*a, **k):
         pass
 
@@ -697,17 +774,23 @@ def pipeline_ids(monkeypatch, pages):
         run.queue = asyncio.Queue()
         run.selector = pipeline.Selector(MODEL_ID, NAME)
         for number, (area, posts) in enumerate(pages, 1):
-            responsetype = "Timeline" if area == "Timeline" else None
-            await pipeline._take_page(
-                run, area,
-                [Post(copy.deepcopy(p), MODEL_ID, NAME, responsetype) for p in posts],
-                True, number,
-            )
+            await pipeline._take_page(run, area, build(area, posts), True, number)
 
     asyncio.run(go())
     ids = [m.id for m in run.media]
     assert len(ids) == len(set(ids))
-    return sorted(ids)
+    return run.media
+
+
+def no_progress(monkeypatch):
+    noop = lambda *a, **k: None  # noqa: E731
+    monkeypatch.setattr(
+        pipeline, "progress_updater",
+        SimpleNamespace(
+            activity=SimpleNamespace(update_task=noop),
+            download=SimpleNamespace(update_overall_task=noop),
+        ),
+    )
 
 
 @pytest.mark.parametrize(
@@ -724,32 +807,85 @@ def pipeline_ids(monkeypatch, pages):
     ids=["default", "videos", "images-audios", "dates", "force-all", "downloaded",
          "downloaded-force-all"],
 )
-def test_the_pipeline_queues_the_media_the_full_list_downloads(
-    settings_stub, monkeypatch, change
+def test_the_pipeline_saves_the_files_the_full_list_saves_in_the_same_places(
+    settings_stub, monkeypatch, saved_paths, change
 ):
     change = dict(change)
     downloaded = change.pop("downloaded", set())
     for key, value in change.items():
         setattr(settings_stub, key, value)
-    noop = lambda *a, **k: None  # noqa: E731
-    monkeypatch.setattr(
-        pipeline, "progress_updater",
-        SimpleNamespace(
-            activity=SimpleNamespace(update_task=noop),
-            download=SimpleNamespace(update_overall_task=noop),
-        ),
-    )
+    no_progress(monkeypatch)
     monkeypatch.setattr(filters, "get_media_ids_downloaded", lambda **k: set(downloaded))
     monkeypatch.setattr(filters, "get_media_ids_downloaded_model_sync", lambda **k: set(downloaded))
     monkeypatch.setattr(separate, "seperate_avatars", lambda media: media)
     monkeypatch.setattr(filters.me_util, "get_id", lambda: 999)
     pages = equivalence_pages()
-    expected = full_list_ids(pages)
+    expected = saved_paths(full_list_media(pages))
     assert expected  # the case selects something
-    assert pipeline_ids(monkeypatch, pages) == expected
+    got = saved_paths(pipeline_media(monkeypatch, pages))
+    assert set(got) == set(expected)
+    differ = {i for i in expected if got[i] != expected[i]}
+    assert differ <= DIFFERENT_POST
+
+
+def test_a_bought_file_is_saved_with_its_message_not_in_paid(
+    settings_stub, monkeypatch, saved_paths
+):
+    no_progress(monkeypatch)
+    monkeypatch.setattr(filters, "get_media_ids_downloaded", lambda **k: set())
+    monkeypatch.setattr(filters, "get_media_ids_downloaded_model_sync", lambda **k: set())
+    monkeypatch.setattr(separate, "seperate_avatars", lambda media: media)
+    monkeypatch.setattr(filters.me_util, "get_id", lambda: 999)
+    pages = [a for a in equivalence_pages() if a[0] in pipeline.ORDER]
+    expected = saved_paths(full_list_media(pages))
+    got = saved_paths(pipeline_media(monkeypatch, pages))
+    # filed under its message, as the scan-first path files it
+    assert got[201][0] == 1
+    assert got[201] == expected[201]
+    # bought and found nowhere else: filed as a purchase, as before
+    assert got[230][0] == 230
+    assert got[230] == expected[230]
+
+
+def test_a_wall_post_also_on_the_timeline_keeps_its_label(harness, saved_paths):
+    downloaded = []
+
+    async def hook(ele):
+        downloaded.append(ele)
+
+    harness.on_download = {102: hook}
+    harness.areas = ["Timeline", "Labels"]
+    harness.pages["Timeline"] = [page(post_dict(2, [102]))]
+    harness.pages["Labels"] = [page(post_dict(2, [102]))]
+    harness.run()
+    (ele,) = downloaded
+    assert f"/{WALL['name']}/" in saved_paths([ele])[102][1]
+
+
+def test_the_scan_stops_with_the_error_when_every_worker_has_ended(harness):
+    async def die(ele):
+        raise RuntimeError("worker broke")
+
+    harness.workers = 1
+    harness.areas = ["Timeline"]
+    harness.pages["Timeline"] = [page(post_dict(n, [100 + n])) for n in range(1, 9)]
+    # an error that escapes handle_one ends the worker
+    harness.on_download = {101: die}
+    with pytest.raises(RuntimeError, match="worker broke"):
+        harness.run()
+    asked = sum(1 for e in harness.events if e.startswith("Timeline page"))
+    assert asked < 8
 
 
 # ------------------------------------------------------------------ database rows
+
+
+def rows_without_ids(db):
+    """Every table's rows without the row id, which only shows insert order."""
+    return {
+        name: sorted((row[1:] for row in rows), key=repr)
+        for name, rows in table_rows(db).items()
+    }
 
 
 @pytest.fixture
@@ -768,14 +904,7 @@ def test_the_database_rows_match_the_scan_first_path(fansly, two_dbs, tmp_path, 
     monkeypatch.setattr(filters, "downloaded_media_ids", lambda **k: set())
     monkeypatch.setattr(filters, "seperate_self", lambda media: media)
     monkeypatch.setattr(separate, "seperate_avatars", lambda media: media)
-    noop = lambda *a, **k: None  # noqa: E731
-    monkeypatch.setattr(
-        pipeline, "progress_updater",
-        SimpleNamespace(
-            activity=SimpleNamespace(update_task=noop),
-            download=SimpleNamespace(update_overall_task=noop),
-        ),
-    )
+    no_progress(monkeypatch)
 
     async def scan_first():
         c = FakeSession(both_routes)
@@ -798,12 +927,120 @@ def test_the_database_rows_match_the_scan_first_path(fansly, two_dbs, tmp_path, 
         await operations.table_init_create(model_id=DM_CREATOR_ID, username=DM_CREATOR)
         for area in ("Messages", "Timeline"):
             await pipeline._scan_area(run, area, True)
+        await pipeline._write_locked_rows(run)
         assert run.media  # pages were queued
 
     asyncio.run(scan_first())
-    first = table_rows(two_dbs["db"])
+    first = rows_without_ids(two_dbs["db"])
     two_dbs["db"] = tmp_path / "by_page.db"
     asyncio.run(by_page())
-    second = table_rows(two_dbs["db"])
+    second = rows_without_ids(two_dbs["db"])
     assert first["posts"] and first["messages"] and first["medias"]
     assert second == first
+
+
+def fake_areas(monkeypatch):
+    """Every area of one creator, with files in two areas: a bought message
+    file, a wall post that is also on the timeline, and a file locked in a
+    newer post and open in an older one."""
+    message = post_dict(1, [201, 202], from_user=MODEL_ID)
+    message["responseType"] = "message"
+    timeline = [
+        [post_dict(20, [205]), post_dict(30, [206, 207, 208], locked=(207, 208))],
+        [post_dict(40, [207, 209])],
+    ]
+    wall = [post_dict(20, [205])]
+    bought = [purchase_dict(201, 0.5), purchase_dict(230, 0.25)]
+
+    def pages_of(content):
+        async def gen(*a, **k):
+            for one in content:
+                yield copy.deepcopy(one)
+
+        return gen
+
+    def all_of(content):
+        async def get(*a, **k):
+            return [copy.deepcopy(x) for one in content for x in one]
+
+        return get
+
+    async def label_names(c, model_id):
+        yield [dict(WALL)]
+
+    async def label_pages(c, label, model_id):
+        yield copy.deepcopy(wall)
+
+    scrape = pipeline.fansly_scrape
+    m = monkeypatch
+    m.setattr(scrape, "message_pages", pages_of([[message]]))
+    m.setattr(scrape, "get_messages", all_of([[message]]))
+    m.setattr(scrape, "timeline_pages", pages_of(timeline))
+    m.setattr(scrape, "get_timeline_posts", all_of(timeline))
+    m.setattr(scrape, "paid_pages", pages_of([bought]))
+    m.setattr(scrape, "get_paid_posts", all_of([bought]))
+    m.setattr(scrape, "label_names", label_names)
+    m.setattr(scrape, "label_pages", label_pages)
+
+
+def test_every_table_matches_the_scan_first_path_with_files_in_two_areas(
+    settings_stub, two_dbs, tmp_path, monkeypatch
+):
+    areas = ["Messages", "Timeline", "Purchased", "Labels"]
+    fake_areas(monkeypatch)
+    monkeypatch.setattr(filters, "downloaded_media_ids", lambda **k: set())
+    monkeypatch.setattr(filters, "get_media_ids_downloaded", lambda **k: set())
+    monkeypatch.setattr(filters, "get_media_ids_downloaded_model_sync", lambda **k: set())
+    monkeypatch.setattr(filters, "seperate_self", lambda media: media)
+    monkeypatch.setattr(separate, "seperate_avatars", lambda media: media)
+    monkeypatch.setattr(labels_api, "update_check", lambda *a, **k: None)
+    monkeypatch.setattr(labels_api, "get_known_label_posts", _no_known)
+    monkeypatch.setattr(
+        labels_api, "cache",
+        SimpleNamespace(get=lambda key, default=None, **k: default, set=lambda *a, **k: None),
+    )
+    monkeypatch.setattr(post, "set_after_checks", lambda *a, **k: None)
+    monkeypatch.setattr(post, "get_final_posts_area", lambda: list(areas))
+    monkeypatch.setattr(post, "get_like_area", lambda: set())
+    monkeypatch.setattr(post, "get_download_area", lambda: set(areas))
+    monkeypatch.setattr(pipeline, "get_download_area", lambda: set(areas))
+    monkeypatch.setattr(
+        post, "progress_utils",
+        SimpleNamespace(setup_live=lambda *a, **k: contextlib.nullcontext()),
+    )
+    no_progress(monkeypatch)
+    ele = SimpleNamespace(name=NAME, id=MODEL_ID, active=True)
+
+    async def scan_first():
+        await operations.table_init_create(model_id=MODEL_ID, username=NAME)
+        collection = await post.process_tasks(MODEL_ID, NAME, ele)
+        await batch_mediainsert(
+            collection.all_unique_media, model_id=MODEL_ID, username=NAME, downloaded=False
+        )
+
+    async def by_page():
+        await operations.table_init_create(model_id=MODEL_ID, username=NAME)
+        run = pipeline._Run(ele, None)
+        run.queue = asyncio.Queue()
+        run.selector = pipeline.Selector(MODEL_ID, NAME)
+        await pipeline._produce(run)
+        assert run.media
+
+    labels_api._finished_labels.clear()
+    asyncio.run(scan_first())
+    first = rows_without_ids(two_dbs["db"])
+    labels_api._finished_labels.clear()
+    two_dbs["db"] = tmp_path / "by_page.db"
+    asyncio.run(by_page())
+    second = rows_without_ids(two_dbs["db"])
+    labels_api._finished_labels.clear()
+    for table in ("medias", "posts", "messages", "labels"):
+        assert first[table], table
+        assert second[table] == first[table], table
+    # one row per file
+    media_ids = [row[0] for row in second["medias"]]
+    assert len(media_ids) == len(set(media_ids))
+
+
+async def _no_known(found, model_id, username):
+    return {}

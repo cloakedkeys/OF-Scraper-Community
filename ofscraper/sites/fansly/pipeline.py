@@ -55,11 +55,15 @@ from ofscraper.utils.args.accessors.areas import get_download_area
 
 log = logging.getLogger("shared")
 
-# Purchased and Messages first: they are short and hold the unlocked copies
-# of paid media. Timeline before Labels: a wall is a part of the timeline,
-# so its media is already seen by then. One area at a time: Fansly's rate
-# limit is per account, so areas scanned together only interleave.
-ORDER = ("Purchased", "Messages", "Timeline", "Labels")
+# The first copy of a file seen is the one downloaded, so the order decides
+# its folder. Messages first: short, and a bought message file belongs with
+# its message. Labels before Timeline: a wall's posts are timeline posts, and
+# the wall copy carries {label}. Purchased last: a bought file that is also
+# in a message or post is filed there, as the scan-first path does (it keeps
+# the earliest copy); one found nowhere else goes to Paid. One area at a
+# time: Fansly's rate limit is per account, so areas scanned together only
+# interleave.
+ORDER = ("Messages", "Labels", "Timeline", "Purchased")
 # areas whose finished scan is recorded, as the scan-first path does
 AFTER_CHECKED = ("Timeline", "Messages")
 # queue slots per download worker: enough that a worker rarely waits, few
@@ -160,6 +164,9 @@ class _Run:
         self.finished = []  # areas whose scan reached its end
         self.labels = {}  # label id -> label dict with its posts
         self.current = {}  # worker task -> the media it is downloading
+        self.rows = set()  # media keys whose row is written this run
+        self.locked_rows = {}  # media key -> a locked copy, row not yet written
+        self.workers = []
         self.queue = None
         self.selector = None
         self.download_session = None
@@ -253,17 +260,88 @@ PAGES = {
 # ------------------------------------------------------------------ producer
 
 
+def _media_key(item):
+    if of_env.getattr("ALLOW_DUPE_MEDIA"):
+        return (item.id, item.post_id)
+    return item.id
+
+
+def _new_rows(run, posts):
+    """The media rows a page adds. The scan-first path writes one row per
+    file from its whole list (``dupefiltermedia``: one copy, a viewable one
+    before a locked one), so each file gets one row per run here too: the
+    first viewable copy seen, which is the copy the selector downloads. A
+    locked copy waits in case a viewable one follows (``_write_locked_rows``).
+    """
+    out = []
+    for item in filters.dupefiltermedia([m for p in posts for m in p.all_media]):
+        key = _media_key(item)
+        if key in run.rows:
+            continue
+        if not item.canview:
+            run.locked_rows.setdefault(key, item)
+            continue
+        run.rows.add(key)
+        run.locked_rows.pop(key, None)
+        out.append(item)
+    return out
+
+
+async def _write_locked_rows(run):
+    """Rows for files only ever seen locked, once the scan is over."""
+    media = [m for key, m in run.locked_rows.items() if key not in run.rows]
+    run.locked_rows.clear()
+    if media:
+        await batch_mediainsert(
+            media, model_id=run.model_id, username=run.username, downloaded=False
+        )
+
+
+class WorkersEnded(Exception):
+    """Every download worker ended while the scan still had files to queue."""
+
+
+def _workers_error(run):
+    for task in run.workers:
+        if not task.cancelled() and task.exception() is not None:
+            return task.exception()
+    return RuntimeError("every download worker ended")
+
+
+async def _put(run, item):
+    """Queue one file. Waits while the queue is full, unless every worker has
+    ended (an error escaped one): then nothing will make room, so the scan
+    stops with the workers' error instead of waiting for ever."""
+    try:
+        run.queue.put_nowait(item)
+        return
+    except asyncio.QueueFull:
+        pass
+    put = asyncio.ensure_future(run.queue.put(item))
+    try:
+        while not put.done():
+            alive = [task for task in run.workers if not task.done()]
+            if not alive:
+                raise WorkersEnded() from _workers_error(run)
+            await asyncio.wait([put, *alive], return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if not put.done():
+            put.cancel()
+
+
 async def _take_page(run, area, posts, download, number):
     """Save the page's media rows, then queue what it has to download."""
-    await batch_mediainsert(
-        filters.dupefiltermedia([m for p in posts for m in p.all_media]),
-        model_id=run.model_id,
-        username=run.username,
-        downloaded=False,
-    )
     actions = ["download"] if download else []
     if settings.get_settings().text:
         actions.append("text")
+    if actions:
+        # the scan-first path writes rows only for the posts it collects
+        await batch_mediainsert(
+            _new_rows(run, posts),
+            model_id=run.model_id,
+            username=run.username,
+            downloaded=False,
+        )
     new = []
     for item in posts:
         kept = run.collection.add_post(item, actions=actions)
@@ -280,7 +358,7 @@ async def _take_page(run, area, posts, download, number):
         item.download_stopped = False
         run.media.append(item)
         progress_updater.download.update_overall_task(run.task, total=run.queued())
-        await run.queue.put((run.download_session, item, run.model_id, run.username))
+        await _put(run, (run.download_session, item, run.model_id, run.username))
     # let idle workers start on this page before the next page is asked for
     await asyncio.sleep(0)
 
@@ -298,12 +376,17 @@ async def _scan_area(run, area, download):
 @stop.fetching
 async def _produce(run):
     download_area = get_download_area()
-    for area in areas_for(run.ele, run.username):
-        try:
-            await _scan_area(run, area, area in download_area)
-        except Exception as E:
-            # pages already queued still download; the next area runs
-            post_area.log_area_failure(run.username, area, E)
+    try:
+        for area in areas_for(run.ele, run.username):
+            try:
+                await _scan_area(run, area, area in download_area)
+            except WorkersEnded:
+                raise
+            except Exception as E:
+                # pages already queued still download; the next area runs
+                post_area.log_area_failure(run.username, area, E)
+    finally:
+        await _write_locked_rows(run)
 
 
 # ------------------------------------------------------------------ workers
@@ -383,12 +466,15 @@ async def _download(run):
                 run.queue = asyncio.Queue(maxsize=QUEUE_PER_WORKER * count)
                 run.selector = Selector(run.model_id, run.username)
                 workers = [asyncio.create_task(_worker(run)) for _ in range(count)]
+                run.workers = workers
                 try:
                     producer = asyncio.create_task(_produce(run))
                     try:
                         await producer
                     except stop.DownloadsStopped:
                         stopped = True
+                    except WorkersEnded as E:
+                        raise E.__cause__
                     await _drain(run, workers)
                 finally:
                     for task in workers:
