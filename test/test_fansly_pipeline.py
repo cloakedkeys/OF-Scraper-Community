@@ -27,6 +27,7 @@ import ofscraper.data.api.labels as labels_api
 import ofscraper.data.posts.post as post
 import ofscraper.db.operations as operations
 import ofscraper.filters.media.filters as filters
+import ofscraper.sites.fansly.incremental as incremental
 import ofscraper.sites.fansly.pipeline as pipeline
 import ofscraper.utils.logs.utils.level as level
 import ofscraper.utils.separate as separate
@@ -85,6 +86,17 @@ def post_dict(pid, media_ids, kinds=None, from_user=None, locked=()):
 
 def page(*posts):
     return list(posts)
+
+
+class FakeCache:
+    def __init__(self, data):
+        self.data = data
+
+    def get(self, key, default=None):
+        return self.data.get(key, default)
+
+    def set(self, key, value, **kwargs):
+        self.data[key] = value
 
 
 # ------------------------------------------------------------------ harness
@@ -146,11 +158,34 @@ class Harness:
         m.setattr(labels_api, "commit_finished_labels", self.record("labels committed"))
         m.setattr(labels_api, "discard_finished_labels", self.record("labels discarded"))
 
+        self.recorded = {"posts": set(), "messages": set()}
+
         def rows(name):
             async def write(items, model_id=None, username=None, **k):
                 self.events.append(f"rows {name}")
+                if name in self.recorded:
+                    self.recorded[name].update(item.id for item in items)
 
             return write
+
+        # repeat-run state (incremental.py): the cache and what is recorded
+        self.cache = {}
+        self.pending = set()
+        self.after = None
+
+        def known(name):
+            async def ids(model_id=None, username=None):
+                return set(self.recorded[name])
+
+            return ids
+
+        async def pending(model_id, username):
+            return set(self.pending)
+
+        m.setattr(incremental, "cache", FakeCache(self.cache))
+        m.setattr(incremental, "get_after_pre_checks", lambda model_id, area: self.after)
+        m.setattr(incremental, "KNOWN_IDS", {"Timeline": known("posts"), "Messages": known("messages")})
+        m.setattr(incremental, "get_posts_missing_media", pending)
 
         async def table_init(**k):
             self.events.append("table init")
@@ -223,12 +258,8 @@ class Harness:
                 ),
             ),
         )
-        self.pool = ThreadPoolExecutor(max_workers=1)
-        m.setattr(
-            pipeline,
-            "common_globals",
-            SimpleNamespace(mainProcessVariableInit=noop, thread=self.pool),
-        )
+        self.m = m
+        self.new_pool()
         m.setattr(pipeline, "cache", SimpleNamespace(close=noop))
         m.setattr(pipeline, "setDirectoriesDate", noop)
         m.setattr(pipeline, "get_max_workers", lambda: self.workers)
@@ -261,12 +292,22 @@ class Harness:
 
         return fn
 
-    def run(self, active=True):
-        ele = SimpleNamespace(name=NAME, id=MODEL_ID, active=active)
+    def new_pool(self):
+        """A run shuts the download thread pool down; each run gets its own."""
+        self.pool = ThreadPoolExecutor(max_workers=1)
+        self.m.setattr(
+            pipeline,
+            "common_globals",
+            SimpleNamespace(mainProcessVariableInit=lambda: None, thread=self.pool),
+        )
+
+    def run(self, active=True, ele=None):
+        ele = ele or SimpleNamespace(name=NAME, id=MODEL_ID, active=active)
         try:
             return asyncio.run(asyncio.wait_for(pipeline.run(ele, None), 10))
         finally:
             self.pool.shutdown(wait=True)
+            self.new_pool()
 
     def index(self, event):
         return self.events.index(event)
@@ -768,6 +809,7 @@ def test_the_database_rows_match_the_scan_first_path(fansly, two_dbs, tmp_path, 
     monkeypatch.setattr(filters, "downloaded_media_ids", lambda **k: set())
     monkeypatch.setattr(filters, "seperate_self", lambda media: media)
     monkeypatch.setattr(separate, "seperate_avatars", lambda media: media)
+    monkeypatch.setattr(incremental, "cache", FakeCache({}))
     noop = lambda *a, **k: None  # noqa: E731
     monkeypatch.setattr(
         pipeline, "progress_updater",

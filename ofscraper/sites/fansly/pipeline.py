@@ -49,6 +49,7 @@ from ofscraper.data.posts import post as post_area
 from ofscraper.db.operations_.media import batch_mediainsert
 from ofscraper.managers.postcollection import PostCollection
 from ofscraper.scripts.after_download_action_script import after_download_action_script
+from ofscraper.sites.fansly import incremental
 from ofscraper.sites.fansly import scrape as fansly_scrape
 from ofscraper.sites.fansly import video as fansly_video
 from ofscraper.utils.args.accessors.areas import get_download_area
@@ -286,21 +287,36 @@ async def _take_page(run, area, posts, download, number):
 
 
 @free.space_checker
-async def _scan_area(run, area, download):
+async def _scan_area(run, area, download, early_stop=None):
+    incremental.scan_started(run.model_id, area)
     number = 0
     async with contextlib.aclosing(PAGES[area](run)) as pages:
         async for posts in pages:
             number += 1
             await _take_page(run, area, posts, download, number)
+            if early_stop and early_stop.after_page([p.id for p in posts]):
+                log.info(
+                    f"[{run.username}] {area}: page {number} and older are already "
+                    "recorded, stopping the scan"
+                )
+                break
     run.finished.append(area)
 
 
 @stop.fetching
 async def _produce(run):
     download_area = get_download_area()
-    for area in areas_for(run.ele, run.username):
+    areas = areas_for(run.ele, run.username)
+    # read what is recorded before this run writes any rows
+    early_stops = {}
+    for area in areas:
         try:
-            await _scan_area(run, area, area in download_area)
+            early_stops[area] = await incremental.early_stop_for(run.ele, area)
+        except Exception as E:
+            log.debug(f"{area}: could not read what is recorded, scanning fully: {E}")
+    for area in areas:
+        try:
+            await _scan_area(run, area, area in download_area, early_stops.get(area))
         except Exception as E:
             # pages already queued still download; the next area runs
             post_area.log_area_failure(run.username, area, E)
@@ -412,6 +428,7 @@ async def _commit(run):
         for area in run.finished:
             if area in AFTER_CHECKED:
                 set_after_checks(run.model_id, area)
+            incremental.scan_finished(run.ele, area)
         if run.labels:
             update_check(list(run.labels.values()), run.model_id, None, labels_api.API)
         await post_area.clean_stray_media(run.username, run.model_id, run.collection)
