@@ -1,0 +1,174 @@
+"""Fansly: what a refused link costs in requests, through the real API and
+address code (sites/fansly/api.py ``get_json``, sites/fansly/address.py).
+
+A fake session answers ``account/media`` and the one-byte CDN tries, and
+counts every request. Downloads themselves are simulated: a file's link is
+refused when its range is refused by the CDN or the file is deleted. The
+addresses are documentation ranges (RFC 5737).
+"""
+
+import asyncio
+import contextlib
+import copy
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
+
+import aiohttp
+import pytest
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
+
+import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
+import ofscraper.commands.scraper.actions.download.utils.refresh as refresh
+from ofscraper.sites.fansly import address
+
+from test_fansly_fetch_ahead import NEW, OLD, account_media, make_ele
+
+
+class Response:
+    def __init__(self, data=None):
+        self._data = data
+
+    async def json_(self):
+        return copy.deepcopy(self._data)
+
+
+class Session:
+    """``account/media`` answers each id with ``answer(n)`` (None leaves it
+    out); the CDN refuses links signed for ``cdn_refused`` and the files in
+    ``deleted``. Every request is counted."""
+
+    def __init__(self, answer, cdn_refused=(), deleted=()):
+        self.answer = answer
+        self.cdn_refused = set(cdn_refused)
+        self.deleted = set(deleted)
+        self.api_calls = []
+        self.probes = 0
+        self.dns_cleared = 0
+
+    def clear_dns_cache(self):
+        self.dns_cleared += 1
+
+    def requests(self):
+        return len(self.api_calls) + self.probes
+
+    def cdn_ok(self, url):
+        name = urlsplit(url).path.rsplit("/", 1)[-1]
+        return address._range(url) not in self.cdn_refused and name not in self.deleted
+
+    @contextlib.asynccontextmanager
+    async def requests_async(self, url=None, **kwargs):
+        if "apiv3.fansly.com" in url:
+            ids = parse_qs(urlsplit(url).query)["ids"][0].split(",")
+            self.api_calls.append(ids)
+            items = [self.answer(int(i) - 1000) for i in ids]
+            yield Response({"success": True, "response": [x for x in items if x]})
+            return
+        self.probes += 1
+        if not self.cdn_ok(url):
+            info = aiohttp.RequestInfo(URL(url), "GET", CIMultiDictProxy(CIMultiDict()), URL(url))
+            raise aiohttp.ClientResponseError(info, (), status=403)
+        yield Response()
+
+
+@pytest.fixture
+def world(monkeypatch):
+    state = SimpleNamespace(session=None)
+
+    @contextlib.asynccontextmanager
+    async def session(**kwargs):
+        yield state.session
+
+    address.reset()
+    refresh.fansly_refresher.reset()
+    # the scan's links were tried on the CDN before the address changed
+    address._accepted[OLD] = True
+    monkeypatch.setattr(refresh, "FANSLY_ASK_WAIT", 0)
+    monkeypatch.setattr(
+        refresh.manager, "Manager",
+        SimpleNamespace(session=SimpleNamespace(aget_ofsession=session)),
+    )
+    yield state
+    address.reset()
+    refresh.fansly_refresher.reset()
+
+
+def queue(count, start=0):
+    items = [make_ele(n) for n in range(start, start + count)]
+    refresh.fansly_refresher.expect(items)
+    return items
+
+
+async def download(session, ele, refused):
+    """The download loop's steps for one file; ``refused`` collects the
+    files whose download got a 403."""
+    await refresh.fresh_before_download(ele)
+    ok = session.cdn_ok(ele.url)
+    if not ok:
+        refused.append(ele)
+        ok = await refresh.refresh_media_link(ele, link=ele.url) and session.cdn_ok(ele.url)
+    refresh.fansly_refresher.done(ele)
+    return ok
+
+
+def run(session, items):
+    refused = []
+
+    async def go():
+        return [await download(session, ele, refused) for ele in items]
+
+    return asyncio.run(go()), refused
+
+
+def test_three_stuck_files_cost_no_more_requests_than_asking_for_each(world):
+    # the address changed; Fansly keeps answering with its cached links
+    world.session = Session(lambda n: account_media(n, OLD, "old"), cdn_refused={OLD})
+    results, _ = run(world.session, queue(3))
+    assert results == [False, False, False]
+    # asking for each file alone: FANSLY_ASKS calls per file
+    assert world.session.requests() <= 3 * refresh.FANSLY_ASKS
+    # the cached answers don't move the API address
+    assert world.session.dns_cleared == 0
+
+
+def test_a_deleted_file_costs_one_probe_and_moves_nothing(world):
+    world.session = Session(
+        lambda n: None if n == 0 else account_media(n, OLD, "again"), deleted={"0.png"}
+    )
+    first, second, third = queue(3)
+    others = (second.url, third.url)
+    results, _ = run(world.session, [first])
+    assert results == [False]
+    # one probe of another link of the range: accepted, so this file only
+    assert world.session.probes == 1
+    assert world.session.api_calls == [["1000"]]
+    assert world.session.dns_cleared == 0 and address._steered == {}
+    assert not address.is_refused(second.url)
+    assert (second.url, third.url) == others
+
+
+def test_after_a_batch_with_cached_links_a_later_batch_still_works(world):
+    calls = SimpleNamespace(cached=True)
+
+    def answer(n):
+        if calls.cached:
+            return account_media(n, OLD, "old")
+        return account_media(n, NEW, "new")
+
+    world.session = Session(answer, cdn_refused={OLD})
+    first = queue(3)
+    results, _ = run(world.session, first[:1])
+    assert results == [False]
+    batch_calls = len(world.session.api_calls)
+
+    # Fansly now signs new links; a later chunk is queued with old links
+    calls.cached = False
+    later = queue(3, start=3)
+    results, refused = run(world.session, later)
+    assert results == [True, True, True]
+    # one shared call gave the whole later chunk new links before download
+    assert refused == []
+    new_calls = world.session.api_calls[batch_calls:]
+    assert len(new_calls) == 1
+    assert {"1003", "1004", "1005"} <= set(new_calls[0])
+    assert all(address._range(ele.url) == NEW for ele in later)

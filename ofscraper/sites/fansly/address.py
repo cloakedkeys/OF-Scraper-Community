@@ -31,9 +31,10 @@ log = logging.getLogger("shared")
 _accepted = {}
 # host -> which of its addresses (in sorted order) requests go to
 _steered = {}
-# address ranges the CDN refused a download link for since it last accepted
-# one: every link signed for them is taken as refused
-_dead = set()
+# Address ranges a download was refused on, confirmed by a second link: every
+# link signed for them is taken as refused by the refresher (``is_refused``).
+# A separate fact from ``_accepted``, which only the API probe writes.
+_refused_ranges = set()
 _told = False
 
 
@@ -41,7 +42,7 @@ def reset():
     global _told
     _accepted.clear()
     _steered.clear()
-    _dead.clear()
+    _refused_ranges.clear()
     _told = False
 
 
@@ -119,7 +120,7 @@ async def usable(c, data) -> bool:
                 continue
             _accepted[signed_for] = verdict
             if verdict:
-                _dead.discard(signed_for)
+                _refused_ranges.discard(signed_for)
         if not _accepted[signed_for]:
             if not _told:
                 _told = True
@@ -147,32 +148,40 @@ def forget_refused():
     have changed to one of them."""
     for signed_for in [k for k, ok in _accepted.items() if not ok]:
         del _accepted[signed_for]
-    _dead.clear()
+
+
+def link_range(url):
+    """The address range ``url`` is signed for, or None (never logged)."""
+    return _range(url) if url else None
+
+
+async def cdn_refuses(c, url):
+    """True when the CDN refuses ``url`` (one byte is asked for), False when
+    it accepts it, None when the try itself failed. Changes nothing here."""
+    verdict = await _cdn_accepts(c, url)
+    return None if verdict is None else not verdict
 
 
 def refused(url):
-    """The CDN refused a download of ``url`` (403).
+    """The CDN refused downloads of ``url`` and of another link signed for
+    the same range (the caller checked with ``cdn_refuses``).
 
-    The address downloads leave from may have changed (a VPN switch), and
-    then every link signed for the old range is refused, those of files not
-    started yet included. So the range counts as refused until the CDN
-    accepts it again, and it loses its "accepted" mark: the next response
-    signed for it is tried on the CDN before it is used. A 403 for another
-    reason costs that one try. Links without a range change nothing.
+    The address downloads leave from changed (a VPN switch), so every link
+    signed for the old range is refused, those of files not started yet
+    included. The range counts as refused until the API probe finds the CDN
+    accepting it again. ``_accepted`` is left as the probe learned it. Links
+    without a range change nothing.
     """
     signed_for = _range(url)
-    if not signed_for:
-        return
-    _dead.add(signed_for)
-    if _accepted.get(signed_for):
-        del _accepted[signed_for]
+    if signed_for:
+        _refused_ranges.add(signed_for)
 
 
 def is_refused(url) -> bool:
     """True when ``url`` is signed for a range the CDN refuses."""
     signed_for = _range(url) if url else None
     return bool(signed_for) and (
-        signed_for in _dead or _accepted.get(signed_for) is False
+        signed_for in _refused_ranges or _accepted.get(signed_for) is False
     )
 
 

@@ -175,6 +175,12 @@ def _fansly_signatures(raw):
 
 
 SAME_LINK = "Fansly gave the same link again"
+THIS_FILE_ONLY = "the CDN accepts another link signed for the same address"
+FAILED_EARLIER = "fetching new links for it failed earlier"
+
+
+def _raw(ele):
+    return (ele.media.get("fansly") or {}).get("media")
 
 
 def _fansly_ids(ele):
@@ -276,17 +282,34 @@ class FanslyRefresher:
     signed for the refused range, one call for many, and the rest find their
     links already replaced.
 
+    One 403 is not proof that a range is dead: a deleted file answers 403
+    too. So before a range is marked, one other waiting link signed for it is
+    tried on the CDN (one byte). If the CDN accepts it, only this file gets a
+    new link, on its own.
+
+    The shared call does not loop. Items it gives a new link are updated;
+    items it gives the same link again (Fansly hands out a link it keeps for
+    a while) are left to the per-file asks, each on its own, and make no
+    further shared call. A failed call is tried once more, and the waiting
+    items it was for then make no shared call of their own.
+
     Items are added with ``expect`` and removed with ``done``; one call runs
     at a time.
     """
 
     def __init__(self):
         self._waiting = {}
+        # id(item) -> its raw media when a shared call gave the same link
+        self._stale = {}
+        # id(item) -> its raw media when the shared call for it failed
+        self._failed = {}
         self._lock = None
         self._loop = None
 
     def reset(self):
         self._waiting.clear()
+        self._stale.clear()
+        self._failed.clear()
 
     def expect(self, items):
         """Items about to be downloaded, in download order."""
@@ -296,6 +319,46 @@ class FanslyRefresher:
 
     def done(self, ele):
         self._waiting.pop(id(ele), None)
+        self._stale.pop(id(ele), None)
+        self._failed.pop(id(ele), None)
+
+    async def _range_refused(self, ele, link):
+        """Whether the range ``link`` is signed for is refused: one other
+        waiting link signed for it is tried on the CDN."""
+        signed_for = address.link_range(link)
+        other = next(
+            (
+                o.url
+                for o in self._waiting.values()
+                if o is not ele
+                and o.url
+                and o.url != link
+                and address.link_range(o.url) == signed_for
+            ),
+            None,
+        )
+        if other is None:
+            return False
+        try:
+            async with manager.Manager.session.aget_ofsession() as c:
+                return await address.cdn_refuses(c, other) is True
+        except Exception as E:
+            log.debug(f"Media {ele.id}: could not try another link: {type(E).__name__}")
+            return False
+
+    async def _call(self, batch):
+        """``account/media`` for the batch, tried twice; the address moves at
+        most once."""
+        error = None
+        for attempt in range(2):
+            try:
+                async with manager.Manager.session.aget_ofsession() as c:
+                    return await fansly_api.account_media(
+                        c, list(batch), asks=2 if attempt == 0 else 1
+                    )
+            except Exception as E:
+                error = E
+        raise error
 
     def _get_lock(self):
         # an asyncio.Lock belongs to one event loop, and each run has its own
@@ -310,7 +373,9 @@ class FanslyRefresher:
         ``link``: the link the CDN just refused; None before a download whose
         link is signed for a refused range. Returns None when ``ele`` has new
         links (from this call or one made while it waited), otherwise why
-        not (``SAME_LINK`` when Fansly gave its link again).
+        not: ``SAME_LINK`` when Fansly gave its link again, ``THIS_FILE_ONLY``
+        when only this link is refused, ``FAILED_EARLIER`` when the shared
+        call for it failed; each of those leaves ``ele`` to the per-file asks.
         """
         before = (ele.media.get("fansly") or {}).get("media")
         # shielded: a cancelled download must not cancel a call that other
@@ -331,6 +396,14 @@ class FanslyRefresher:
             ):
                 # replaced after the refused request was made
                 return None
+            if link is not None and not address.is_refused(link):
+                if not await self._range_refused(ele, link):
+                    return THIS_FILE_ONLY
+                address.refused(link)
+            if before is not None and self._stale.get(id(ele)) is before:
+                return SAME_LINK
+            if before is not None and self._failed.get(id(ele)) is before:
+                return FAILED_EARLIER
             first = _fansly_ids(ele)
             if not first:
                 return "no way to fetch a new Fansly link"
@@ -343,16 +416,26 @@ class FanslyRefresher:
                     continue
                 batch.setdefault(str(other_id), []).append(other)
             try:
-                async with manager.Manager.session.aget_ofsession() as c:
-                    found = await fansly_api.account_media(c, list(batch))
+                found = await self._call(batch)
             except Exception as E:
+                for items in batch.values():
+                    for item in items:
+                        if item is not ele:
+                            self._failed[id(item)] = _raw(item)
                 return f"fetching a new link failed: {E}"
+            if not isinstance(found, list):
+                found = []
             replaced = 0
             for account_media_id, items in batch.items():
                 answer = _answer_for(found, account_media_id)
                 for item in items:
-                    if item is not ele and apply_fansly_item(item, answer):
+                    if item is ele:
+                        continue
+                    problem = _apply_fansly(item, answer)
+                    if problem is None:
                         replaced += 1
+                    elif problem == SAME_LINK:
+                        self._stale[id(item)] = _raw(item)
             if len(batch) > 1:
                 log.debug(
                     f"Fansly: fetched new links for {len(batch) - 1} waiting "
@@ -389,13 +472,16 @@ async def fresh_before_download(ele):
 
 
 async def _refresh_fansly_refused(ele, link) -> bool:
-    address.refused(link)
-    if not address.is_refused(link):
+    if not address.link_range(link):
         # no address range in the link: ask for this item alone
         return await _refresh_fansly(ele)
     problem = await fansly_refresher.fresh(ele, link)
     if problem == SAME_LINK:
+        # the shared call was this item's first ask
         return await _refresh_fansly(ele, asked=1)
+    if problem in (THIS_FILE_ONLY, FAILED_EARLIER):
+        log.debug(f"Media {ele.id}: {problem}; asking for its link alone")
+        return await _refresh_fansly(ele)
     if problem:
         log.debug(f"Media {ele.id}: {problem}")
         return False
