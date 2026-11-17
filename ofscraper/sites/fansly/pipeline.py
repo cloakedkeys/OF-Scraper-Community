@@ -20,6 +20,7 @@ scan-then-download path.
 import asyncio
 import contextlib
 import logging
+import time
 
 import ofscraper.classes.labels as labels
 import ofscraper.classes.of.posts as posts_
@@ -60,16 +61,26 @@ from ofscraper.utils.args.accessors.areas import get_download_area
 
 log = logging.getLogger("shared")
 
-# Purchased and Messages first: they are short and hold the unlocked copies
-# of paid media. Timeline before Labels: a wall is a part of the timeline,
-# so its media is already seen by then. One area at a time: Fansly's rate
-# limit is per account, so areas scanned together only interleave.
-ORDER = ("Purchased", "Messages", "Timeline", "Labels")
+# The first copy of a file seen is the one downloaded, so the order decides
+# its folder. Messages first: short, and a bought message file belongs with
+# its message. Labels before Timeline: a wall's posts are timeline posts, and
+# the wall copy carries {label}. Purchased last: a bought file that is also
+# in a message or post is filed there, as the scan-first path does (it keeps
+# the earliest copy); one found nowhere else goes to Paid. One area at a
+# time: Fansly's rate limit is per account, so areas scanned together only
+# interleave.
+ORDER = ("Messages", "Labels", "Timeline", "Purchased")
 # areas whose finished scan is recorded, as the scan-first path does
 AFTER_CHECKED = ("Timeline", "Messages")
 # queue slots per download worker: enough that a worker rarely waits, few
 # enough that the links waiting stay about one page
 QUEUE_PER_WORKER = 2
+# runs that need the whole list: seconds a chunk's links are used before the
+# files still waiting get new ones. Fansly allows about ten calls a minute,
+# so this costs at most one extra call every FRESH_FOR seconds.
+FRESH_FOR = 90
+ROOM_POLL = 0.05
+_clock = time.monotonic
 _END = object()
 
 
@@ -175,8 +186,12 @@ class _Run:
         self.media = []  # every media queued, in order
         self.offered = set()  # post ids whose media was selected
         self.finished = []  # areas whose scan reached its end
+        self.scanned = {}  # downloaded area -> (newest post id, scanned to the last page)
         self.labels = {}  # label id -> label dict with its posts
         self.current = {}  # worker task -> the media it is downloading
+        self.rows = set()  # media keys whose row is written this run
+        self.locked_rows = {}  # media key -> a locked copy, row not yet written
+        self.workers = []
         self.queue = None
         self.selector = None
         self.download_session = None
@@ -270,17 +285,88 @@ PAGES = {
 # ------------------------------------------------------------------ producer
 
 
+def _media_key(item):
+    if of_env.getattr("ALLOW_DUPE_MEDIA"):
+        return (item.id, item.post_id)
+    return item.id
+
+
+def _new_rows(run, posts):
+    """The media rows a page adds. The scan-first path writes one row per
+    file from its whole list (``dupefiltermedia``: one copy, a viewable one
+    before a locked one), so each file gets one row per run here too: the
+    first viewable copy seen, which is the copy the selector downloads. A
+    locked copy waits in case a viewable one follows (``_write_locked_rows``).
+    """
+    out = []
+    for item in filters.dupefiltermedia([m for p in posts for m in p.all_media]):
+        key = _media_key(item)
+        if key in run.rows:
+            continue
+        if not item.canview:
+            run.locked_rows.setdefault(key, item)
+            continue
+        run.rows.add(key)
+        run.locked_rows.pop(key, None)
+        out.append(item)
+    return out
+
+
+async def _write_locked_rows(run):
+    """Rows for files only ever seen locked, once the scan is over."""
+    media = [m for key, m in run.locked_rows.items() if key not in run.rows]
+    run.locked_rows.clear()
+    if media:
+        await batch_mediainsert(
+            media, model_id=run.model_id, username=run.username, downloaded=False
+        )
+
+
+class WorkersEnded(Exception):
+    """Every download worker ended while the scan still had files to queue."""
+
+
+def _workers_error(run):
+    for task in run.workers:
+        if not task.cancelled() and task.exception() is not None:
+            return task.exception()
+    return RuntimeError("every download worker ended")
+
+
+async def _put(run, item):
+    """Queue one file. Waits while the queue is full, unless every worker has
+    ended (an error escaped one): then nothing will make room, so the scan
+    stops with the workers' error instead of waiting for ever."""
+    try:
+        run.queue.put_nowait(item)
+        return
+    except asyncio.QueueFull:
+        pass
+    put = asyncio.ensure_future(run.queue.put(item))
+    try:
+        while not put.done():
+            alive = [task for task in run.workers if not task.done()]
+            if not alive:
+                raise WorkersEnded() from _workers_error(run)
+            await asyncio.wait([put, *alive], return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        if not put.done():
+            put.cancel()
+
+
 async def _take_page(run, area, posts, download, number):
     """Save the page's media rows, then queue what it has to download."""
-    await batch_mediainsert(
-        filters.dupefiltermedia([m for p in posts for m in p.all_media]),
-        model_id=run.model_id,
-        username=run.username,
-        downloaded=False,
-    )
     actions = ["download"] if download else []
     if settings.get_settings().text:
         actions.append("text")
+    if actions:
+        # the scan-first path writes rows only for the posts it collects
+        await batch_mediainsert(
+            _new_rows(run, posts),
+            model_id=run.model_id,
+            username=run.username,
+            downloaded=False,
+        )
     new = []
     for item in posts:
         kept = run.collection.add_post(item, actions=actions)
@@ -299,26 +385,39 @@ async def _take_page(run, area, posts, download, number):
         item.download_stopped = False
         run.media.append(item)
         progress_updater.download.update_overall_task(run.task, total=run.queued())
-        await run.queue.put((run.download_session, item, run.model_id, run.username))
+        await _put(run, (run.download_session, item, run.model_id, run.username))
     # let idle workers start on this page before the next page is asked for
     await asyncio.sleep(0)
 
 
 @free.space_checker
 async def _scan_area(run, area, download, early_stop=None):
-    incremental.scan_started(run.model_id, area)
     number = 0
+    newest = None
+    full = True
     async with contextlib.aclosing(PAGES[area](run)) as pages:
         async for posts in pages:
             number += 1
             await _take_page(run, area, posts, download, number)
-            if early_stop and early_stop.after_page([p.id for p in posts]):
+            ids = [p.id for p in posts]
+            newest = max(
+                (i for i in (newest, incremental.newest_id(ids)) if i is not None),
+                default=None,
+            )
+            if early_stop and early_stop.after_page(ids):
+                full = False
                 log.info(
-                    f"[{run.username}] {area}: page {number} and older are already "
-                    "recorded, stopping the scan"
+                    f"[{run.username}] {area}: page {number} and older were scanned "
+                    "by an earlier run, stopping the scan. A post that appears "
+                    "later with an older date is found by the next full scan, at "
+                    f"least every {incremental.full_scan_days()} days "
+                    "(FANSLY_FULL_SCAN_DAYS)"
                 )
                 break
     run.finished.append(area)
+    if download:
+        # only a scan whose files are downloaded may mark the area
+        run.scanned[area] = (newest, full)
 
 
 @stop.fetching
@@ -327,19 +426,24 @@ async def _produce(run):
     run.selector = Selector(run.model_id, run.username)
     download_area = get_download_area()
     areas = areas_for(run.ele, run.username)
-    # read what is recorded before this run writes any rows
-    early_stops = {}
-    for area in areas:
-        try:
-            early_stops[area] = await incremental.early_stop_for(run.ele, area)
-        except Exception as E:
-            log.debug(f"{area}: could not read what is recorded, scanning fully: {E}")
-    for area in areas:
-        try:
-            await _scan_area(run, area, area in download_area, early_stops.get(area))
-        except Exception as E:
-            # pages already queued still download; the next area runs
-            post_area.log_area_failure(run.username, area, E)
+    try:
+        # read what is recorded before this run writes any rows
+        early_stops = {}
+        for area in areas:
+            try:
+                early_stops[area] = await incremental.early_stop_for(run.ele, area)
+            except Exception as E:
+                log.debug(f"{area}: could not read what is recorded, scanning fully: {E}")
+        for area in areas:
+            try:
+                await _scan_area(run, area, area in download_area, early_stops.get(area))
+            except WorkersEnded:
+                raise
+            except Exception as E:
+                # pages already queued still download; the next area runs
+                post_area.log_area_failure(run.username, area, E)
+    finally:
+        await _write_locked_rows(run)
 
 
 def _account_media_id(item):
@@ -363,28 +467,65 @@ async def _fresh_links(run, chunk):
     except Exception as E:
         log.debug(f"[{run.username}] fetching new links failed, using the scan's: {E}")
         return
-    answers = {str(x.get("id")): x for x in found or [] if isinstance(x, dict)}
+    if not isinstance(found, list):
+        log.debug(
+            f"[{run.username}] the new links came back in an unexpected form "
+            f"({type(found).__name__}), using the scan's"
+        )
+        return
+    answers = {str(x.get("id")): x for x in found if isinstance(x, dict)}
     fresh = 0
     for item in chunk:
         answer = answers.get(str(_account_media_id(item)))
-        if answer and refresh.apply_fansly_item(item, answer):
-            fresh += 1
+        if not answer:
+            continue
+        try:
+            fresh += refresh.apply_fansly_item(item, answer)
+        except Exception as E:
+            # a malformed answer: this file keeps the scan's links
+            log.debug(f"[{run.username}] media {item.id}: unusable new links, using the scan's: {E}")
     log.debug(f"[{run.username}] {fresh} of {len(chunk)} files have newly signed links")
+
+
+async def _room(run):
+    """Wait until the queue has room; stop with the workers' error if every
+    worker has ended (see ``_put``)."""
+    while run.queue.full():
+        if all(task.done() for task in run.workers):
+            raise WorkersEnded() from _workers_error(run)
+        await asyncio.sleep(ROOM_POLL)
 
 
 @stop.fetching
 async def _produce_ordered(run):
-    """Queue the selected list in its order, a chunk at a time, fetching
-    each chunk's links just before it is queued. The queue is bounded, so
-    the next chunk's call waits until this chunk is nearly downloaded."""
+    """Queue the selected list in its order with links fetched just before.
+
+    One ``account/media`` call gives links for the next chunk of up to
+    ``ACCOUNT_MEDIA_BATCH`` files, made when the chunk's first file can be
+    queued. Files are queued as the queue makes room, while their links are
+    at most ``FRESH_FOR`` seconds old; the files still waiting then go into
+    the next call. So a file is queued with links at most ``FRESH_FOR``
+    seconds old and waits behind about two files per worker, and a run of
+    small files still costs one call per chunk.
+    """
     size = fansly_api.ACCOUNT_MEDIA_BATCH
-    for start in range(0, len(run.media), size):
-        chunk = run.media[start : start + size]
+    waiting = list(run.media)
+    while waiting:
+        await _room(run)
+        chunk = waiting[:size]
         await _fresh_links(run, chunk)
-        # waiting: a refused link fetches new links for these too
+        # waiting: a refused link fetches new links for these too (files left
+        # for the next call are registered again, which changes nothing)
         refresh.fansly_refresher.expect(chunk)
+        signed_at = _clock()
+        taken = 0
         for item in chunk:
-            await run.queue.put((run.download_session, item, run.model_id, run.username))
+            await _room(run)
+            if taken and _clock() - signed_at > FRESH_FOR:
+                break
+            run.queue.put_nowait((run.download_session, item, run.model_id, run.username))
+            taken += 1
+        waiting = waiting[taken:]
         await asyncio.sleep(0)
 
 
@@ -466,12 +607,15 @@ async def _download(run, produce):
                 )
                 run.queue = asyncio.Queue(maxsize=QUEUE_PER_WORKER * count)
                 workers = [asyncio.create_task(_worker(run)) for _ in range(count)]
+                run.workers = workers
                 try:
                     producer = asyncio.create_task(produce(run))
                     try:
                         await producer
                     except stop.DownloadsStopped:
                         stopped = True
+                    except WorkersEnded as E:
+                        raise E.__cause__
                     await _drain(run, workers)
                 finally:
                     for task in workers:
@@ -496,7 +640,10 @@ async def _commit(run):
         for area in run.finished:
             if area in AFTER_CHECKED:
                 set_after_checks(run.model_id, area)
-            incremental.scan_finished(run.ele, area)
+        # the scan reached its end and every download ran: a later run may
+        # stop where this one began
+        for area, (newest, full) in run.scanned.items():
+            incremental.record(run.ele, area, newest, full)
         if run.labels:
             update_check(list(run.labels.values()), run.model_id, None, labels_api.API)
         await post_area.clean_stray_media(run.username, run.model_id, run.collection)

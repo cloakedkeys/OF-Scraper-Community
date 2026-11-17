@@ -143,6 +143,80 @@ def test_a_failed_call_leaves_the_scan_links(harness, answers):
     assert {used[item.id][0] for item in items} == {"signature-scan"}
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"unexpected": "shape"},
+        [{"id": "9000", "media": "not a media"}, {"id": "9001", "preview": 5}],
+        [{"id": "9000", "media": {"id": "8000", "locations": "nonsense"}}],
+    ],
+    ids=["not-a-list", "bad-items", "bad-locations"],
+)
+def test_a_malformed_answer_keeps_the_scan_links_and_the_run_goes_on(
+    harness, answers, monkeypatch, answer
+):
+    items = scanned(3)
+
+    async def account_media(c, ids):
+        answers.calls.append(list(ids))
+        return answer
+
+    monkeypatch.setattr(pipeline.fansly_api, "account_media", account_media)
+    used = run_with_urls(harness, items)
+    assert harness.downloads == [item.id for item in items]
+    assert {used[item.id][0] for item in items} == {"signature-scan"}
+    assert "processed" in harness.events
+
+
+def test_files_left_waiting_too_long_get_new_links_before_they_are_queued(
+    harness, answers, monkeypatch
+):
+    """Big files: a chunk's last files would wait for the ones before them.
+    Links older than FRESH_FOR are fetched again before a file is queued."""
+    clock = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(pipeline, "_clock", lambda: clock.now)
+    monkeypatch.setattr(pipeline, "FRESH_FOR", 10)
+    monkeypatch.setattr(pipeline.fansly_api, "ACCOUNT_MEDIA_BATCH", 6)
+    called_at = []
+    real = pipeline.fansly_api.account_media
+
+    async def timed(c, ids):
+        called_at.append(clock.now)
+        return await real(c, ids)
+
+    monkeypatch.setattr(pipeline.fansly_api, "account_media", timed)
+    items = scanned(12)
+    ages = {}
+
+    def slow(ele):
+        async def hook(_):
+            tag = signature(ele).split("call")[1]
+            ages[ele.id] = clock.now - called_at[int(tag) - 1]
+            clock.now += 6  # each download takes 6 seconds
+
+        return hook
+
+    for item in items:
+        harness.on_download[item.id] = slow(item)
+    harness.run(collection=Collection(items))
+    assert harness.downloads == [item.id for item in items]
+    # queued with links at most 10 s old, then behind at most two files (12 s)
+    assert max(ages.values()) <= 10 + 12
+    # two chunks of 6 would have been 2 calls; the waits add the rest
+    assert len(answers.calls) > 2
+
+
+def test_the_scan_stops_with_the_error_when_every_worker_has_ended(harness, answers):
+    items = scanned(7)
+
+    async def die(_):
+        raise RuntimeError("worker broke")
+
+    harness.on_download[items[0].id] = die
+    with pytest.raises(RuntimeError, match="worker broke"):
+        harness.run(collection=Collection(items))
+
+
 def test_files_without_an_account_media_id_make_no_call(harness, answers):
     items = scanned(2)
     for item in items:
