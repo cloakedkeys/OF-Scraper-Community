@@ -218,19 +218,18 @@ def _answer_for(found, account_media_id):
     )
 
 
-async def _refresh_fansly(ele, asked=0) -> bool:
+async def _refresh_fansly(ele) -> bool:
     """Fansly: fetch the item's accountMedia again and use its links.
 
     Fansly keeps a signed link for a while and gives the same one to every
     request for that media, sometimes one signed for another address, which
     its CDN refuses (#536). So this asks a few times, until a link changes.
-    ``asked``: asks already made elsewhere that gave the same link.
     """
     account_media_id = _fansly_ids(ele)
     if not account_media_id:
         log.debug(f"Media {ele.id}: no way to fetch a new Fansly link")
         return False
-    for ask in range(asked, FANSLY_ASKS):
+    for ask in range(FANSLY_ASKS):
         if ask:
             await asyncio.sleep(FANSLY_ASK_WAIT)
         try:

@@ -20,6 +20,7 @@ scan-then-download path.
 import asyncio
 import contextlib
 import logging
+import time
 
 import ofscraper.classes.labels as labels
 import ofscraper.classes.of.posts as posts_
@@ -74,6 +75,12 @@ AFTER_CHECKED = ("Timeline", "Messages")
 # queue slots per download worker: enough that a worker rarely waits, few
 # enough that the links waiting stay about one page
 QUEUE_PER_WORKER = 2
+# runs that need the whole list: seconds a chunk's links are used before the
+# files still waiting get new ones. Fansly allows about ten calls a minute,
+# so this costs at most one extra call every FRESH_FOR seconds.
+FRESH_FOR = 90
+ROOM_POLL = 0.05
+_clock = time.monotonic
 _END = object()
 
 
@@ -458,26 +465,62 @@ async def _fresh_links(run, chunk):
     except Exception as E:
         log.debug(f"[{run.username}] fetching new links failed, using the scan's: {E}")
         return
-    answers = {str(x.get("id")): x for x in found or [] if isinstance(x, dict)}
+    if not isinstance(found, list):
+        log.debug(
+            f"[{run.username}] the new links came back in an unexpected form "
+            f"({type(found).__name__}), using the scan's"
+        )
+        return
+    answers = {str(x.get("id")): x for x in found if isinstance(x, dict)}
     fresh = 0
     for item in chunk:
         answer = answers.get(str(_account_media_id(item)))
-        if answer and refresh.apply_fansly_item(item, answer):
-            fresh += 1
+        if not answer:
+            continue
+        try:
+            fresh += refresh.apply_fansly_item(item, answer)
+        except Exception as E:
+            # a malformed answer: this file keeps the scan's links
+            log.debug(f"[{run.username}] media {item.id}: unusable new links, using the scan's: {E}")
     log.debug(f"[{run.username}] {fresh} of {len(chunk)} files have newly signed links")
+
+
+async def _room(run):
+    """Wait until the queue has room; stop with the workers' error if every
+    worker has ended (see ``_put``)."""
+    while run.queue.full():
+        if all(task.done() for task in run.workers):
+            raise WorkersEnded() from _workers_error(run)
+        await asyncio.sleep(ROOM_POLL)
 
 
 @stop.fetching
 async def _produce_ordered(run):
-    """Queue the selected list in its order, a chunk at a time, fetching
-    each chunk's links just before it is queued. The queue is bounded, so
-    the next chunk's call waits until this chunk is nearly downloaded."""
+    """Queue the selected list in its order with links fetched just before.
+
+    One ``account/media`` call gives links for the next chunk of up to
+    ``ACCOUNT_MEDIA_BATCH`` files, made when the chunk's first file can be
+    queued. Files are queued as the queue makes room, while their links are
+    at most ``FRESH_FOR`` seconds old; the files still waiting then go into
+    the next call. So a file is queued with links at most ``FRESH_FOR``
+    seconds old and waits behind about two files per worker, and a run of
+    small files still costs one call per chunk.
+    """
     size = fansly_api.ACCOUNT_MEDIA_BATCH
-    for start in range(0, len(run.media), size):
-        chunk = run.media[start : start + size]
+    waiting = list(run.media)
+    while waiting:
+        await _room(run)
+        chunk = waiting[:size]
         await _fresh_links(run, chunk)
+        signed_at = _clock()
+        taken = 0
         for item in chunk:
-            await run.queue.put((run.download_session, item, run.model_id, run.username))
+            await _room(run)
+            if taken and _clock() - signed_at > FRESH_FOR:
+                break
+            run.queue.put_nowait((run.download_session, item, run.model_id, run.username))
+            taken += 1
+        waiting = waiting[taken:]
         await asyncio.sleep(0)
 
 
