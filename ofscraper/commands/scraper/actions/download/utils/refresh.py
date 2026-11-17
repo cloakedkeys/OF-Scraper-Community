@@ -10,7 +10,9 @@ signature (``files.drm``), which signs the manifest and segment requests.
 
 Fansly links are signed the same way, with one difference: Fansly sometimes
 gives out a link signed for another address, with no IP change on this side.
-See ``_refresh_fansly``.
+See ``_refresh_fansly``. And a refused Fansly link gets new links for every
+waiting file signed for the same address range in one call
+(``FanslyRefresher``).
 
 Based on datawhores/OF-Scraper#653 by danijel1124.
 """
@@ -27,6 +29,7 @@ import ofscraper.managers.manager as manager
 import ofscraper.utils.of_env.of_env as of_env
 from ofscraper.data.api.common.timeline import get_individual_timeline_post
 from ofscraper.data.api.highlights import get_highlightList
+from ofscraper.sites.fansly import address
 from ofscraper.sites.fansly import api as fansly_api
 from ofscraper.sites.fansly import normalize as fansly_normalize
 from ofscraper.sites.fansly import video as fansly_video
@@ -257,13 +260,164 @@ async def _refresh_fansly(ele, asked=0) -> bool:
     return False
 
 
-async def refresh_media_link(ele) -> bool:
+def _is_fansly(ele):
+    return isinstance(getattr(ele, "media", None), dict) and bool(ele.media.get("fansly"))
+
+
+class FanslyRefresher:
+    """New links for every waiting Fansly item a refusal makes stale.
+
+    When the address downloads leave from changes (a VPN switch, a
+    reconnect), the CDN refuses every link signed before it, those of files
+    not started yet included. Asking for each file's link on its own costs an
+    ``account/media`` call per file, and Fansly allows about ten calls a
+    minute; a call costs the same with ``ACCOUNT_MEDIA_BATCH`` ids. So the
+    first refusal fetches new links for the waiting items whose links are
+    signed for the refused range, one call for many, and the rest find their
+    links already replaced.
+
+    Items are added with ``expect`` and removed with ``done``; one call runs
+    at a time.
+    """
+
+    def __init__(self):
+        self._waiting = {}
+        self._lock = None
+        self._loop = None
+
+    def reset(self):
+        self._waiting.clear()
+
+    def expect(self, items):
+        """Items about to be downloaded, in download order."""
+        for ele in items:
+            if _is_fansly(ele):
+                self._waiting[id(ele)] = ele
+
+    def done(self, ele):
+        self._waiting.pop(id(ele), None)
+
+    def _get_lock(self):
+        # an asyncio.Lock belongs to one event loop, and each run has its own
+        loop = asyncio.get_running_loop()
+        if self._loop is not loop:
+            self._loop, self._lock = loop, asyncio.Lock()
+        return self._lock
+
+    async def fresh(self, ele, link=None):
+        """Give ``ele`` new links, with the waiting items that need them too.
+
+        ``link``: the link the CDN just refused; None before a download whose
+        link is signed for a refused range. Returns None when ``ele`` has new
+        links (from this call or one made while it waited), otherwise why
+        not (``SAME_LINK`` when Fansly gave its link again).
+        """
+        before = (ele.media.get("fansly") or {}).get("media")
+        # shielded: a cancelled download must not cancel a call that other
+        # downloads wait for
+        return await asyncio.shield(self._fresh(ele, link, before))
+
+    async def _fresh(self, ele, link, before):
+        async with self._get_lock():
+            if (ele.media.get("fansly") or {}).get("media") is not before:
+                return None
+            if link is None and not address.is_refused(ele.url):
+                return None
+            if (
+                link is not None
+                and ele.url
+                and ele.url != link
+                and not address.is_refused(ele.url)
+            ):
+                # replaced after the refused request was made
+                return None
+            first = _fansly_ids(ele)
+            if not first:
+                return "no way to fetch a new Fansly link"
+            batch = {str(first): [ele]}
+            for other in self._waiting.values():
+                if len(batch) >= fansly_api.ACCOUNT_MEDIA_BATCH:
+                    break
+                other_id = _fansly_ids(other)
+                if other is ele or not other_id or not address.is_refused(other.url):
+                    continue
+                batch.setdefault(str(other_id), []).append(other)
+            try:
+                async with manager.Manager.session.aget_ofsession() as c:
+                    found = await fansly_api.account_media(c, list(batch))
+            except Exception as E:
+                return f"fetching a new link failed: {E}"
+            replaced = 0
+            for account_media_id, items in batch.items():
+                answer = _answer_for(found, account_media_id)
+                for item in items:
+                    if item is not ele and apply_fansly_item(item, answer):
+                        replaced += 1
+            if len(batch) > 1:
+                log.debug(
+                    f"Fansly: fetched new links for {len(batch) - 1} waiting "
+                    f"{'file' if len(batch) == 2 else 'files'} with media "
+                    f"{ele.id}, {replaced} replaced"
+                )
+            return _apply_fansly(ele, _answer_for(found, first))
+
+
+fansly_refresher = FanslyRefresher()
+
+
+def refused_url(exception):
+    """The URL of the request an HTTP error answered, or None."""
+    info = getattr(exception, "request_info", None)
+    url = getattr(info, "real_url", None)
+    if url is None:
+        try:
+            url = exception.request.url
+        except Exception:
+            url = None
+    return str(url) if url else None
+
+
+async def fresh_before_download(ele):
+    """Before a Fansly download: when its link is signed for a range the CDN
+    refuses, fetch new links first (usually already done by an earlier
+    call), so the download doesn't spend a request on a 403."""
+    if not _is_fansly(ele) or not address.is_refused(ele.url):
+        return
+    problem = await fansly_refresher.fresh(ele)
+    if problem:
+        log.debug(f"Media {ele.id}: its link is signed for a refused address; {problem}")
+
+
+async def _refresh_fansly_refused(ele, link) -> bool:
+    address.refused(link)
+    if not address.is_refused(link):
+        # no address range in the link: ask for this item alone
+        return await _refresh_fansly(ele)
+    problem = await fansly_refresher.fresh(ele, link)
+    if problem == SAME_LINK:
+        return await _refresh_fansly(ele, asked=1)
+    if problem:
+        log.debug(f"Media {ele.id}: {problem}")
+        return False
+    log.info(
+        f"Media {ele.id}: the download link was rejected (403), using a newly signed one"
+    )
+    return True
+
+
+async def refresh_media_link(ele, link=None) -> bool:
     """Give ``ele`` a newly signed link (or DRM signature) for the same file.
+
+    ``link``: the link the CDN refused, when known. On Fansly a refused link
+    signed for an address range also gets new links for the waiting items
+    signed for that range (``FanslyRefresher``).
 
     Returns True if it changed. Any failure is logged and returns False, so the
     download fails as it would have without a refresh.
     """
     if ele.media.get("fansly"):
+        if link:
+            return await _refresh_fansly_refused(ele, link)
         return await _refresh_fansly(ele)
     protected = ele.protected
     endpoint = _endpoint(ele)
