@@ -481,7 +481,9 @@ class FanslyStreamDownloadManager(DownloadManager):
         """(video url, separate audio url or None) to give ffmpeg."""
         manifest = await self._fetch_text(c, fansly_video.check_url(best.url), best.cookies)
         if best.kind == fansly_video.HLS:
-            url, audio_url = fansly_video.best_rendition(manifest, best.url)
+            url, audio_url, self.audio_inside = fansly_video.best_rendition_info(
+                manifest, best.url
+            )
             return (fansly_video.check_url(url),
                     fansly_video.check_url(audio_url) if audio_url else None)
         if fansly_video.dash_is_protected(manifest):
@@ -529,6 +531,11 @@ class FanslyStreamDownloadManager(DownloadManager):
             )
             for stream in ("v:0", "a:0")
         ]
+        if getattr(self, "audio_inside", False) and not audio_times:
+            # the playlist said the video segments carry the sound
+            raise fansly_video.MissingAudio(
+                "the stream's video segments have no audio, though its playlist lists an audio format"
+            )
         reason = fansly_video.incomplete_reason(
             video_times,
             audio_times,

@@ -663,11 +663,16 @@ VIDEO_ONLY_MASTER = (
 SPLIT_AUDIO_MASTER = (
     "#EXTM3U\n#EXT-X-VERSION:4\n"
     '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Main",DEFAULT=YES,AUTOSELECT=YES,URI="audio/media.m3u8"\n'
-    '#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=640x360,CODECS="avc1.64001e,mp4a.40.2",AUDIO="aud"\n'
+    # video-only CODECS: the sound is only in the separate track
+    '#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=640x360,CODECS="avc1.64001e",AUDIO="aud"\n'
     "r360/media.m3u8\n"
-    '#EXT-X-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=3840x2160,CODECS="avc1.640033,mp4a.40.2",AUDIO="aud"\n'
+    '#EXT-X-STREAM-INF:BANDWIDTH=9000000,RESOLUTION=3840x2160,CODECS="avc1.640033",AUDIO="aud"\n'
     "r2160/media.m3u8\n"
 )
+# Fansly's usual master: the renditions carry the sound (mp4a) and an audio
+# group lists a copy of it, which the CDN refuses for some older videos
+IN_BAND_AUDIO_MASTER = SPLIT_AUDIO_MASTER.replace('CODECS="avc1.64001e"', 'CODECS="avc1.64001e,mp4a.40.2"').replace(
+    'CODECS="avc1.640033"', 'CODECS="avc1.640033,mp4a.40.2"')
 
 
 def ffmpeg_only(monkeypatch):
@@ -767,6 +772,58 @@ def test_separate_audio_rendition_is_downloaded_with_the_video(env, tmp_path):
     assert join.count("-i") == 2 and ["-map", "0:v", "-map", "1:a"] == join[-9:-5]
     assert join[join.index("-protocol_whitelist") + 1] == "file,crypto"
     assert not any("http" in str(a) for a in join)
+
+
+@needs_ffmpeg
+def test_audio_inside_the_video_is_used_and_the_copy_is_not_fetched(env, tmp_path):
+    # Fansly's playlists list an audio track the CDN refuses for some older
+    # videos; the video segments carry the same sound, as on its website
+    segments = make_segments(tmp_path, "v", "-bsf:v", "dump_extra=freq=keyframe")
+    raw = raw_media()
+    with Server({}) as srv:
+        root = serve_hls(srv, raw, IN_BAND_AUDIO_MASTER, {"r2160": segments})
+        ele = make_ele(raw)
+        result = download_locally(ele)
+
+    assert result[0] == "Videos" and result[1] > 0
+    out = env.out / f"{ele.filename}.mp4"
+    assert sorted(s["codec_type"] for s in probe(out)["streams"]) == ["audio", "video"]
+    assert not any("/audio/" in p for p, _ in srv.seen)
+    (join,) = env.ffmpeg_runs
+    assert join.count("-i") == 1 and "-map" not in join
+
+
+@needs_ffmpeg
+def test_video_without_the_audio_its_playlist_lists_fails(env, tmp_path):
+    # the playlist says the segments carry sound but they don't: fail rather
+    # than save a silent video that is never fetched again
+    segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    raw = raw_media()
+    with Server({}) as srv:
+        serve_hls(srv, raw, IN_BAND_AUDIO_MASTER, {"r2160": segments})
+        ele = make_ele(raw, direct=False)
+
+        async def go():
+            async with ofsession.download_session() as c:
+                return await stream_mod.FanslyStreamDownloadManager().stream_download(
+                    c, ele, "a-creator", 100000000000000002)
+
+        with pytest.raises(video.MissingAudio):
+            asyncio.run(go())
+    assert files_in(env.out, env.temp) == []
+
+
+def test_audio_codecs_in_a_rendition_mean_its_segments_carry_the_sound():
+    base = "https://cdn3.fansly.com/new/1/2/2.m3u8"
+    assert video.best_rendition_info(IN_BAND_AUDIO_MASTER, base) == (
+        "https://cdn3.fansly.com/new/1/2/r2160/media.m3u8", None, True)
+    assert video.best_rendition_info(SPLIT_AUDIO_MASTER, base)[2] is False
+    assert video.best_rendition_info(VIDEO_ONLY_MASTER, base) == (
+        "https://cdn3.fansly.com/new/1/2/r2160/media.m3u8", None, False)
+    for codecs in ("avc1.640033,mp4a.40.2", "hvc1.1.6.L93.B0, ec-3", "avc1.64001f,Opus"):
+        assert video._has_audio(codecs)
+    for codecs in ("avc1.640033", "", "hvc1.1.6.L93.B0"):
+        assert not video._has_audio(codecs)
 
 
 def test_audio_group_is_resolved_from_the_master():
