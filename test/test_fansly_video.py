@@ -805,7 +805,8 @@ def test_video_without_the_audio_its_playlist_lists_is_saved_and_logged(env, tmp
     raw = raw_media()
     with Server({}) as srv:
         serve_hls(srv, raw, IN_BAND_AUDIO_MASTER, {"r2160": segments})
-        ele = make_ele(raw)
+        # no direct file to take the sound from
+        ele = make_ele(raw, direct=False)
         with caplog.at_level(logging.WARNING):
             result = download_locally(ele)
     assert result[0] == "Videos" and result[1] > 0
@@ -826,7 +827,8 @@ def test_refused_audio_track_saves_the_video_and_logs_why(env, tmp_path, caplog,
         target = (f"{root}/audio/media.m3u8" if refused == "playlist"
                   else f"{root}/audio/{next(iter(audio_segments))}")
         srv.refuse.add(target)
-        ele = make_ele(raw)
+        # no direct file to take the sound from
+        ele = make_ele(raw, direct=False)
         with caplog.at_level(logging.WARNING):
             result = download_locally(ele)
     assert result[0] == "Videos" and result[1] > 0
@@ -835,6 +837,167 @@ def test_refused_audio_track_saves_the_video_and_logs_why(env, tmp_path, caplog,
     assert [s["codec_type"] for s in probe(out)["streams"]] == ["video"]
     assert "refused" in caplog.text and "without sound" in caplog.text
     assert len(env.marks) == 1
+    assert len(env.ffmpeg_runs) == 1
+
+
+# ------------------------------------------------------------------ sound from the direct file
+
+def serve_direct(srv, raw, tmp_path, *args, path=None):
+    """Serve a direct MP4 made by ffmpeg (``args`` before its name) at the
+    direct file's path, or at ``path``. Returns the path."""
+    folder = tmp_path / f"direct{len(srv.files)}"
+    folder.mkdir()
+    ffmpeg_make([*args, "direct.mp4"], folder)
+    loc = next(loc for loc in raw["media"]["locations"] if str(loc["locationId"]) == "1")
+    path = path or urlparse(loc["location"]).path
+    srv.files[path] = (folder / "direct.mp4").read_bytes()
+    return path
+
+
+def refused_audio_download(env, tmp_path, caplog, direct_args=("-s", "80x60"),
+                           refused="segment", setup=None):
+    video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    audio_segments = make_segments(tmp_path, "a", "-vn")
+    raw = raw_media()
+    with Server({}) as srv:
+        root = serve_hls(srv, raw, SPLIT_AUDIO_MASTER,
+                         {"r2160": video_segments, "audio": audio_segments})
+        srv.refuse.add(f"{root}/audio/media.m3u8" if refused == "playlist"
+                       else f"{root}/audio/{next(iter(audio_segments))}")
+        direct_path = serve_direct(srv, raw, tmp_path, *direct_args) if direct_args else None
+        ele = make_ele(raw)
+        if setup:
+            setup(srv, raw, ele, direct_path)
+        with caplog.at_level(logging.INFO):
+            result = download_locally(ele)
+    out = env.out / f"{ele.filename}.mp4"
+    return SimpleNamespace(result=result, out=out, srv=srv, ele=ele, direct=direct_path)
+
+
+def video_size(path):
+    out = subprocess.run(
+        [FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height", "-of", "csv=p=0", str(path)],
+        check=True, capture_output=True, text=True).stdout.strip()
+    return tuple(int(x) for x in out.split(","))
+
+
+def warnings_in(caplog):
+    return " ".join(r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("refused", ["playlist", "segment"])
+def test_refused_audio_is_taken_from_the_direct_file(env, tmp_path, caplog, refused):
+    run = refused_audio_download(env, tmp_path, caplog, refused=refused)
+    assert run.result[0] == "Videos" and run.result[1] > 0
+    assert files_in(env.out, env.temp) == [run.out.name]
+    # the stream's video (160x120), the direct file's (80x60) sound
+    assert sorted(s["codec_type"] for s in probe(run.out)["streams"]) == ["audio", "video"]
+    assert video_size(run.out) == (160, 120)
+    assert "without sound" not in warnings_in(caplog)
+    assert "took the sound from the direct file" in caplog.text
+    # the direct file is fetched with no CDN cookies: its link is signed
+    direct_requests = [h for p, h in run.srv.seen if p == run.direct]
+    assert len(direct_requests) == 1 and "cookie" not in direct_requests[0]
+    join, borrow = env.ffmpeg_runs
+    assert borrow[-9:-5] == ["-map", "0:v", "-map", "1:a:0"]
+    assert len(env.marks) == 1
+
+
+@needs_ffmpeg
+def test_a_direct_file_without_sound_saves_the_stream_as_it_is(env, tmp_path, caplog):
+    run = refused_audio_download(env, tmp_path, caplog, direct_args=("-s", "80x60", "-an"))
+    assert run.result[0] == "Videos"
+    assert [s["codec_type"] for s in probe(run.out)["streams"]] == ["video"]
+    assert warnings_in(caplog) == ""
+    assert "has no sound either" in caplog.text
+    assert len(env.ffmpeg_runs) == 1
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("times", [1, 2])
+def test_a_refused_direct_file_gets_a_new_link_once(env, tmp_path, caplog, monkeypatch, times):
+    asked = []
+
+    def setup(srv, raw, ele, direct_path):
+        srv.refuse.add(direct_path)
+        new_path = direct_path.replace(".mp4", "-new.mp4")
+        srv.files[new_path] = srv.files[direct_path]
+        if times == 2:
+            srv.refuse.add(new_path)
+
+        async def refresh_media_link(ele):
+            asked.append(ele.id)
+            ele.url = ele.url.replace(direct_path, new_path)
+            return True
+
+        monkeypatch.setattr(stream_mod, "refresh_media_link", refresh_media_link)
+
+    fast_retries(monkeypatch, attempts=1)
+    run = refused_audio_download(env, tmp_path, caplog, setup=setup)
+    assert run.result[0] == "Videos"
+    assert len(asked) == 1
+    kinds = sorted(s["codec_type"] for s in probe(run.out)["streams"])
+    if times == 1:
+        assert kinds == ["audio", "video"]
+        assert "without sound" not in warnings_in(caplog)
+    else:
+        assert kinds == ["video"]
+        assert "without sound" in warnings_in(caplog)
+
+
+@needs_ffmpeg
+def test_a_direct_file_of_another_length_is_not_used(env, tmp_path, caplog):
+    run = refused_audio_download(env, tmp_path, caplog, direct_args=("-s", "80x60", "-t", "2"))
+    assert run.result[0] == "Videos"
+    assert [s["codec_type"] for s in probe(run.out)["streams"]] == ["video"]
+    assert "out of step" in caplog.text and "without sound" in warnings_in(caplog)
+    assert files_in(env.out, env.temp) == [run.out.name]
+
+
+@needs_ffmpeg
+def test_a_copy_with_the_direct_sound_that_fails_the_check_is_discarded(env, tmp_path, caplog, monkeypatch):
+    real = video.incomplete_reason
+
+    def holes_with_sound(video_times, audio_times=None, expected=None):
+        return "a hole" if audio_times else real(video_times, audio_times, expected)
+
+    monkeypatch.setattr(video, "incomplete_reason", holes_with_sound)
+    run = refused_audio_download(env, tmp_path, caplog)
+    assert run.result[0] == "Videos"
+    assert [s["codec_type"] for s in probe(run.out)["streams"]] == ["video"]
+    assert "incomplete: a hole" in caplog.text and "without sound" in warnings_in(caplog)
+    assert files_in(env.out, env.temp) == [run.out.name]
+
+
+@needs_ffmpeg
+def test_segments_without_their_listed_sound_take_it_from_the_direct_file(env, tmp_path, caplog):
+    segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    raw = raw_media()
+    with Server({}) as srv:
+        serve_hls(srv, raw, IN_BAND_AUDIO_MASTER, {"r2160": segments})
+        serve_direct(srv, raw, tmp_path, "-s", "80x60")
+        ele = make_ele(raw)
+        with caplog.at_level(logging.INFO):
+            result = download_locally(ele)
+    out = env.out / f"{ele.filename}.mp4"
+    assert result[0] == "Videos"
+    assert sorted(s["codec_type"] for s in probe(out)["streams"]) == ["audio", "video"]
+    assert warnings_in(caplog) == ""
+
+
+def test_the_direct_sound_join_reads_only_local_files_without_hls_options():
+    cmd = video.local_join_command("ffmpeg", "video.m3u8", "out.part", audio_file="direct.mp4")
+    first, second = [i for i, a in enumerate(cmd) if a == "-i"]
+    assert cmd[first + 1] == "video.m3u8" and cmd[second + 1] == "direct.mp4"
+    second_opts = cmd[first + 2:second]
+    assert second_opts == ["-protocol_whitelist", "file"]
+    assert "-allowed_extensions" in cmd[:first]
+    assert cmd[second + 2:second + 6] == ["-map", "0:v", "-map", "1:a:0"]
+    dash = video.local_join_command("ffmpeg", "video.mp4", "out.part", dash=True,
+                                    audio_file="direct.mp4")
+    assert "-allowed_extensions" not in dash
 
 
 @needs_ffmpeg
