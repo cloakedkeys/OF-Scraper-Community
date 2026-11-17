@@ -185,7 +185,7 @@ class Harness:
 
         m.setattr(incremental, "cache", FakeCache(self.cache))
         m.setattr(incremental, "get_after_pre_checks", lambda model_id, area: self.after)
-        m.setattr(incremental, "KNOWN_IDS", {"Timeline": known("posts"), "Messages": known("messages")})
+        m.setattr(incremental, "AREA_IDS", {"Timeline": known("posts"), "Messages": known("messages")})
         m.setattr(incremental, "get_posts_missing_media", pending)
 
         async def table_init(**k):

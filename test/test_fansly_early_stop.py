@@ -1,15 +1,17 @@
-"""Fansly repeat runs stop scanning once the rest is already recorded
+"""Fansly repeat runs stop scanning where the last finished scan began
 (sites/fansly/incremental.py).
 
 A Fansly run rescanned the whole timeline and every message each time
 unless --after was given: about 365 API calls for a large creator at one
-call every 6 seconds, even with nothing new. The page-by-page download now
-stops an area at the first page whose posts were all recorded before the
-run, once no post with media left to download is older than that page.
-These tests run the real pipeline in the harness of test_fansly_pipeline.
+call every 6 seconds, even with nothing new. Now each area keeps a mark, the
+newest post its last finished page-by-page scan saw, and a repeat run stops
+at the first page whose posts are all at or below it, once no post with
+media left to download is older than that page. These tests run the real
+pipeline in the harness of test_fansly_pipeline.
 """
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import arrow
@@ -30,6 +32,8 @@ from test_fansly_pipeline import (  # noqa: F401  (settings_stub, harness are fi
     settings_stub,
 )
 
+DAY = 24 * 3600
+
 
 def asked(harness, area):
     return [e for e in harness.events if e.startswith(f"{area} page")]
@@ -49,6 +53,14 @@ def new_run(harness):
     harness.events.clear()
     harness.downloads.clear()
     harness.calls.clear()
+
+
+def mark(harness, area="Timeline"):
+    return harness.cache.get(incremental.mark_key(MODEL_ID, area))
+
+
+def age_full_scan(harness, days, area="Timeline"):
+    harness.cache[incremental.mark_key(MODEL_ID, area)]["full_at"] -= days * DAY
 
 
 @pytest.fixture
@@ -79,7 +91,24 @@ def test_a_repeat_run_with_nothing_new_asks_for_one_page_per_area(repeat):
     assert checked == [(MODEL_ID, "Messages"), (MODEL_ID, "Timeline")]
 
 
-def test_new_posts_on_the_first_page_scan_to_the_first_known_page(repeat):
+def test_the_first_run_records_the_newest_post_of_each_downloaded_area(harness):
+    harness.areas = ["Messages", "Timeline", "Purchased"]
+    harness.pages["Messages"] = [page(post_dict(60, [20_060], from_user=MODEL_ID))]
+    harness.pages["Timeline"] = timeline_pages(100, 2)
+    harness.pages["Purchased"] = [page(post_dict(500, [10_500]))]
+    before = time.time()
+    harness.run()
+    assert set(harness.cache) == {
+        incremental.mark_key(MODEL_ID, "Messages"),
+        incremental.mark_key(MODEL_ID, "Timeline"),
+    }
+    timeline = mark(harness)
+    assert timeline["newest"] == 100
+    assert timeline["full_at"] == timeline["at"] >= before
+    assert mark(harness, "Messages")["newest"] == 60
+
+
+def test_new_posts_on_the_first_page_scan_to_the_first_page_below_the_mark(repeat):
     # two new posts push the old ones down a page
     repeat.pages["Timeline"] = [
         page(post_dict(102, [10_102]), post_dict(101, [10_101])),
@@ -88,6 +117,10 @@ def test_new_posts_on_the_first_page_scan_to_the_first_known_page(repeat):
     repeat.run()
     assert asked(repeat, "Timeline") == ["Timeline page 1", "Timeline page 2"]
     assert repeat.downloads == [10_102, 10_101]
+    # the mark moves up; the last full scan stays the first run's
+    first_full = mark(repeat)["full_at"]
+    assert mark(repeat)["newest"] == 102
+    assert mark(repeat)["full_at"] == first_full
 
 
 def test_a_post_with_media_left_keeps_the_scan_going_down_to_it(repeat):
@@ -102,12 +135,13 @@ def test_a_post_with_media_left_keeps_the_scan_going_down_to_it(repeat):
     assert repeat.downloads == [10_092]
 
 
-def test_a_stopped_scan_means_a_full_scan_next_time(repeat):
+def test_a_stopped_run_leaves_the_mark_as_it_was(repeat):
     async def stop_now(ele):
         stop.request()
         return None
 
-    # a new post: the run is stopped while it downloads
+    before = dict(mark(repeat))
+    # new posts: the run is stopped while it downloads the first
     repeat.pages["Timeline"] = [
         page(post_dict(102, [10_102]), post_dict(101, [10_101])),
         *timeline_pages(100, 3),
@@ -117,32 +151,88 @@ def test_a_stopped_scan_means_a_full_scan_next_time(repeat):
     with pytest.raises(stop.DownloadsStopped):
         repeat.run()
     stop.clear()
-    assert repeat.cache[incremental.complete_key(MODEL_ID, "Timeline")] is None
+    assert mark(repeat) == before
 
-    # the next run scans fully, though page 1 is recorded now
+    # the next run still scans down past the new posts
     new_run(repeat)
     repeat.on_download.clear()
     repeat.run()
-    assert len(asked(repeat, "Timeline")) == 4
-
-    # and the one after that stops early again
-    new_run(repeat)
-    repeat.downloaded |= {10_102, 10_101}
-    repeat.run()
-    assert asked(repeat, "Timeline") == ["Timeline page 1"]
+    assert asked(repeat, "Timeline") == ["Timeline page 1", "Timeline page 2"]
+    assert repeat.downloads == [10_102, 10_101]
 
 
-def test_a_scan_that_failed_means_a_full_scan_next_time(repeat):
+def test_a_scan_that_failed_leaves_the_mark_as_it_was(repeat):
     level.addtraceback()  # an area failure logs its traceback at this level
+    before = dict(mark(repeat))
     repeat.areas = ["Timeline"]
     new_page = page(post_dict(102, [10_102]), post_dict(101, [10_101]))
     repeat.pages["Timeline"] = [new_page, ValueError("boom")]
     repeat.run()
-    assert len(asked(repeat, "Timeline")) == 2
-    new_run(repeat)
-    repeat.pages["Timeline"] = [new_page, *timeline_pages(100, 3)]
+    assert mark(repeat) == before
+
+
+def test_posts_recorded_by_a_labels_only_run_do_not_hide_new_timeline_posts(repeat):
+    # a --posts labels run records wall posts 110 and 109 and downloads them;
+    # the timeline isn't scanned, so its mark stays at 100
+    repeat.recorded["posts"].update({110, 109})
+    repeat.downloaded |= {10_110, 10_109}
+    repeat.pages["Timeline"] = [
+        page(post_dict(110, [10_110]), post_dict(109, [10_109])),
+        page(post_dict(108, [10_108]), post_dict(107, [10_107])),
+        *timeline_pages(100, 3),
+    ]
     repeat.run()
-    assert len(asked(repeat, "Timeline")) == 4
+    assert repeat.downloads == [10_108, 10_107]
+    assert len(asked(repeat, "Timeline")) == 3
+
+
+def test_posts_recorded_by_an_interrupted_scan_first_run_are_still_scanned(repeat):
+    # a scan-first run wrote post rows 104 to 101 and was stopped before its
+    # media rows: nothing is pending, and it never writes the mark
+    repeat.recorded["posts"].update({104, 103, 102, 101})
+    repeat.pages["Timeline"] = [
+        page(post_dict(104, [10_104]), post_dict(103, [10_103])),
+        page(post_dict(102, [10_102]), post_dict(101, [10_101])),
+        *timeline_pages(100, 3),
+    ]
+    repeat.run()
+    assert repeat.downloads == [10_104, 10_103, 10_102, 10_101]
+
+
+def test_a_post_that_appears_later_with_an_old_id_is_found_by_the_full_scan(repeat):
+    # post 97 was scheduled (or hidden) at the last scan; its id is old
+    repeat.pages["Timeline"] = [
+        page(post_dict(100, [10_100]), post_dict(99, [10_099])),
+        page(post_dict(98, [10_098]), post_dict(97, [10_975])),
+        page(post_dict(96, [10_096]), post_dict(95, [10_095])),
+    ]
+    repeat.run()
+    assert 10_975 not in repeat.downloads  # within the full-scan period
+    new_run(repeat)
+    age_full_scan(repeat, 8)
+    repeat.run()
+    assert len(asked(repeat, "Timeline")) == 3
+    assert repeat.downloads == [10_975]
+    # and that scan is the new full scan
+    assert time.time() - mark(repeat)["full_at"] < DAY
+
+
+def test_force_all_scans_in_full(repeat, settings_stub):
+    settings_stub.force_all = True
+    repeat.downloaded = set()  # --force-all excludes nothing
+    repeat.run()
+    assert len(asked(repeat, "Timeline")) == 3
+    assert len(repeat.downloads) == 8
+
+
+def test_an_area_not_downloaded_from_is_not_marked(harness):
+    harness.areas = ["Messages", "Timeline"]
+    harness.download_area = {"Timeline"}
+    harness.pages["Messages"] = [page(post_dict(60, [20_060], from_user=MODEL_ID))]
+    harness.pages["Timeline"] = timeline_pages(100, 1)
+    harness.run()
+    assert mark(harness, "Messages") is None
+    assert mark(harness) is not None
 
 
 def test_changed_access_means_a_full_scan(repeat):
@@ -161,27 +251,21 @@ def test_changed_access_means_a_full_scan(repeat):
     assert len(asked(repeat, "Timeline")) == 3
 
 
-def test_given_after_scans_fully(repeat):
+def test_given_after_scans_fully_and_does_not_mark(repeat, settings_stub):
+    before = dict(mark(repeat))
     repeat.after = 0
+    settings_stub.after = arrow.get(2000, 1, 1)
     repeat.run()
     assert len(asked(repeat, "Timeline")) == 3
+    assert mark(repeat) == before
 
 
-def test_post_ids_scan_fully(repeat, settings_stub):
+def test_post_ids_scan_fully_and_do_not_mark(repeat, settings_stub):
+    before = dict(mark(repeat))
     settings_stub.post_id = [100]
     repeat.run()
     assert len(asked(repeat, "Timeline")) == 3
-
-
-def test_the_first_run_scans_fully_and_records_each_area(harness):
-    harness.areas = ["Messages", "Timeline", "Purchased"]
-    harness.pages["Timeline"] = timeline_pages(100, 2)
-    harness.pages["Purchased"] = [page(post_dict(500, [10_500]))]
-    harness.run()
-    assert set(harness.cache) == {
-        incremental.complete_key(MODEL_ID, "Messages"),
-        incremental.complete_key(MODEL_ID, "Timeline"),
-    }
+    assert mark(repeat) == before
 
 
 # ------------------------------------------------------------------ the decision on its own
@@ -189,7 +273,7 @@ def test_the_first_run_scans_fully_and_records_each_area(harness):
 
 @pytest.fixture
 def decision(monkeypatch, settings_stub):
-    """early_stop_for with the real switches; a finished scan with the
+    """early_stop_for with the real switches; a finished full scan with the
     current access is on record."""
     data = {}
     monkeypatch.setattr(incremental, "cache", FakeCache(data))
@@ -197,7 +281,7 @@ def decision(monkeypatch, settings_stub):
     settings_stub.incremental_downloads = True
     settings_stub.retry_permanent_skips = False
     ele = SimpleNamespace(name=NAME, id=MODEL_ID, model={"fansly": {"subscribed": True}})
-    incremental.scan_finished(ele, "Timeline")
+    incremental.record(ele, "Timeline", 10, True)
 
     async def ids(**k):
         return {1, 2}
@@ -205,25 +289,28 @@ def decision(monkeypatch, settings_stub):
     async def pending(model_id, username):
         return set()
 
-    monkeypatch.setattr(incremental, "KNOWN_IDS", {"Timeline": ids, "Messages": ids})
+    monkeypatch.setattr(incremental, "AREA_IDS", {"Timeline": ids, "Messages": ids})
     monkeypatch.setattr(incremental, "get_posts_missing_media", pending)
 
-    def decide():
-        return asyncio.run(incremental.early_stop_for(ele, "Timeline"))
+    def decide(now=None):
+        return asyncio.run(incremental.early_stop_for(ele, "Timeline", now=now))
 
     return SimpleNamespace(data=data, ele=ele, settings=settings_stub, decide=decide)
 
 
-def test_with_a_finished_scan_and_no_switch_the_scan_may_stop(decision):
-    assert isinstance(decision.decide(), incremental.EarlyStop)
+def test_with_a_recent_full_scan_and_no_switch_the_scan_may_stop(decision):
+    rule = decision.decide()
+    assert isinstance(rule, incremental.EarlyStop)
+    assert rule.newest == 10
 
 
 @pytest.mark.parametrize(
     "switch",
     ["after", "incremental off", "full-scan flag", "retry permanent skips", "post id",
-     "unfinished scan", "access changed"],
+     "force all", "no mark", "access changed", "old full scan", "full scans every time"],
 )
-def test_each_switch_forces_a_full_scan(decision, switch):
+def test_each_switch_forces_a_full_scan(decision, monkeypatch, switch):
+    now = None
     if switch == "after":
         decision.settings.after = arrow.get(2000, 1, 1)
     elif switch == "incremental off":
@@ -234,23 +321,48 @@ def test_each_switch_forces_a_full_scan(decision, switch):
         decision.settings.retry_permanent_skips = True
     elif switch == "post id":
         decision.settings.post_id = [1]
-    elif switch == "unfinished scan":
-        incremental.scan_started(MODEL_ID, "Timeline")
+    elif switch == "force all":
+        decision.settings.force_all = True
+    elif switch == "no mark":
+        decision.data.clear()
     elif switch == "access changed":
         decision.ele.model["fansly"]["subscribed"] = False
-    assert decision.decide() is None
+    elif switch == "old full scan":
+        now = time.time() + 7 * DAY + 60
+    elif switch == "full scans every time":
+        monkeypatch.setattr(incremental, "full_scan_days", lambda: 0)
+    assert decision.decide(now=now) is None
+
+
+def test_within_the_full_scan_period_the_scan_may_stop(decision):
+    assert decision.decide(now=time.time() + 7 * DAY - 60) is not None
+
+
+def test_an_early_stopped_scan_keeps_the_last_full_scan_time(decision):
+    first = decision.data[incremental.mark_key(MODEL_ID, "Timeline")]
+    incremental.record(decision.ele, "Timeline", 12, False, now=first["full_at"] + 3600)
+    second = decision.data[incremental.mark_key(MODEL_ID, "Timeline")]
+    assert (second["newest"], second["full_at"]) == (12, first["full_at"])
+    assert second["at"] == first["full_at"] + 3600
+
+
+def test_without_a_full_scan_on_record_an_early_stop_writes_nothing(decision):
+    decision.data.clear()
+    incremental.record(decision.ele, "Timeline", 12, False)
+    assert decision.data == {}
 
 
 def test_other_areas_never_stop_early(decision):
     assert asyncio.run(incremental.early_stop_for(decision.ele, "Purchased")) is None
     assert asyncio.run(incremental.early_stop_for(decision.ele, "Labels")) is None
+    incremental.record(decision.ele, "Purchased", 5, True)
+    assert incremental.mark_key(MODEL_ID, "Purchased") not in decision.data
 
 
 def test_the_page_rule():
-    rule = incremental.EarlyStop(known_ids=[1, 2, 3, 4, 5, "6"], pending_ids=["2", "99"])
+    rule = incremental.EarlyStop(newest=6, pending_ids=["2", "99"])
     assert rule.after_page([7, 6]) is False  # 7 is new
     assert rule.after_page([6, 5]) is False  # post 2 still has media, further down
     assert rule.after_page([3, 2]) is True  # down to post 2
     assert rule.after_page([]) is False
-    # a pending post of another area doesn't hold this one
-    assert incremental.EarlyStop([5, 6], ["1"]).after_page([6, 5]) is True
+    assert incremental.EarlyStop(6, []).after_page([6, 5]) is True
