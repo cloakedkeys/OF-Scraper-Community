@@ -22,7 +22,13 @@ from ofscraper.commands.scraper.actions.utils.paths import setDirectoriesDate
 
 from ofscraper.commands.scraper.actions.utils.workers import get_max_workers
 from ofscraper.utils.context.run_async import run
-from ofscraper.commands.scraper.actions.download.run import consumer
+from ofscraper.commands.scraper.actions.download.run import consumer, download
+from ofscraper.commands.scraper.actions.download.managers.fansly_stream_download import (
+    FanslyStreamDownloadManager,
+)
+from ofscraper.commands.scraper.actions.download.utils import silent
+import ofscraper.sites as sites
+from functools import partial
 from ofscraper.commands.scraper.actions.download import stop
 from ofscraper.commands.scraper.actions.download.utils.desc import desc
 from ofscraper.commands.scraper.actions.download.utils.text import textDownloader
@@ -63,7 +69,38 @@ async def downloader(username=None, model_id=None, posts=None, media=None, **kwa
             download_activity_str.format(username=username)
         )
         values = await download_process(username, model_id, media, posts=posts)
+        if sites.is_fansly() and not stop.requested.is_set():
+            await recheck_silent(username, model_id, kwargs.get("all_media") or media)
         return values
+
+
+async def _download_again(c, ele, model_id=None, username=None):
+    media_type, _ = await download(c, ele, model_id, username)
+    return str(media_type).lower() == "videos"
+
+
+@run
+async def recheck_silent(username, model_id, all_media):
+    """Check the audio of the creator's videos saved without sound (see
+    ``silent.recheck``), after the run's downloads."""
+    if settings.get_settings().text_only or not silent.flags(model_id):
+        return
+    common_globals.mainProcessVariableInit()
+    try:
+        async with manager.Manager.session.get_download_session() as c:
+            await silent.recheck(
+                c,
+                username,
+                model_id,
+                {str(m.id): m for m in all_media or []},
+                FanslyStreamDownloadManager().audio_check,
+                partial(_download_again, model_id=model_id, username=username),
+            )
+    except Exception as E:
+        logging.getLogger("shared").debug(f"Fansly: checking silent videos failed: {E}")
+    finally:
+        await asyncio.get_event_loop().run_in_executor(common_globals.thread, cache.close)
+        common_globals.thread.shutdown()
 
 
 @run_async

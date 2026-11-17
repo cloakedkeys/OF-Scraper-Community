@@ -39,6 +39,7 @@ from ofscraper.db.operations_.media import mark_media_as_downloaded
 from ofscraper.commands.scraper.actions.download.utils.refresh import (
     refresh_media_link,
 )
+from ofscraper.commands.scraper.actions.download.utils import silent
 from ofscraper.managers.sessionmanager.sessionmanager import (
     HEADERS,
     is_provided_exception_number,
@@ -305,7 +306,12 @@ class FanslyStreamDownloadManager(DownloadManager):
                     raise
                 url, audio_url = await self._stream_urls(c, best)
         except fansly_video.StreamError as e:
-            if ele.url and fansly_video.has_direct(fansly_video.raw_media(ele)):
+            if (
+                ele.url
+                and fansly_video.has_direct(fansly_video.raw_media(ele))
+                # replacing a silent copy: the smaller direct file is no better
+                and not getattr(ele, "replace_silent", None)
+            ):
                 # None: run.py downloads the direct file instead (ele.url
                 # is the stream itself when there is no direct file)
                 self.ctx.log.info(f"{medialog} {e}; downloading the direct file instead")
@@ -346,6 +352,7 @@ class FanslyStreamDownloadManager(DownloadManager):
 
             await self._total_change_helper(total)
             await self._integrity_check(temp, ele)
+            await self._replace_silent(temp, ele)
             return await self._finish(temp, placeholderObj, ele, username, model_id, total)
         except BaseException:
             temp.unlink(missing_ok=True)
@@ -794,6 +801,65 @@ class FanslyStreamDownloadManager(DownloadManager):
             err = (stderr or b"").decode("utf-8", "replace").strip()[-500:]
             raise Exception(f"ffmpeg could not {what}: {err or 'no output'}")
 
+    async def _replace_silent(self, temp, ele):
+        """Downloading a silent video again (see ``silent.recheck``): keep the
+        new copy only if it has sound, then make room for it."""
+        old = getattr(ele, "replace_silent", None)
+        if not old:
+            return
+        ffprobe = get_ffprobe()
+        if getattr(self, "audio_refused", None) or not (
+            ffprobe and await self._probe(_has_packets, ffprobe, temp, "a:0")
+        ):
+            raise Exception("still without sound; the saved copy is kept")
+        await self._probe(lambda: pathlib.Path(old).unlink(missing_ok=True))
+
+    async def _remember_sound(self, model_id, ele, path_to_file):
+        """Flag a video saved silent because its audio was refused, so its
+        audio is checked again; a video saved with sound needs no checks."""
+        try:
+            if getattr(self, "audio_refused", None):
+                await self._probe(silent.flag, model_id, ele, path_to_file)
+            else:
+                await self._probe(silent.clear, model_id, ele.id)
+        except Exception as e:
+            self.ctx.log.debug(
+                f"{common_logs.get_medialog(ele)} could not record whether it has sound: "
+                f"{type(e).__name__}"
+            )
+
+    async def audio_check(self, c, raw):
+        """Whether the CDN gives a video's audio now (``silent.recheck``):
+        its audio playlist and first audio file, with ``raw``'s links."""
+        best = fansly_video.select_best(raw)
+        if not best or not best.is_stream:
+            return silent.GONE
+        try:
+            url, audio_url = await self._stream_urls(c, best)
+            if best.kind == fansly_video.DASH:
+                tracks = fansly_video.local_dash(
+                    await self._fetch_text(c, url, best.cookies), url
+                )
+                audio = tracks[1] if len(tracks) > 1 else None
+            elif audio_url:
+                audio = fansly_video.local_playlist(
+                    await self._fetch_text(c, audio_url, best.cookies), audio_url, "a"
+                )
+            else:
+                # the playlist now says the video segments carry the sound
+                return silent.ACCEPTED if self.audio_inside else silent.GONE
+            if not audio or not audio.files:
+                return silent.GONE
+            async with c.requests_async(
+                url=audio.files[0][0], cookies=best.cookies or None,
+                actions=[HEADERS], headers={"Range": "bytes=0-0"}, retries=1,
+            ) as r:
+                if r.status in (401, 403):
+                    return silent.REFUSED
+                return silent.ACCEPTED if r.ok else silent.FAILED
+        except Exception as e:
+            return silent.REFUSED if _refused(e) else silent.FAILED
+
     async def _integrity_check(self, temp, ele):
         if not settings.get_settings().verify_all_integrity:
             return
@@ -841,6 +907,7 @@ class FanslyStreamDownloadManager(DownloadManager):
                 size=path_to_file.stat().st_size,
             )
         await set_profile_cache(ele, self.ctx.thread)
+        await self._remember_sound(model_id, ele, path_to_file)
         ele.add_filepath(path_to_file)
         ele.add_size(total)
         await self._after_download_script(path_to_file)
