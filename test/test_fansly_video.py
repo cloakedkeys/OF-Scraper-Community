@@ -1019,9 +1019,53 @@ def test_a_direct_file_that_cannot_be_read_is_not_taken_for_silence(env, tmp_pat
     assert "has no sound either" not in caplog.text
 
 
+def video_after_sound(path):
+    """Seconds the first frame is shown after the sound starts."""
+    return (stream_mod._first_shown(FFPROBE, path, "v:0")
+            - stream_mod._first_shown(FFPROBE, path, "a:0"))
+
+
+# direct files whose video is first shown after their sound starts
+LATE_VIDEO = {
+    # by half a second
+    "half-a-second": (0.5, ["-c:v", "mpeg4", "-g", "10", "-c:a", "aac"]),
+    # by two frames, with no edit list: frames stored ahead of the ones shown
+    # before them, as Fansly's direct files usually are
+    "stored-ahead": (0.2, ["-c:v", "libx264", "-bf", "2", "-g", "10", "-c:a", "aac",
+                           "-use_editlist", "0"]),
+}
+
+
 @needs_ffmpeg
-def test_sound_that_starts_elsewhere_against_its_video_is_not_used(env, tmp_path, caplog):
-    # the direct file's video starts 0.5 s after its sound: same lengths
+@pytest.mark.parametrize("shape", list(LATE_VIDEO))
+def test_a_video_that_starts_after_its_sound_keeps_that_start(env, tmp_path, caplog, shape):
+    if shape == "stored-ahead" and not has_encoder("libx264"):
+        pytest.skip("ffmpeg has no libx264")
+    late, codecs = LATE_VIDEO[shape]
+    direct = tmp_path / "late.mp4"
+    direct.write_bytes(
+        direct_bytes(tmp_path, "-itsoffset", str(late), *TEST_VIDEO, *sine(3), *codecs)
+    )
+    assert video_after_sound(direct) == pytest.approx(late, abs=0.01)
+    run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(direct.read_bytes()))
+    assert "out of step" not in caplog.text
+    assert kinds_of(run.out) == ["audio", "video"]
+    assert "without sound" not in warnings_in(caplog)
+    # the stream's video is shown as late after the sound as the direct file's
+    assert video_after_sound(run.out) == pytest.approx(late, abs=0.03)
+
+
+@needs_ffmpeg
+def test_a_joined_copy_whose_sound_moved_against_the_video_is_not_used(
+    env, tmp_path, caplog, monkeypatch
+):
+    # the check on the result: a join that lost the video's start is refused
+    real = video.local_join_command
+
+    def no_delay(*args, video_delay=0.0, **kwargs):
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(video, "local_join_command", no_delay)
     data = direct_bytes(tmp_path, "-itsoffset", "0.5", *TEST_VIDEO, *sine(3),
                         "-c:v", "mpeg4", "-g", "10", "-c:a", "aac")
     run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(data))
@@ -1050,6 +1094,26 @@ def test_packets_the_file_marks_as_hidden_do_not_count(env, tmp_path, caplog, ra
         env, tmp_path, caplog, setup=with_direct(data), video_args=("-r", "60", "-g", "60"),
     )
     assert "longer than" not in caplog.text and "out of step" not in caplog.text
+    assert kinds_of(run.out) == ["audio", "video"]
+    assert "without sound" not in warnings_in(caplog)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("cut", [1, 7], ids=["a-short-cut", "a-cut-deeper-than-64-frames"])
+def test_a_direct_file_cut_without_re_encoding_is_used(env, tmp_path, caplog, cut):
+    # cut with -ss and -c copy: the file keeps the frames back to the key
+    # frame before the cut (10 or 70 here) and marks them as not played. The
+    # start of its video is the first frame that is played
+    whole = tmp_path / "whole.mp4"
+    subprocess.run(
+        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+         f"testsrc=size=80x60:rate=10:duration={cut + 3}", *sine(cut + 3),
+         "-c:v", "mpeg4", "-g", "250", "-c:a", "aac", str(whole)],
+        check=True,
+    )
+    data = direct_bytes(tmp_path, "-ss", str(cut), "-i", str(whole), "-c", "copy")
+    run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(data))
+    assert "could not be measured" not in caplog.text and "out of step" not in caplog.text
     assert kinds_of(run.out) == ["audio", "video"]
     assert "without sound" not in warnings_in(caplog)
 

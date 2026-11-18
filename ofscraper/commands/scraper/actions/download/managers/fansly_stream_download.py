@@ -247,11 +247,11 @@ def _first_shown(ffprobe, path, stream):
     Not its first packet's decode time: with B-frames that is earlier than
     the first shown frame, by an amount that depends on the encoder's
     settings, so it can't be compared between two encodings of one upload.
-    Packets the file marks as not played don't count."""
+    Packets the file marks as not played don't count, and a file cut without
+    re-encoding can start with any number of them, so every packet is read."""
     out = subprocess.run(
         [str(ffprobe), "-v", "error", "-select_streams", stream,
-         "-read_intervals", "%+#64", "-show_entries", "packet=pts_time,flags",
-         "-of", "csv=p=0", str(path)],
+         "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", str(path)],
         capture_output=True, text=True, check=True,
     ).stdout
     times = _read_times(out, played=True)
@@ -621,9 +621,19 @@ class FanslyStreamDownloadManager(DownloadManager):
         if codec not in COPYABLE_AUDIO:
             return f"the direct file's sound is {codec or 'of an unknown kind'}, not AAC"
         self._check_sound_space(temp, direct)
+        video_at, sound_at = [
+            await self._probe(_first_shown, ffprobe, direct, stream)
+            for stream in ("v:0", "a:0")
+        ]
+        if video_at is None or sound_at is None:
+            return "the direct file could not be measured"
+        # ffmpeg starts each input at its own first packet. The direct file's
+        # sound keeps its place from that file's start; the stream's video is
+        # given the place the direct file's video has. Most saved Fansly
+        # videos show their first frame two frames after the sound starts.
         cmd = fansly_video.local_join_command(
             get_ffmpeg(), video_input, joined.absolute(), dash=dash,
-            audio_file=direct.name,
+            audio_file=direct.name, video_delay=max(0.0, video_at - sound_at),
         )
         await self._run_cmd(
             cmd, joined, max(1.0, deadline - loop.time()),
@@ -679,9 +689,9 @@ class FanslyStreamDownloadManager(DownloadManager):
         """Why the joined copy can't be kept, or None.
 
         Both files come from one upload, so their videos should line up. The
-        sound must keep the start it had against the direct file's video
-        (ffmpeg starts each input at its own first packet, so an offset there
-        would be lost), within one frame. The starts compared are when each
+        sound must keep the start it had against the direct file's video (the
+        join delays the stream's video for that), within one frame. The
+        starts compared are when each
         stream is first shown (``_first_shown``). A trimmed or re-timed
         rendition would put the sound out of step by the difference in
         length."""
