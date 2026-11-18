@@ -460,6 +460,100 @@ def test_a_range_given_up_is_counted_from_the_start_once_its_links_are_accepted(
     assert s.dns_cleared - moves == api.ADDRESS_ASKS - 1
 
 
+THIRD = "203.0.113.0/24"
+
+
+def test_addresses_that_sign_for_two_refused_ranges_in_turn_end_the_shared_calls(world):
+    # some API addresses see one address of the computer and the others
+    # another (IPv4 and IPv6), and the CDN refuses both
+    s = world.session = Session(None, cdn_refused={OLD, THIRD})
+    s.answer = new_signature(s, lambda s: OLD if s.dns_cleared % 2 == 0 else THIRD)
+    items = queue(60)
+    results, _ = run(s, items)
+    assert results == [False] * 60
+    assert len(shared(s)) == api.ADDRESS_ASKS
+    assert s.dns_cleared == api.ADDRESS_ASKS - 1
+    assert len(alone(s)) <= len(items)
+
+
+def test_an_answer_without_the_media_leaves_the_count_alone(world):
+    # every other answer leaves the media out, which says nothing about
+    # the address
+    s = world.session = Session(None, cdn_refused={OLD})
+    new = new_signature(s, lambda s: OLD)
+    s.answer = lambda n: new(n) if len(s.api_calls) % 2 else None
+    items = queue(60)
+    results, _ = run(s, items)
+    assert results == [False] * 60
+    assert len(shared(s)) <= 2 * api.ADDRESS_ASKS
+    assert s.dns_cleared == api.ADDRESS_ASKS - 1
+
+
+def four_refused_asks_and_a_failed_one(s):
+    """The first shared call: four asks with refused links, then one that
+    fails with its second try."""
+    attempts = SimpleNamespace(made=-1)
+
+    def down():
+        attempts.made += 1
+        return attempts.made in (4, 5)
+
+    s.down = down
+
+
+def test_refused_asks_are_counted_only_for_a_while(world, monkeypatch):
+    clock = SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    s = world.session = Session(None, cdn_refused={OLD})
+    phase = SimpleNamespace(later=None)
+    # much later, the API address four moves on signs for the right range
+    s.answer = new_signature(
+        s, lambda s: OLD if phase.later is None or s.dns_cleared < phase.later + 4 else NEW
+    )
+    four_refused_asks_and_a_failed_one(s)
+    items = queue(40)
+
+    async def go():
+        refused, out = [], []
+        for number, ele in enumerate(items):
+            if number == 1:
+                phase.later = s.dns_cleared
+                clock.now += refresh.REFUSED_ASKS_KEPT + 1
+            out.append(await download(s, ele, refused))
+        return out
+
+    # the four asks from before don't count any more: every address is asked
+    assert asyncio.run(go()) == [False] + [True] * 39
+
+
+def test_an_address_change_starts_the_count_of_refused_asks_again(world):
+    scan_link(NEW)
+    s = world.session = Session(None, cdn_refused={OLD})
+    phase = SimpleNamespace(changed=None)
+
+    def signed_for(s):
+        if phase.changed is None:
+            return OLD
+        return NEW if s.dns_cleared < phase.changed + 4 else THIRD
+
+    s.answer = new_signature(s, signed_for)
+    four_refused_asks_and_a_failed_one(s)
+    items = queue(1) + queue(20, start=1, signed_for=NEW)
+
+    async def go():
+        refused, out = [], []
+        for number, ele in enumerate(items):
+            if number == 1:
+                # the address downloads leave from changes; only the fifth
+                # API address asked signs for it
+                phase.changed = s.dns_cleared
+                s.cdn_refused = {OLD, NEW}
+            out.append(await download(s, ele, refused))
+        return out
+
+    assert asyncio.run(go()) == [False] + [True] * 20
+
+
 def test_a_shared_call_that_fails_twice_is_made_again_for_the_next_file(world):
     s = world.session = Session(lambda n: account_media(n, NEW, "new"), cdn_refused={OLD})
     s.fail = 2
