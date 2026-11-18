@@ -21,7 +21,7 @@ from yarl import URL
 
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.commands.scraper.actions.download.utils.refresh as refresh
-from ofscraper.sites.fansly import address
+from ofscraper.sites.fansly import address, api
 
 from test_fansly_fetch_ahead import NEW, OLD, account_media, make_ele, scan_link
 
@@ -366,11 +366,23 @@ def test_a_range_fansly_keeps_signing_for_ends_the_shared_calls(world):
     items = queue(10)
     results, _ = run(s, items)
     assert results == [False] * 10
-    # two shared calls of two asks each, then one call per file, as without
-    # fetching ahead
-    assert len(shared(s)) == 2 * refresh.RANGE_TRIES
-    assert s.dns_cleared == refresh.RANGE_TRIES
+    # one shared call that asks every API address, then one call per file,
+    # as without fetching ahead
+    assert len(shared(s)) == api.ADDRESS_ASKS
+    assert s.dns_cleared == api.ADDRESS_ASKS - 1
     assert len(alone(s)) <= len(items)
+
+
+def test_every_api_address_is_asked_before_a_range_is_given_up(world):
+    # only the last of the API host's addresses sees the address the
+    # downloads leave from
+    s = world.session = Session(None, cdn_refused={OLD})
+    s.answer = new_signature(s, lambda s: OLD if s.dns_cleared < 3 else NEW)
+    results, refused = run(s, queue(20))
+    assert all(results)
+    assert len(refused) == 1
+    assert len(s.api_calls) == 4
+    assert s.dns_cleared == 3
 
 
 def test_a_shared_call_that_fails_twice_is_made_again_for_the_next_file(world):
