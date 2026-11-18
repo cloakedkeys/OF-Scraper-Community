@@ -301,11 +301,16 @@ class WorkersEnded(Exception):
     """Every download worker ended while the scan still had files to queue."""
 
 
-def _workers_error(run):
+def _worker_error(run):
+    """The error a worker ended with, or None."""
     for task in run.workers:
-        if not task.cancelled() and task.exception() is not None:
+        if task.done() and not task.cancelled() and task.exception() is not None:
             return task.exception()
-    return RuntimeError("every download worker ended")
+    return None
+
+
+def _workers_error(run):
+    return _worker_error(run) or RuntimeError("every download worker ended")
 
 
 async def _put(run, item):
@@ -441,13 +446,20 @@ async def _drain(run, workers):
         _, pending = await asyncio.wait(workers, timeout=0.25)
         if not pending:
             break
-    # files still queued: every worker ended on an error before taking them
+    if stop.requested.is_set():
+        return
+    # a worker that ended on an error left its file undone, and the files
+    # still queued when it was the last one: the run fails with that error,
+    # as the list downloader's does, instead of ending as a success
+    error = _worker_error(run)
+    if error is not None:
+        raise error
     left = []
     while not run.queue.empty():
         item = run.queue.get_nowait()
         if item is not _END:
             left.append(item)
-    if left and not stop.requested.is_set():
+    if left:
         raise _workers_error(run)
 
 
