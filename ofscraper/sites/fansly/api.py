@@ -35,7 +35,9 @@ async def get_json(c, path, asks=None):
     is asked for again from the API host's next address, up to
     ``ADDRESS_ASKS`` times in all, or ``asks`` times. A call limited by
     ``asks`` moves the address at most ``asks - 1`` times and then uses the
-    links as they are, without forgetting the refused ranges.
+    links as they are, without forgetting the refused ranges. The link
+    refresher asks once and decides about the address itself
+    (``next_address``).
     """
     url = constants.api_url(path)
     limit = asks or ADDRESS_ASKS
@@ -95,6 +97,11 @@ async def following_ids(c, my_account_id, limit=None):
             break
         offset += limit
     return out
+
+
+def next_address(c):
+    """Send the next API calls to the API host's next address."""
+    address.try_next_address(c, constants.api_url(""))
 
 
 # ------------------------------------------------------------------ media backfill

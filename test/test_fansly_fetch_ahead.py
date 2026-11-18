@@ -64,7 +64,7 @@ def account_media(n, signed_for, tag):
     }
 
 
-def make_ele(n, signed_for=OLD, tag="old"):
+def make_ele(n, signed_for=OLD, tag="old", post=100000000000000005):
     item = account_media(n, signed_for, tag)
     raw = item["media"]
     media = {
@@ -80,7 +80,7 @@ def make_ele(n, signed_for=OLD, tag="old"):
         },
     }
     post = Post(
-        {"id": 100000000000000005, "postedAt": "2026-01-02T03:04:05+00:00", "text": ""},
+        {"id": post, "postedAt": "2026-01-02T03:04:05+00:00", "text": ""},
         100000000000000002,
         "a-creator",
         responsetype="timeline",
@@ -99,10 +99,10 @@ def fansly(monkeypatch):
     async def session(**kwargs):
         yield "session"
 
-    async def cdn_refuses(c, url):
+    async def cdn_accepts(c, url):
         # the CDN refuses every link signed for the old range
         state.probes.append(url)
-        return address._range(url) == OLD
+        return address._range(url) != OLD
 
     async def fake_account_media(c, ids, asks=None):
         calls.append([str(i) for i in ids])
@@ -125,7 +125,7 @@ def fansly(monkeypatch):
     refresh.fansly_refresher.reset()
     monkeypatch.setattr(refresh.fansly_api, "account_media", fake_account_media)
     monkeypatch.setattr(refresh, "FANSLY_ASK_WAIT", 0)
-    monkeypatch.setattr(address, "cdn_refuses", cdn_refuses)
+    monkeypatch.setattr(address, "_cdn_accepts", cdn_accepts)
     monkeypatch.setattr(
         refresh.manager, "Manager",
         SimpleNamespace(session=SimpleNamespace(aget_ofsession=session)),
@@ -218,21 +218,50 @@ def test_the_same_link_for_one_file_sends_it_alone_to_the_old_loop(fansly):
     assert address._range(stuck.url) == NEW
 
 
-def test_a_failed_call_is_tried_once_more_by_the_batch_not_per_waiting_file(fansly):
+def test_a_failed_call_is_tried_once_more_and_the_others_stay_waiting(fansly, monkeypatch):
+    waits = []
+    real_sleep = asyncio.sleep
+
+    async def sleep(seconds, *args):
+        waits.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(refresh, "FANSLY_ASK_WAIT", 7)
+    monkeypatch.setattr(refresh.asyncio, "sleep", sleep)
     first, second = waiting(2)
     fansly.error = RuntimeError("503")
     before = second.url
     assert asyncio.run(refresh.refresh_media_link(first, link=first.url)) is False
     assert second.url == before
-    assert len(fansly.calls) == 2  # the call and its one retry
-    # the waiting file makes no shared call of its own before its download
+    assert len(fansly.calls) == 2  # the call and its one retry,
+    assert waits == [7]  # after a wait: a rate limit would fail a retry at once
+    # the waiting file isn't left to ask alone: the next shared call, before
+    # its download, is for it too
     fansly.error = None
     asyncio.run(refresh.fresh_before_download(second))
-    assert len(fansly.calls) == 2
-    # refused on download, it asks for its link alone
-    assert asyncio.run(refresh.refresh_media_link(second, link=second.url))
-    assert fansly.calls[2:] == [["1001"]]
+    assert len(fansly.calls) == 3 and "1001" in fansly.calls[2]
     assert address._range(second.url) == NEW
+
+
+def test_after_failed_shared_calls_in_a_row_files_ask_on_their_own(fansly):
+    items = waiting(5)
+    fansly.error = RuntimeError("503")
+
+    async def refused(some):
+        return [await refresh.refresh_media_link(ele, link=ele.url) for ele in some]
+
+    failing = items[: refresh.CALL_FAILURES]
+    assert asyncio.run(refused(failing)) == [False] * refresh.CALL_FAILURES
+    assert len(fansly.calls) == 2 * refresh.CALL_FAILURES
+    fansly.error = None
+    fansly.calls.clear()
+    # no shared call before the download, one call for this file alone after
+    following = items[refresh.CALL_FAILURES]
+    asyncio.run(refresh.fresh_before_download(following))
+    assert fansly.calls == []
+    assert asyncio.run(refused([following])) == [True]
+    assert fansly.calls == [[following.media["fansly"]["accountMediaId"]]]
+    assert address._range(items[-1].url) == OLD
 
 
 def test_a_cancelled_waiter_does_not_cancel_the_call(fansly):
@@ -281,15 +310,17 @@ def test_onlyfans_items_never_reach_the_refresher(fansly):
     assert fansly.calls == []
 
 
-def test_a_refusal_marks_the_range_and_leaves_what_the_probe_learned(fansly):
+def test_a_confirmed_refusal_replaces_what_the_probe_learned(fansly):
     old = link(0, OLD, "old")
     address._accepted[OLD] = True
     address.refused(old)
-    assert address.is_refused(old)
-    assert address._accepted == {OLD: True}
-    # forgetting refused API answers keeps the refused download range
+    assert address.is_refused(old) and not address.is_accepted(old)
+    assert address._accepted == {OLD: False}
+    # one fact: forgetting the refused ranges forgets this one, and the next
+    # link signed for it is tried on the CDN again
     address.forget_refused()
-    assert address.is_refused(old)
+    assert not address.is_refused(old) and not address.is_accepted(old)
+    address.refused(old)
     # without a range, or never seen: nothing changes
     address.refused(link(1, None, "plain"))
     assert not address.is_refused(link(1, None, "plain"))
@@ -297,23 +328,18 @@ def test_a_refusal_marks_the_range_and_leaves_what_the_probe_learned(fansly):
     assert not address.is_refused(None)
 
 
-def test_the_cdn_accepting_the_range_again_clears_the_refusal(fansly):
+def test_a_new_link_the_cdn_accepts_clears_the_refusal(fansly, monkeypatch):
     old = link(0, OLD, "old")
     address.refused(old)
 
     async def accepts(c, url):
         return True
 
-    async def go():
-        original = address._cdn_accepts
-        address._cdn_accepts = accepts
-        try:
-            return await address.usable(None, {"location": link(1, OLD, "new")})
-        finally:
-            address._cdn_accepts = original
-
-    assert asyncio.run(go()) is True
-    assert not address.is_refused(old)
+    monkeypatch.setattr(address, "_cdn_accepts", accepts)
+    assert asyncio.run(address.try_link(None, link(1, OLD, "new"))) is True
+    assert not address.is_refused(old) and address.is_accepted(old)
+    # a link without a range says nothing
+    assert asyncio.run(address.try_link(None, link(1, None, "plain"))) is None
 
 
 def test_the_url_of_a_refused_request_is_read_from_the_error():

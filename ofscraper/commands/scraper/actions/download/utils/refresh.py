@@ -176,7 +176,13 @@ def _fansly_signatures(raw):
 
 SAME_LINK = "Fansly gave the same link again"
 THIS_FILE_ONLY = "the CDN accepts another link signed for the same address"
-FAILED_EARLIER = "fetching new links for it failed earlier"
+GIVEN_UP = "Fansly keeps signing links for an address the CDN refuses"
+FETCH_AHEAD_OFF = "fetching links ahead failed too often in this run"
+# shared calls in a row whose new links for a range were refused, before the
+# files signed for it ask on their own
+RANGE_TRIES = 2
+# failed shared calls in a row before the run stops fetching links ahead
+CALL_FAILURES = 3
 
 
 def _raw(ele):
@@ -223,7 +229,12 @@ def apply_fansly_item(ele, item) -> bool:
 
 def _answer_for(found, account_media_id):
     return next(
-        (x for x in found or [] if str(x.get("id")) == str(account_media_id)), {}
+        (
+            x
+            for x in found or []
+            if isinstance(x, dict) and str(x.get("id")) == str(account_media_id)
+        ),
+        {},
     )
 
 
@@ -244,11 +255,18 @@ async def _refresh_fansly(ele, asked=0) -> bool:
             await asyncio.sleep(FANSLY_ASK_WAIT)
         try:
             async with manager.Manager.session.aget_ofsession() as c:
-                found = await fansly_api.account_media(c, [account_media_id])
+                # a link signed for a refused range: one call per ask. The
+                # shared call tried the API's next address already, and
+                # asking again from each address would cost five calls here
+                once = {"asks": 1} if address.is_refused(ele.url) else {}
+                found = await fansly_api.account_media(c, [account_media_id], **once)
         except Exception as E:
             log.debug(f"Media {ele.id}: fetching a new link failed: {E}")
             return False
-        problem = _apply_fansly(ele, _answer_for(found, account_media_id))
+        try:
+            problem = _apply_fansly(ele, _answer_for(found, account_media_id))
+        except Exception:
+            problem = "the API's answer for this media could not be read"
         if problem == SAME_LINK:
             continue
         if problem:
@@ -270,6 +288,16 @@ def _is_fansly(ele):
     return isinstance(getattr(ele, "media", None), dict) and bool(ele.media.get("fansly"))
 
 
+def _read_error(task):
+    """Read a finished task's error, so the loop has none left to report."""
+    if not task.cancelled():
+        task.exception()
+
+
+def _path(url):
+    return urlsplit(url).path
+
+
 class FanslyRefresher:
     """New links for every waiting Fansly item a refusal makes stale.
 
@@ -283,15 +311,24 @@ class FanslyRefresher:
     links already replaced.
 
     One 403 is not proof that a range is dead: a deleted file answers 403
-    too. So before a range is marked, one other waiting link signed for it is
-    tried on the CDN (one byte). If the CDN accepts it, only this file gets a
-    new link, on its own.
+    too. So before a range is marked refused (``address.refused``), one other
+    waiting link signed for it is tried on the CDN (one byte), from another
+    post when there is one: the files of a deleted post wait side by side.
+    If the CDN accepts it, only this file gets a new link, on its own.
 
-    The shared call does not loop. Items it gives a new link are updated;
-    items it gives the same link again (Fansly hands out a link it keeps for
-    a while) are left to the per-file asks, each on its own, and make no
-    further shared call. A failed call is tried once more, and the waiting
-    items it was for then make no shared call of their own.
+    The shared call asks once and judges the answer itself (``_judge``). A
+    link Fansly gave again unchanged (it keeps a link for a while) says
+    nothing about the address the API sees now: those items are left to the
+    per-file asks and move nothing. A new link does: one per range is tried
+    on the CDN, which also clears a mark that was wrong or is out of date (a
+    VPN that went back). When new links are signed for a range the CDN
+    refuses, the API is seeing another address than the downloads leave from
+    (#536): its next address is tried and the call made once more. So a
+    shared call is at most two API calls.
+
+    It gives up, and leaves the files to the per-file asks, for a range
+    whose new links were still refused ``RANGE_TRIES`` shared calls in a row,
+    and for the run after ``CALL_FAILURES`` failed shared calls in a row.
 
     Items are added with ``expect`` and removed with ``done``; one call runs
     at a time.
@@ -301,15 +338,18 @@ class FanslyRefresher:
         self._waiting = {}
         # id(item) -> its raw media when a shared call gave the same link
         self._stale = {}
-        # id(item) -> its raw media when the shared call for it failed
-        self._failed = {}
+        # range -> shared calls in a row whose new links for it were refused
+        self._still_refused = {}
+        # failed shared calls in a row
+        self._failures = 0
         self._lock = None
         self._loop = None
 
     def reset(self):
         self._waiting.clear()
         self._stale.clear()
-        self._failed.clear()
+        self._still_refused.clear()
+        self._failures = 0
 
     def expect(self, items):
         """Items about to be downloaded, in download order."""
@@ -320,45 +360,104 @@ class FanslyRefresher:
     def done(self, ele):
         self._waiting.pop(id(ele), None)
         self._stale.pop(id(ele), None)
-        self._failed.pop(id(ele), None)
 
     async def _range_refused(self, ele, link):
-        """Whether the range ``link`` is signed for is refused: one other
-        waiting link signed for it is tried on the CDN."""
+        """(whether the range ``link`` is signed for is refused, the other
+        link that was tried): one other waiting link signed for it is tried
+        on the CDN."""
         signed_for = address.link_range(link)
-        other = next(
-            (
-                o.url
-                for o in self._waiting.values()
-                if o is not ele
-                and o.url
-                and o.url != link
-                and address.link_range(o.url) == signed_for
-            ),
-            None,
-        )
-        if other is None:
-            return False
+        others = [
+            o
+            for o in self._waiting.values()
+            if o is not ele
+            and o.url
+            and o.url != link
+            and address.link_range(o.url) == signed_for
+        ]
+        if not others:
+            return False, None
+        post = getattr(ele, "post_id", None)
+        apart = [o for o in others if getattr(o, "post_id", None) != post]
+        other = (apart or others)[-1].url
         try:
             async with manager.Manager.session.aget_ofsession() as c:
-                return await address.cdn_refuses(c, other) is True
+                return await address.cdn_refuses(c, other) is True, other
         except Exception as E:
             log.debug(f"Media {ele.id}: could not try another link: {type(E).__name__}")
-            return False
+            return False, None
 
-    async def _call(self, batch):
-        """``account/media`` for the batch, tried twice; the address moves at
-        most once."""
+    async def _call(self, ids):
+        """``account/media`` for ``ids``, asked once. A failed call is tried
+        once more, after a wait."""
         error = None
         for attempt in range(2):
+            if attempt:
+                await asyncio.sleep(FANSLY_ASK_WAIT)
             try:
                 async with manager.Manager.session.aget_ofsession() as c:
-                    return await fansly_api.account_media(
-                        c, list(batch), asks=2 if attempt == 0 else 1
-                    )
+                    found = await fansly_api.account_media(c, ids, asks=1)
+                return found if isinstance(found, list) else []
             except Exception as E:
                 error = E
         raise error
+
+    def _apply(self, batch, found, ele):
+        """Give the batch's items their answers. Returns why ``ele`` got no
+        new link (None when it did) and the items that got one."""
+        problem = "the API didn't return this media"
+        changed = []
+        for account_media_id, items in batch.items():
+            answer = _answer_for(found, account_media_id)
+            for item in items:
+                try:
+                    why = _apply_fansly(item, answer)
+                except Exception:
+                    why = "the API's answer for this media could not be read"
+                if why is None:
+                    changed.append(item)
+                    self._stale.pop(id(item), None)
+                elif why == SAME_LINK and item is not ele:
+                    self._stale[id(item)] = _raw(item)
+                if item is ele:
+                    problem = why
+        return problem, changed
+
+    async def _judge(self, changed, avoid):
+        """The ranges of new links that the CDN refuses.
+
+        One new link per range that isn't known to be accepted is tried on
+        the CDN (not one of the files in ``avoid``, which were just refused
+        and may be deleted), and what it says is kept."""
+        by_range = {}
+        for item in changed:
+            signed_for = address.link_range(item.url)
+            if signed_for:
+                by_range.setdefault(signed_for, []).append(item.url)
+        refused = set()
+        for signed_for, links in by_range.items():
+            if not address.is_accepted(links[0]):
+                link = next((u for u in links if _path(u) not in avoid), links[0])
+                try:
+                    async with manager.Manager.session.aget_ofsession() as c:
+                        await address.try_link(c, link)
+                except Exception as E:
+                    log.debug(f"Fansly: could not try a new link: {type(E).__name__}")
+            if address.is_refused(links[0]):
+                refused.add(signed_for)
+        return refused
+
+    def _count(self, refused):
+        """Keep how often in a row a range's new links were refused."""
+        for signed_for in list(self._still_refused):
+            if signed_for not in refused:
+                del self._still_refused[signed_for]
+        for signed_for in refused:
+            self._still_refused[signed_for] = self._still_refused.get(signed_for, 0) + 1
+            if self._still_refused[signed_for] == RANGE_TRIES:
+                log.info(
+                    "Fansly keeps signing links for an address its CDN refuses. "
+                    "Asking for each file's link on its own from here"
+                )
 
     def _get_lock(self):
         # an asyncio.Lock belongs to one event loop, and each run has its own
@@ -373,18 +472,25 @@ class FanslyRefresher:
         ``link``: the link the CDN just refused; None before a download whose
         link is signed for a refused range. Returns None when ``ele`` has new
         links (from this call or one made while it waited), otherwise why
-        not: ``SAME_LINK`` when Fansly gave its link again, ``THIS_FILE_ONLY``
-        when only this link is refused, ``FAILED_EARLIER`` when the shared
-        call for it failed; each of those leaves ``ele`` to the per-file asks.
+        not. ``SAME_LINK`` (Fansly gave its link again), ``THIS_FILE_ONLY``
+        (only this link is refused), ``GIVEN_UP`` and ``FETCH_AHEAD_OFF``
+        leave ``ele`` to the per-file asks.
         """
-        before = (ele.media.get("fansly") or {}).get("media")
+        before = _raw(ele)
         # shielded: a cancelled download must not cancel a call that other
-        # downloads wait for
-        return await asyncio.shield(self._fresh(ele, link, before))
+        # downloads wait for. Its error, if any, is read either way.
+        task = asyncio.ensure_future(self._fresh(ele, link, before))
+        task.add_done_callback(_read_error)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            raise
+        except Exception as E:
+            return f"fetching a new link failed: {E}"
 
     async def _fresh(self, ele, link, before):
         async with self._get_lock():
-            if (ele.media.get("fansly") or {}).get("media") is not before:
+            if _raw(ele) is not before:
                 return None
             if link is None and not address.is_refused(ele.url):
                 return None
@@ -396,53 +502,67 @@ class FanslyRefresher:
             ):
                 # replaced after the refused request was made
                 return None
+            other = None
             if link is not None and not address.is_refused(link):
-                if not await self._range_refused(ele, link):
+                confirmed, other = await self._range_refused(ele, link)
+                if not confirmed:
                     return THIS_FILE_ONLY
                 address.refused(link)
+                self._still_refused.pop(address.link_range(link), None)
             if before is not None and self._stale.get(id(ele)) is before:
                 return SAME_LINK
-            if before is not None and self._failed.get(id(ele)) is before:
-                return FAILED_EARLIER
             first = _fansly_ids(ele)
             if not first:
                 return "no way to fetch a new Fansly link"
+            signed_for = address.link_range(link or ele.url)
+            if self._still_refused.get(signed_for, 0) >= RANGE_TRIES:
+                return GIVEN_UP
+            if self._failures >= CALL_FAILURES:
+                return FETCH_AHEAD_OFF
             batch = {str(first): [ele]}
-            for other in self._waiting.values():
+            for item in self._waiting.values():
                 if len(batch) >= fansly_api.ACCOUNT_MEDIA_BATCH:
                     break
-                other_id = _fansly_ids(other)
-                if other is ele or not other_id or not address.is_refused(other.url):
+                item_id = _fansly_ids(item)
+                if item is ele or not item_id or not address.is_refused(item.url):
                     continue
-                batch.setdefault(str(other_id), []).append(other)
-            try:
-                found = await self._call(batch)
-            except Exception as E:
-                for items in batch.values():
-                    for item in items:
-                        if item is not ele:
-                            self._failed[id(item)] = _raw(item)
-                return f"fetching a new link failed: {E}"
-            if not isinstance(found, list):
-                found = []
-            replaced = 0
-            for account_media_id, items in batch.items():
-                answer = _answer_for(found, account_media_id)
-                for item in items:
-                    if item is ele:
-                        continue
-                    problem = _apply_fansly(item, answer)
-                    if problem is None:
-                        replaced += 1
-                    elif problem == SAME_LINK:
-                        self._stale[id(item)] = _raw(item)
+                batch.setdefault(str(item_id), []).append(item)
+            avoid = {_path(u) for u in (link, other) if u}
+            got_new, problem, replaced, refused = False, None, set(), set()
+            for ask in range(2):
+                try:
+                    found = await self._call(list(batch))
+                except Exception as E:
+                    self._failures += 1
+                    if self._failures == CALL_FAILURES:
+                        log.info(
+                            "Fetching Fansly links ahead failed "
+                            f"{CALL_FAILURES} times in a row. Asking for each "
+                            "file's link on its own for the rest of the run"
+                        )
+                    if got_new:
+                        break
+                    return f"fetching a new link failed: {E}"
+                self._failures = 0
+                problem, changed = self._apply(batch, found, ele)
+                got_new = got_new or problem is None
+                replaced.update(id(item) for item in changed if item is not ele)
+                refused = await self._judge(changed, avoid)
+                if not refused or ask:
+                    break
+                # new links signed for an address the CDN refuses: the API
+                # sees another address than the downloads leave from (#536)
+                log.debug("Fansly: new links are signed for a refused address, asking again")
+                async with manager.Manager.session.aget_ofsession() as c:
+                    fansly_api.next_address(c)
+            self._count(refused)
             if len(batch) > 1:
                 log.debug(
                     f"Fansly: fetched new links for {len(batch) - 1} waiting "
                     f"{'file' if len(batch) == 2 else 'files'} with media "
-                    f"{ele.id}, {replaced} replaced"
+                    f"{ele.id}, {len(replaced)} replaced"
                 )
-            return _apply_fansly(ele, _answer_for(found, first))
+            return None if got_new else problem
 
 
 fansly_refresher = FanslyRefresher()
@@ -479,7 +599,7 @@ async def _refresh_fansly_refused(ele, link) -> bool:
     if problem == SAME_LINK:
         # the shared call was this item's first ask
         return await _refresh_fansly(ele, asked=1)
-    if problem in (THIS_FILE_ONLY, FAILED_EARLIER):
+    if problem in (THIS_FILE_ONLY, GIVEN_UP, FETCH_AHEAD_OFF):
         log.debug(f"Media {ele.id}: {problem}; asking for its link alone")
         return await _refresh_fansly(ele)
     if problem:

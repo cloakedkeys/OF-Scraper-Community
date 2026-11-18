@@ -10,6 +10,7 @@ addresses are documentation ranges (RFC 5737).
 import asyncio
 import contextlib
 import copy
+import gc
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -45,6 +46,8 @@ class Session:
         self.api_calls = []
         self.probes = 0
         self.dns_cleared = 0
+        self.fail = 0  # API calls still to fail
+        self.failed = 0
 
     def clear_dns_cache(self):
         self.dns_cleared += 1
@@ -59,6 +62,10 @@ class Session:
     @contextlib.asynccontextmanager
     async def requests_async(self, url=None, **kwargs):
         if "apiv3.fansly.com" in url:
+            if self.fail:
+                self.fail -= 1
+                self.failed += 1
+                raise RuntimeError("503")
             ids = parse_qs(urlsplit(url).query)["ids"][0].split(",")
             self.api_calls.append(ids)
             items = [self.answer(int(i) - 1000) for i in ids]
@@ -93,8 +100,9 @@ def world(monkeypatch):
     refresh.fansly_refresher.reset()
 
 
-def queue(count, start=0):
-    items = [make_ele(n) for n in range(start, start + count)]
+def queue(count, start=0, signed_for=OLD):
+    # each file in a post of its own
+    items = [make_ele(n, signed_for, post=5000 + n) for n in range(start, start + count)]
     refresh.fansly_refresher.expect(items)
     return items
 
@@ -172,3 +180,168 @@ def test_after_a_batch_with_cached_links_a_later_batch_still_works(world):
     assert len(new_calls) == 1
     assert {"1003", "1004", "1005"} <= set(new_calls[0])
     assert all(address._range(ele.url) == NEW for ele in later)
+
+
+def new_signature(session, signed_for):
+    """Answers with a new signature on every call, signed for the range
+    ``signed_for(session)`` gives."""
+
+    def answer(n):
+        return account_media(n, signed_for(session), f"call{len(session.api_calls)}")
+
+    return answer
+
+
+def shared(session):
+    return [call for call in session.api_calls if len(call) > 1]
+
+
+def alone(session):
+    return [call for call in session.api_calls if len(call) == 1]
+
+
+def test_788_files_after_an_address_change_cost_six_calls(world):
+    world.session = Session(lambda n: account_media(n, NEW, "new"), cdn_refused={OLD})
+    results, refused = run(world.session, queue(788))
+    assert all(results)
+    assert len(refused) == 1
+    assert len(world.session.api_calls) == 6
+    assert world.session.dns_cleared == 0
+
+
+def test_deleted_files_side_by_side_make_no_shared_call(world):
+    # the range is fine; the files of posts 0 and 1 are gone
+    s = world.session = Session(None, deleted={"0.png", "1.png"})
+    s.answer = new_signature(s, lambda s: OLD)
+    items = queue(40)
+    results, _ = run(s, items)
+    assert results == [False, False] + [True] * 38
+    assert shared(s) == []
+    assert s.api_calls == [["1000"], ["1001"]]
+    assert s.dns_cleared == 0 and address._steered == {}
+
+
+def test_the_files_of_one_deleted_post_are_not_taken_for_a_dead_range(world):
+    s = world.session = Session(None, deleted={"0.png", "1.png", "2.png"})
+    s.answer = new_signature(s, lambda s: OLD)
+    gone = [make_ele(n, post=7000) for n in range(3)]
+    rest = [make_ele(n, post=5000 + n) for n in range(3, 10)]
+    refresh.fansly_refresher.expect(gone + rest)
+    results, _ = run(s, gone + rest)
+    assert results == [False] * 3 + [True] * 7
+    assert shared(s) == []
+    assert not address.is_refused(rest[0].url)
+
+
+def test_a_range_marked_wrongly_costs_one_shared_call_and_is_cleared(world):
+    # the file tried to confirm the refusal (the last waiting) is deleted too
+    s = world.session = Session(None, deleted={"0.png", "39.png"})
+    s.answer = new_signature(s, lambda s: OLD)
+    items = queue(40)
+    results, _ = run(s, items)
+    assert results == [False] + [True] * 38 + [False]
+    # the shared call's new links are tried on the CDN: accepted, mark gone
+    assert len(shared(s)) == 1
+    assert address.is_accepted(items[5].url)
+    assert alone(s) == [["1039"]]
+    assert s.dns_cleared == 0
+
+
+def test_an_address_that_changes_back_costs_one_more_shared_call(world):
+    """VPN off at file 0 (the CDN refuses OLD, Fansly signs NEW), back on at
+    file 20 (the CDN refuses NEW, Fansly signs OLD again)."""
+    s = world.session = Session(None, cdn_refused={OLD})
+    phase = SimpleNamespace(back=False)
+    s.answer = new_signature(s, lambda s: OLD if phase.back else NEW)
+    items = queue(60)
+
+    async def go():
+        refused, out, before = [], [], None
+        for number, ele in enumerate(items):
+            if number == 20:
+                phase.back = True
+                s.cdn_refused = {NEW}
+                before = len(s.api_calls)
+            out.append(await download(s, ele, refused))
+        return out, before
+
+    results, before = asyncio.run(go())
+    assert all(results)
+    assert before == 1
+    assert len(s.api_calls) - before == 1
+    assert s.dns_cleared == 0
+
+
+def test_new_links_signed_for_the_refused_range_move_the_api_address_once(world):
+    # the API still sees the old address (#536) until its next address is used
+    s = world.session = Session(None, cdn_refused={OLD})
+    s.answer = new_signature(s, lambda s: OLD if s.dns_cleared == 0 else NEW)
+    results, refused = run(s, queue(20))
+    assert all(results)
+    assert len(refused) == 1
+    assert len(s.api_calls) == 2
+    assert s.dns_cleared == 1
+
+
+def test_a_range_fansly_keeps_signing_for_ends_the_shared_calls(world):
+    s = world.session = Session(None, cdn_refused={OLD})
+    s.answer = new_signature(s, lambda s: OLD)
+    items = queue(10)
+    results, _ = run(s, items)
+    assert results == [False] * 10
+    # two shared calls of two asks each, then one call per file, as without
+    # fetching ahead
+    assert len(shared(s)) == 2 * refresh.RANGE_TRIES
+    assert s.dns_cleared == refresh.RANGE_TRIES
+    assert len(alone(s)) <= len(items)
+
+
+def test_a_shared_call_that_fails_twice_is_made_again_for_the_next_file(world):
+    s = world.session = Session(lambda n: account_media(n, NEW, "new"), cdn_refused={OLD})
+    s.fail = 2
+    results, _ = run(s, queue(300))
+    assert results == [False] + [True] * 299
+    assert s.failed == 2
+    assert len(s.api_calls) == 2
+
+
+@pytest.mark.parametrize(
+    "junk",
+    ["not an item", {"id": "1000", "media": "not a media"}, {"id": "1000", "media": {"id": 5}}],
+    ids=["not-a-dict", "bad-media", "other-media"],
+)
+def test_a_malformed_answer_fails_the_refresh_without_raising(world, junk):
+    world.session = Session(lambda n: junk, cdn_refused={OLD})
+    results, _ = run(world.session, queue(3))
+    assert results == [False, False, False]
+
+
+def test_an_error_after_its_waiter_was_cancelled_is_not_left_for_the_loop(world, monkeypatch):
+    first = make_ele(0)
+    refresh.fansly_refresher.expect([first])
+    reported = []
+
+    async def go():
+        gate = asyncio.Event()
+
+        async def broken(ele, link, before):
+            await gate.wait()
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(refresh.fansly_refresher, "_fresh", broken)
+        asyncio.get_running_loop().set_exception_handler(
+            lambda loop, context: reported.append(context.get("message"))
+        )
+        waiter = asyncio.ensure_future(refresh.fansly_refresher.fresh(first, first.url))
+        await asyncio.sleep(0.01)
+        waiter.cancel()
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.sleep(0.05)
+        gc.collect()
+
+    asyncio.run(go())
+    gc.collect()
+    assert reported == []
+    # and a waiter that is still there gets the reason, not the error
+    assert "boom" in asyncio.run(refresh.fansly_refresher.fresh(first, first.url))
