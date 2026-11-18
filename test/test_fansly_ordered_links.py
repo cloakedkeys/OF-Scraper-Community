@@ -143,18 +143,7 @@ def test_a_failed_call_leaves_the_scan_links(harness, answers):
     assert {used[item.id][0] for item in items} == {"signature-scan"}
 
 
-@pytest.mark.parametrize(
-    "answer",
-    [
-        {"unexpected": "shape"},
-        [{"id": "9000", "media": "not a media"}, {"id": "9001", "preview": 5}],
-        [{"id": "9000", "media": {"id": "8000", "locations": "nonsense"}}],
-    ],
-    ids=["not-a-list", "bad-items", "bad-locations"],
-)
-def test_a_malformed_answer_keeps_the_scan_links_and_the_run_goes_on(
-    harness, answers, monkeypatch, answer
-):
+def malformed(harness, answers, monkeypatch, answer):
     items = scanned(3)
 
     async def account_media(c, ids):
@@ -166,6 +155,25 @@ def test_a_malformed_answer_keeps_the_scan_links_and_the_run_goes_on(
     assert harness.downloads == [item.id for item in items]
     assert {used[item.id][0] for item in items} == {"signature-scan"}
     assert "processed" in harness.events
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        [{"id": "9000", "media": "not a media"}, {"id": "9001", "preview": 5}],
+        [{"id": "9000", "media": {"id": "8000", "locations": "nonsense"}}],
+    ],
+    ids=["bad-items", "bad-locations"],
+)
+def test_a_malformed_answer_keeps_the_scan_links_and_the_run_goes_on(
+    harness, answers, monkeypatch, answer
+):
+    malformed(harness, answers, monkeypatch, answer)
+
+
+def test_an_answer_that_is_not_a_list_keeps_the_scan_links(harness, answers, monkeypatch):
+    """Handled before the malformed-item fix too; kept so it stays that way."""
+    malformed(harness, answers, monkeypatch, {"unexpected": "shape"})
 
 
 def test_files_left_waiting_too_long_get_new_links_before_they_are_queued(

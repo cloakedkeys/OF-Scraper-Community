@@ -22,6 +22,10 @@ that page. A full scan happens when any of these is true (``early_stop_for``):
   downloads off, the full-scan flag from an earlier ``--after`` run,
   ``--retry-permanent-skips``;
 - ``--post-id`` or ``--force-all``;
+- the database doesn't have the mark's newest post. The mark is kept in the
+  profile cache, so it outlives a database that was reset, restored or moved;
+  such a mark is dropped at once (before the scan writes any row, or a scan
+  stopped after its first page would make it look right again);
 - the account's access to the creator changed (subscribed, following, tier),
   so older locked posts may now be viewable;
 - the last full scan of the area is more than ``FANSLY_FULL_SCAN_DAYS`` days
@@ -152,11 +156,23 @@ async def early_stop_for(ele, area, now=None):
     if area not in AREAS:
         return None
     now = time.time() if now is None else now
-    mark = cache.get(mark_key(ele.id, area))
+    key = mark_key(ele.id, area)
+    mark = cache.get(key)
+    own = set()
+    if isinstance(mark, dict) and _int(mark.get("newest")) is not None:
+        own = _ids(await AREA_IDS[area](model_id=ele.id, username=ele.name))
+        if _int(mark["newest"]) not in own:
+            # checked whatever else decides this run: the scan about to start
+            # writes rows that would make a later check pass
+            cache.set(key, None)
+            log.debug(
+                f"{area}: scanning fully: the database doesn't have the last "
+                "scan's newest post"
+            )
+            return None
     reason = _full_scan_reason(ele, area, mark, now)
     if reason:
         log.debug(f"{area}: scanning fully: {reason}")
         return None
-    own = await AREA_IDS[area](model_id=ele.id, username=ele.name)
     pending = await get_posts_missing_media(ele.id, ele.name)
-    return EarlyStop(mark["newest"], _ids(pending) & _ids(own), mark.get("full_at"))
+    return EarlyStop(mark["newest"], _ids(pending) & own, mark.get("full_at"))
