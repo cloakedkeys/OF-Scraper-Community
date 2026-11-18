@@ -103,7 +103,7 @@ def test_the_first_run_records_the_newest_post_of_each_downloaded_area(harness):
         incremental.mark_key(MODEL_ID, "Timeline"),
     }
     timeline = mark(harness)
-    assert timeline["newest"] == 100
+    assert (timeline["newest"], timeline["oldest"]) == (100, 97)
     assert timeline["full_at"] == timeline["at"] >= before
     assert mark(harness, "Messages")["newest"] == 60
 
@@ -119,7 +119,7 @@ def test_new_posts_on_the_first_page_scan_to_the_first_page_below_the_mark(repea
     assert repeat.downloads == [10_102, 10_101]
     # the mark moves up; the last full scan stays the first run's
     first_full = mark(repeat)["full_at"]
-    assert mark(repeat)["newest"] == 102
+    assert (mark(repeat)["newest"], mark(repeat)["oldest"]) == (102, 95)
     assert mark(repeat)["full_at"] == first_full
 
 
@@ -205,6 +205,32 @@ def test_a_full_scan_stopped_after_a_reset_is_not_taken_for_finished(repeat):
     repeat.run()
     assert len(asked(repeat, "Timeline")) == 3
     assert sorted(repeat.downloads) == [10_095, 10_096, 10_097, 10_098, 10_099, 10_100]
+
+
+@pytest.mark.parametrize("written_back", ["newest", "page 1"])
+def test_a_reset_database_given_its_newest_post_back_is_still_scanned_in_full(
+        repeat, written_back):
+    # after the reset another kind of run (manual, a purchased-only run, an
+    # interrupted scan-first run) writes the creator's newest posts, without
+    # scanning page by page: the mark's newest post is in the database again
+    back = {"newest": {100}, "page 1": {100, 99}}[written_back]
+    repeat.areas = ["Timeline"]
+    repeat.recorded = {"posts": set(back), "messages": set()}
+    repeat.downloaded = {10_000 + n for n in back}
+    repeat.run()
+    assert len(asked(repeat, "Timeline")) == 3
+    assert sorted(repeat.downloads) == sorted(
+        {10_000 + n for n in range(95, 101)} - repeat.downloaded
+    )
+
+
+def test_a_mark_without_the_oldest_post_is_dropped(repeat):
+    # written by an earlier version of this rule
+    del repeat.cache[incremental.mark_key(MODEL_ID, "Timeline")]["oldest"]
+    repeat.areas = ["Timeline"]
+    repeat.run()
+    assert len(asked(repeat, "Timeline")) == 3
+    assert mark(repeat)["oldest"] == 95
 
 
 def test_posts_recorded_by_a_labels_only_run_do_not_hide_new_timeline_posts(repeat):
@@ -317,10 +343,10 @@ def decision(monkeypatch, settings_stub):
     settings_stub.incremental_downloads = True
     settings_stub.retry_permanent_skips = False
     ele = SimpleNamespace(name=NAME, id=MODEL_ID, model={"fansly": {"subscribed": True}})
-    incremental.record(ele, "Timeline", 10, True)
+    incremental.record(ele, "Timeline", 10, True, oldest=1)
 
     async def ids(**k):
-        # the database has the mark's post
+        # the database has the mark's posts
         return {1, 2, 10}
 
     async def pending(model_id, username):
@@ -379,7 +405,7 @@ def test_an_early_stopped_scan_keeps_the_last_full_scan_time(decision):
     first = decision.data[incremental.mark_key(MODEL_ID, "Timeline")]
     incremental.record(decision.ele, "Timeline", 12, False, now=first["full_at"] + 3600)
     second = decision.data[incremental.mark_key(MODEL_ID, "Timeline")]
-    assert (second["newest"], second["full_at"]) == (12, first["full_at"])
+    assert (second["newest"], second["oldest"], second["full_at"]) == (12, 1, first["full_at"])
     assert second["at"] == first["full_at"] + 3600
 
 
