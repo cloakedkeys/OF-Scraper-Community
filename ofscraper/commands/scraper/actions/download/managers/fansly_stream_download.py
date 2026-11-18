@@ -247,14 +247,16 @@ def _first_shown(ffprobe, path, stream):
     the first shown frame, by an amount that depends on the encoder's
     settings, so it can't be compared between two encodings of one upload.
     Packets the file marks as not played don't count, and a file cut without
-    re-encoding can start with any number of them, so every packet is read."""
+    re-encoding can start with any number of them, so every packet is read.
+    A cut can also fall inside a packet: that packet's time is before the
+    file's start (below zero), and it is played from the start."""
     out = subprocess.run(
         [str(ffprobe), "-v", "error", "-select_streams", stream,
          "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", str(path)],
         capture_output=True, text=True, check=True,
     ).stdout
     times = _read_times(out, played=True)
-    return min(times) if times else None
+    return max(0.0, min(times)) if times else None
 
 
 def _has_packets(ffprobe, path, stream) -> bool:
@@ -610,15 +612,25 @@ class FanslyStreamDownloadManager(DownloadManager):
             await self._probe(_first_shown, ffprobe, direct, stream)
             for stream in ("v:0", "a:0")
         ]
-        if video_at is None or sound_at is None:
+        frame = _frame(await self._probe(_packet_times, ffprobe, direct, "v:0", True))
+        if video_at is None or sound_at is None or not frame:
             return "the direct file could not be measured"
         # ffmpeg starts each input at its own first packet. The direct file's
         # sound keeps its place from that file's start; the stream's video is
         # given the place the direct file's video has. Most saved Fansly
-        # videos show their first frame two frames after the sound starts.
+        # videos show their first frame two frames after the sound starts
+        # (frames stored ahead, no edit list). A later start than that is not
+        # carried over: nothing shows that the stream's video has it too.
+        late = video_at - sound_at
+        if late > SOUND_FRAMES * frame + 0.001:
+            return (
+                f"the direct file's video starts {late:.3f}s after its sound, more "
+                f"than {SOUND_FRAMES} frames, so the sound could be out of step "
+                "with the stream's video"
+            )
         cmd = fansly_video.local_join_command(
             get_ffmpeg(), video_input, joined.absolute(), dash=dash,
-            audio_file=direct.name, video_delay=max(0.0, video_at - sound_at),
+            audio_file=direct.name, video_delay=max(0.0, late),
         )
         await self._run_cmd(
             cmd, joined, max(1.0, deadline - loop.time()),
@@ -715,10 +727,14 @@ class FanslyStreamDownloadManager(DownloadManager):
                 f"({stream_length:.2f}s) differ in length, so the sound would be out of step"
             )
         sound_length = fansly_video.timeline(joined_audio)[0]
-        if sound_length > stream_length + margin:
+        # where each ends, not how long each is: the video may start after
+        # the sound (the delay the join gave it)
+        video_end = shown[2] + stream_length
+        sound_end = shown[3] + sound_length
+        if sound_end > video_end + margin:
             return "the direct file's sound is longer than the stream's video"
         short = max(fansly_video.SHORT_MIN, fansly_video.SHORT_SHARE * stream_length)
-        if sound_length < stream_length - short:
+        if sound_end < video_end - short:
             return (
                 f"the direct file's sound covers {sound_length:.1f}s of the "
                 f"{stream_length:.1f}s video"
