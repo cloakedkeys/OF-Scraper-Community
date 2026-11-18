@@ -338,7 +338,9 @@ class FanslyRefresher:
     at most ``ADDRESS_ASKS`` API calls, as for a page of the scan.
 
     It leaves the files to the per-file asks for a range whose new links
-    were still refused after a shared call that asked every address. After
+    were refused ``ADDRESS_ASKS`` asks in a row, each from the API's next
+    address. The asks are counted over the shared calls, so one that fails
+    on the way doesn't start them again for the next file. After
     ``CALL_FAILURES`` failed shared calls in a row it pauses for
     ``FETCH_AHEAD_PAUSE`` seconds (then one more failed call pauses it
     again). Files signed for a refused range wait the first ``PAUSE_WAITS``
@@ -352,8 +354,10 @@ class FanslyRefresher:
         self._waiting = {}
         # id(item) -> its raw media when a shared call gave the same link
         self._stale = {}
-        # ranges whose new links were refused from every API address
+        # ranges whose new links were refused from every API address, and
+        # for the others how many asks in a row gave links the CDN refused
         self._given_up = set()
+        self._refused_asks = {}
         # failed shared calls in a row, and until when no shared call is made
         self._failures = 0
         self._paused_until = 0
@@ -366,6 +370,7 @@ class FanslyRefresher:
         self._waiting.clear()
         self._stale.clear()
         self._given_up.clear()
+        self._refused_asks.clear()
         self._failures = 0
         self._paused_until = 0
         self._pauses = 0
@@ -465,18 +470,24 @@ class FanslyRefresher:
                 refused.add(signed_for)
         return refused
 
-    def _settle(self, refused, every_address):
-        """After a shared call whose last new links were refused for the
-        ranges in ``refused``: those are given up when every API address was
-        asked, and a range given up before is tried again when it isn't
-        among them any more."""
+    def _settle(self, refused):
+        """After an ask whose new links were refused for the ranges in
+        ``refused``. True when one of them is given up: its links were
+        refused ``ADDRESS_ASKS`` asks in a row, each from the API's next
+        address, in this shared call or over several. A range given up
+        before is tried again when it isn't among them any more."""
+        self._refused_asks = {r: self._refused_asks.get(r, 0) + 1 for r in refused}
         self._given_up &= refused
-        if every_address and refused - self._given_up:
-            self._given_up |= refused
+        every_address = {
+            r for r, asks in self._refused_asks.items() if asks >= fansly_api.ADDRESS_ASKS
+        }
+        if every_address - self._given_up:
+            self._given_up |= every_address
             log.info(
                 "Fansly keeps signing links for an address its CDN refuses. "
                 "Asking for each file's link on its own from here"
             )
+        return bool(refused & self._given_up)
 
     def _get_lock(self):
         # an asyncio.Lock belongs to one event loop, and each run has its own
@@ -537,6 +548,7 @@ class FanslyRefresher:
                     return RANGE_UNKNOWN if confirmed is None else THIS_FILE_ONLY
                 address.refused(link)
                 self._given_up.discard(address.link_range(link))
+                self._refused_asks.pop(address.link_range(link), None)
             if before is not None and self._stale.get(id(ele)) is before:
                 return SAME_LINK
             first = _fansly_ids(ele)
@@ -556,9 +568,8 @@ class FanslyRefresher:
                     continue
                 batch.setdefault(str(item_id), []).append(item)
             avoid = {_path(u) for u in (link, *others) if u}
-            got_new, problem, replaced, refused = False, None, set(), set()
-            every_address = False
-            for ask in range(fansly_api.ADDRESS_ASKS):
+            got_new, problem, replaced = False, None, set()
+            for _ in range(fansly_api.ADDRESS_ASKS):
                 try:
                     found = await self._call(list(batch))
                 except Exception as E:
@@ -584,15 +595,13 @@ class FanslyRefresher:
                 got_new = got_new or problem is None
                 replaced.update(id(item) for item in changed if item is not ele)
                 refused = await self._judge(changed, avoid)
-                every_address = ask + 1 == fansly_api.ADDRESS_ASKS
-                if not refused or every_address:
+                if self._settle(refused) or not refused:
                     break
                 # new links signed for an address the CDN refuses: the API
                 # sees another address than the downloads leave from (#536)
                 log.debug("Fansly: new links are signed for a refused address, asking again")
                 async with manager.Manager.session.aget_ofsession() as c:
                     fansly_api.next_address(c)
-            self._settle(refused, every_address)
             if len(batch) > 1:
                 log.debug(
                     f"Fansly: fetched new links for {len(batch) - 1} waiting "

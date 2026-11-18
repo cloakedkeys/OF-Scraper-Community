@@ -414,6 +414,52 @@ def test_every_api_address_is_asked_before_a_range_is_given_up(world):
     assert s.dns_cleared == 3
 
 
+@pytest.mark.parametrize("working", [1, 2, 3])
+def test_asks_that_fail_on_the_way_dont_start_the_addresses_again(world, working):
+    # a rate limit: after every one, two or three API calls that work, two
+    # fail (an ask and its second try), so no shared call gets through all
+    # its asks
+    s = world.session = Session(None, cdn_refused={OLD})
+    s.answer = new_signature(s, lambda s: OLD)
+    s.down = lambda: (len(s.api_calls) + s.failed) % (working + 2) >= working
+    items = queue(60)
+    results, _ = run(s, items)
+    assert results == [False] * 60
+    # the asks of all the shared calls together are one per API address
+    assert len(shared(s)) == api.ADDRESS_ASKS
+    assert s.dns_cleared == api.ADDRESS_ASKS - 1
+    assert len(alone(s)) <= len(items)
+    assert len(s.api_calls) + s.failed <= 2 * (len(items) + api.ADDRESS_ASKS)
+
+
+def test_a_range_given_up_is_counted_from_the_start_once_its_links_are_accepted(world):
+    # refused from two addresses, accepted from the third; much later
+    # Fansly signs for the refused range again
+    s = world.session = Session(None, cdn_refused={OLD})
+    phase = SimpleNamespace(again=False)
+    s.answer = new_signature(
+        s, lambda s: OLD if phase.again or s.dns_cleared < 2 else NEW
+    )
+    items = queue(40)
+
+    async def go():
+        refused, out = [], []
+        for number, ele in enumerate(items):
+            if number == 20:
+                phase.again = True
+                s.cdn_refused = {OLD, NEW}
+                before = len(shared(s)), s.dns_cleared
+            out.append(await download(s, ele, refused))
+        return out, before
+
+    results, (calls, moves) = asyncio.run(go())
+    assert all(results[:20])
+    assert (calls, moves) == (3, 2)
+    # the two refused asks from before don't count: every address is asked
+    assert len(shared(s)) - calls == api.ADDRESS_ASKS
+    assert s.dns_cleared - moves == api.ADDRESS_ASKS - 1
+
+
 def test_a_shared_call_that_fails_twice_is_made_again_for_the_next_file(world):
     s = world.session = Session(lambda n: account_media(n, NEW, "new"), cdn_refused={OLD})
     s.fail = 2
