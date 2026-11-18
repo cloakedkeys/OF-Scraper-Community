@@ -175,7 +175,7 @@ def _fansly_signatures(raw):
 
 
 SAME_LINK = "Fansly gave the same link again"
-THIS_FILE_ONLY = "the CDN accepts another link signed for the same address"
+THIS_FILE_ONLY = "nothing shows that the CDN refuses the address its link is signed for"
 GIVEN_UP = "Fansly keeps signing links for an address the CDN refuses"
 FETCH_AHEAD_OFF = "fetching links ahead is paused after failed calls"
 # shared calls in a row whose new links for a range were refused, before the
