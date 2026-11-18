@@ -18,6 +18,7 @@ scan-then-download path.
 import asyncio
 import contextlib
 import logging
+import traceback
 
 import ofscraper.classes.labels as labels
 import ofscraper.classes.of.posts as posts_
@@ -167,7 +168,7 @@ class _Run:
         self.rows = set()  # media keys whose row is written this run
         self.locked_rows = {}  # media key -> a locked copy, row not yet written
         self.workers = []
-        self.ended = []  # workers, in the order they ended
+        self.ended = []  # the workers that failed, in the order they did
         self.cancelled = set()  # workers the pipeline cancelled itself
         self.queue = None
         self.selector = None
@@ -303,17 +304,22 @@ class WorkersEnded(Exception):
     """Every download worker ended while the scan still had files to queue."""
 
 
-def _worker_error(run):
+def _worker_error(run, stopped=False):
     """The error of the first worker that failed, or None. A worker cancelled
-    by anything but the pipeline itself left its file undone, so it failed."""
+    by anything but the pipeline itself left its file undone, so it failed.
+
+    ``stopped``: a stop was requested. A stop cancels the transfers, and its
+    cancel can reach a worker after the transfer is over, so a cancelled
+    worker is the stop's doing then, not an error."""
     for task in [*run.ended, *run.workers]:
         if not task.done():
             continue
         if task.cancelled():
-            if task not in run.cancelled:
+            if task not in run.cancelled and not stopped:
                 return RuntimeError("a download worker was cancelled")
         elif task.exception() is not None:
-            return task.exception()
+            if not (stopped and isinstance(task.exception(), stop.DownloadsStopped)):
+                return task.exception()
     return None
 
 
@@ -409,6 +415,16 @@ async def _produce(run):
 
 
 async def _worker(run):
+    try:
+        await _work(run)
+    except BaseException:
+        # kept in the order the workers fail; a task's done callback runs a
+        # step later, after the scan may already have asked for the error
+        run.ended.append(asyncio.current_task())
+        raise
+
+
+async def _work(run):
     task = asyncio.current_task()
     while True:
         item = await run.queue.get()
@@ -453,16 +469,17 @@ async def _drain(run, workers):
         _, pending = await asyncio.wait(workers, timeout=0.25)
         if not pending:
             break
-    error = _worker_error(run)
     if stop.requested.is_set():
+        error = _worker_error(run, stopped=True)
         if error is not None:
             # the stop is what the run reports; the error is still said
             log.warning(
                 f"[{run.username}] a download worker ended on an error: "
                 f"{type(error).__name__}: {error}"
             )
-            log.traceback_(error)
+            log.traceback_("".join(traceback.format_exception(error)))
         return
+    error = _worker_error(run)
     # a worker that ended on an error left its file undone, and the files
     # still queued when it was the last one: the run fails with that error,
     # as the list downloader's does, instead of ending as a success
@@ -504,8 +521,6 @@ async def _download(run):
                 run.selector = Selector(run.model_id, run.username)
                 workers = [asyncio.create_task(_worker(run)) for _ in range(count)]
                 run.workers = workers
-                for task in workers:
-                    task.add_done_callback(run.ended.append)
                 try:
                     producer = asyncio.create_task(_produce(run))
                     try:

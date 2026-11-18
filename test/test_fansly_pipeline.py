@@ -958,13 +958,56 @@ def test_the_first_worker_to_fail_gives_the_run_its_error(harness):
         harness.run()
 
 
+def test_workers_that_fail_in_the_same_step_are_taken_in_the_order_they_failed(
+    harness, monkeypatch
+):
+    gate = asyncio.Event()
+
+    async def second(ele):
+        # the worker started first: it comes to wait after the other one
+        for _ in range(3):
+            await asyncio.sleep(0)
+        await gate.wait()
+        raise RuntimeError("failed second")
+
+    async def first(ele):
+        await gate.wait()
+        raise RuntimeError("failed first")
+
+    real_take = pipeline._take_page
+
+    async def take(run, area, posts, download, number):
+        if number == 2:
+            # the scan wakes in the same step as both workers, after them,
+            # and finds every worker ended
+            asyncio.get_running_loop().call_later(0.05, gate.set)
+            for _ in range(6):
+                await asyncio.sleep(0)
+            await gate.wait()
+        await real_take(run, area, posts, download, number)
+
+    monkeypatch.setattr(pipeline, "_take_page", take)
+    harness.workers = 2
+    harness.areas = ["Timeline"]
+    harness.pages["Timeline"] = [
+        page(post_dict(1, [101]), post_dict(2, [102])), page(post_dict(3, [103])),
+    ]
+    harness.on_download = {101: second, 102: first}
+    with pytest.raises(RuntimeError, match="failed first"):
+        harness.run()
+
+
+class Log:
+    """Keeps what is logged, by level."""
+
+    def __init__(self):
+        self.said = {}
+
+    def __getattr__(self, name):
+        return self.said.setdefault(name, []).append
+
+
 def test_a_worker_error_is_still_said_when_a_stop_follows_it(harness, monkeypatch):
-    said = []
-
-    class Log:
-        def __getattr__(self, name):
-            return said.append if name == "warning" else lambda *a, **k: None
-
     async def die(ele):
         raise RuntimeError("worker broke")
 
@@ -973,14 +1016,48 @@ def test_a_worker_error_is_still_said_when_a_stop_follows_it(harness, monkeypatc
         stop.request()
         return None
 
-    monkeypatch.setattr(pipeline, "log", Log())
+    log = Log()
+    monkeypatch.setattr(pipeline, "log", log)
     harness.workers = 2
     harness.areas = ["Timeline"]
     harness.pages["Timeline"] = [page(post_dict(1, [101]), post_dict(2, [102]))]
     harness.on_download = {101: die, 102: stop_now}
     with pytest.raises(stop.DownloadsStopped):
         harness.run()
-    assert any("worker broke" in line for line in said)
+    # said once, and where it was raised is kept for the log file
+    assert len([line for line in log.said["warning"] if "worker broke" in line]) == 1
+    (trace,) = log.said["traceback_"]
+    assert "Traceback" in trace and "in die" in trace and "worker broke" in trace
+
+
+def test_a_stop_whose_cancel_reaches_an_idle_worker_is_not_said_as_an_error(
+    harness, monkeypatch
+):
+    async def stop_now(ele):
+        stop.request()
+        # the stop's cancel of this transfer arrives after the transfer is
+        # over, while the worker waits for its next file
+        asyncio.get_running_loop().call_later(0.05, asyncio.current_task().cancel)
+        return None
+
+    log = Log()
+    monkeypatch.setattr(pipeline, "log", log)
+    monkeypatch.setattr(pipeline, "QUEUE_PER_WORKER", 8)
+    harness.workers = 1
+    harness.areas = ["Timeline"]
+    harness.pages["Timeline"] = [page(post_dict(1, [101]))]
+    harness.on_download = {101: stop_now}
+    real_drain = pipeline._drain
+
+    async def drain(run, workers):
+        # the cancel lands before the worker is told to end
+        await asyncio.sleep(0.2)
+        await real_drain(run, workers)
+
+    monkeypatch.setattr(pipeline, "_drain", drain)
+    with pytest.raises(stop.DownloadsStopped):
+        harness.run()
+    assert not [line for line in log.said.get("warning", []) if "ended on an error" in line]
 
 
 def test_a_failed_run_does_not_keep_its_walls_as_finished(harness):
