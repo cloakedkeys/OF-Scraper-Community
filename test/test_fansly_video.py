@@ -5,6 +5,7 @@ was captured, so the ones used here are written by the tests.
 """
 
 import asyncio
+import errno
 import contextlib
 import copy
 import json
@@ -1283,8 +1284,13 @@ def test_downloading_a_silent_video_again_replaces_it_only_with_sound(
 
 
 @needs_ffmpeg
+@pytest.mark.parametrize("error", [
+    PermissionError("the file is in use"),
+    OSError(errno.ENOSPC, "No space left on device"),
+    FileNotFoundError("the drive is gone"),
+], ids=["in-use", "disk-full", "drive-gone"])
 def test_the_silent_copy_stays_until_the_copy_with_sound_replaces_it(
-        env, tmp_path, caplog, sound_marks, monkeypatch):
+        env, tmp_path, caplog, sound_marks, monkeypatch, error):
     old = env.out / "saved-earlier.mp4"
     old.write_bytes(b"silent copy")
     seen = []
@@ -1295,7 +1301,7 @@ def test_the_silent_copy_stays_until_the_copy_with_sound_replaces_it(
             return real(src, dst)
         # the new copy is whole beside the silent one, which is still there
         seen.append((pathlib.Path(src).parent == old.parent, old.read_bytes()))
-        raise PermissionError("the file is in use")
+        raise error
 
     def setup(srv, raw, ele, direct_path):
         ele.replace_silent = str(old)

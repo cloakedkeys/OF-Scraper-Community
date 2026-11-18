@@ -1026,9 +1026,10 @@ class FanslyStreamDownloadManager(DownloadManager):
                 path_to_file = await loop.run_in_executor(
                     self.ctx.thread, partial(self._replace_in_place, temp, old)
                 )
-            except PermissionError:
-                # in use or read-only: the next download would end the same
-                ele.not_kept = "the saved copy could not be replaced (in use or read-only)"
+            except OSError as E:
+                # in use, read-only, a full disk, a drive that is gone: the
+                # next download would end the same, so this uses a check
+                ele.not_kept = f"the saved copy could not be replaced ({type(E).__name__})"
                 raise
         else:
             # can end up under another name if a different file already has this one (#48)
