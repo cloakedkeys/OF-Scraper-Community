@@ -508,10 +508,14 @@ async def _fresh_links(run, chunk):
 
 async def _room(run):
     """Wait until the queue has room; stop with the workers' error if every
-    worker has ended (see ``_put``)."""
-    while run.queue.full():
-        if all(task.done() for task in run.workers):
+    worker has ended (see ``_put``). That is checked with room in the queue
+    too: nothing would take the file, and no call for new links is worth
+    making."""
+    while True:
+        if run.workers and all(task.done() for task in run.workers):
             raise WorkersEnded() from _workers_error(run)
+        if not run.queue.full():
+            return
         await asyncio.sleep(ROOM_POLL)
 
 

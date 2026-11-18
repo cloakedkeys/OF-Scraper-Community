@@ -225,6 +225,22 @@ def test_the_scan_stops_with_the_error_when_every_worker_has_ended(harness, answ
         harness.run(collection=Collection(items))
 
 
+def test_no_links_are_fetched_once_every_worker_has_ended(harness, answers, monkeypatch):
+    # one file per call, so the queue has room when the only worker ends
+    monkeypatch.setattr(pipeline.fansly_api, "ACCOUNT_MEDIA_BATCH", 1)
+    items = scanned(5)
+
+    async def die(_):
+        raise RuntimeError("worker broke")
+
+    harness.workers = 1
+    harness.on_download[items[0].id] = die
+    with pytest.raises(RuntimeError, match="worker broke"):
+        harness.run(collection=Collection(items))
+    ended = harness.events.index(f"download {items[0].id}")
+    assert not [e for e in harness.events[ended:] if e.startswith("account/media")]
+
+
 def test_a_worker_that_ends_on_the_last_file_fails_the_run(harness, answers):
     # nothing is left in the queue when it ends: the run must not end as a
     # success with a file undone
