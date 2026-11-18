@@ -192,6 +192,8 @@ PAUSE_WAITS = 2
 # pauses a file waits out, and not for ever, because what the API signs for
 # can change without a sign
 REFUSED_ASKS_KEPT = 300
+# the refresher's clock, apart from the event loop's so a test can move it
+_clock = time.monotonic
 
 
 def _raw(ele):
@@ -495,15 +497,19 @@ class FanslyRefresher:
         ``refused`` and accepted for those in ``accepted``. True when a
         refused range is given up: ``ADDRESS_ASKS`` asks in a row brought
         refused links, each from the API's next address, in this shared call
-        or over several, whatever ranges they were signed for. A range
-        given up before is tried again when it isn't among the refused any
-        more."""
+        or over several, whatever ranges they were signed for.
+
+        A range stays given up while that row of refused asks goes on: an
+        ask that doesn't bring it leaves it given up. It is tried again
+        when new links are accepted, or when it isn't among the refused of
+        an ask after the count started again (``forget_asks``, or
+        ``REFUSED_ASKS_KEPT`` seconds without a refused ask)."""
         if not refused:
             if accepted:
                 self.forget_asks()
                 self._given_up.clear()
             return False
-        now = time.monotonic()
+        now = _clock()
         if now - self._refused_at > REFUSED_ASKS_KEPT:
             self.forget_asks()
         self._refused_asks += 1
@@ -543,7 +549,7 @@ class FanslyRefresher:
         problem = await self._shielded(ele, link, before)
         if problem == FETCH_AHEAD_OFF and self._pauses <= PAUSE_WAITS:
             # this file's link is refused until a shared call works
-            await asyncio.sleep(max(0.0, self._paused_until - time.monotonic()) + 0.1)
+            await asyncio.sleep(max(0.0, self._paused_until - _clock()) + 0.1)
             problem = await self._shielded(ele, link, before)
         return problem
 
@@ -590,7 +596,7 @@ class FanslyRefresher:
             signed_for = address.link_range(link or ele.url)
             if signed_for in self._given_up:
                 return GIVEN_UP
-            if time.monotonic() < self._paused_until:
+            if _clock() < self._paused_until:
                 return FETCH_AHEAD_OFF
             batch = {str(first): [ele]}
             for item in self._waiting.values():
@@ -608,7 +614,7 @@ class FanslyRefresher:
                 except Exception as E:
                     self._failures += 1
                     if self._failures >= CALL_FAILURES:
-                        self._paused_until = time.monotonic() + FETCH_AHEAD_PAUSE
+                        self._paused_until = _clock() + FETCH_AHEAD_PAUSE
                         self._pauses += 1
                         log.info(
                             "Fetching Fansly links ahead keeps failing. "

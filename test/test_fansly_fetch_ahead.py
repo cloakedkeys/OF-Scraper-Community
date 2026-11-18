@@ -278,7 +278,7 @@ def test_after_failed_shared_calls_in_a_row_files_ask_on_their_own(fansly):
 def test_fetching_ahead_starts_again_after_its_pause(fansly, monkeypatch):
     # a burst of rate limiting early in the run, an address change later
     clock = SimpleNamespace(now=1000.0)
-    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(refresh, "_clock", lambda: clock.now)
     items = waiting(8)
     fansly.error = RuntimeError("429")
 
@@ -300,7 +300,7 @@ def test_fetching_ahead_starts_again_after_its_pause(fansly, monkeypatch):
 
 def test_one_more_failed_call_after_the_pause_pauses_again(fansly, monkeypatch):
     clock = SimpleNamespace(now=1000.0)
-    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(refresh, "_clock", lambda: clock.now)
     items = waiting(8)
     fansly.error = RuntimeError("429")
 
@@ -458,7 +458,7 @@ def test_files_wait_for_the_end_of_a_pause_then_share_a_call(fansly, monkeypatch
         clock.now += seconds
         await real_sleep(0)
 
-    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(refresh, "_clock", lambda: clock.now)
     monkeypatch.setattr(refresh.asyncio, "sleep", sleep)
     monkeypatch.setattr(refresh, "PAUSE_WAITS", 1, raising=False)
     items = waiting(9)

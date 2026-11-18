@@ -340,7 +340,7 @@ def test_files_wait_out_a_burst_of_failed_calls_instead_of_failing(world, monkey
         clock.now += seconds
         await real_sleep(0)
 
-    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(refresh, "_clock", lambda: clock.now)
     monkeypatch.setattr(refresh.asyncio, "sleep", sleep)
     monkeypatch.setattr(refresh, "PAUSE_WAITS", 2, raising=False)
     s = world.session = Session(lambda n: account_media(n, NEW, "new"), cdn_refused={OLD})
@@ -503,7 +503,7 @@ def four_refused_asks_and_a_failed_one(s):
 
 def test_refused_asks_are_counted_only_for_a_while(world, monkeypatch):
     clock = SimpleNamespace(now=1000.0)
-    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(refresh, "_clock", lambda: clock.now)
     s = world.session = Session(None, cdn_refused={OLD})
     phase = SimpleNamespace(later=None)
     # much later, the API address four moves on signs for the right range
@@ -552,6 +552,36 @@ def test_an_address_change_starts_the_count_of_refused_asks_again(world):
         return out
 
     assert asyncio.run(go()) == [False] + [True] * 20
+
+
+def test_an_address_change_a_files_own_link_shows_starts_the_count_again(world):
+    # no link of the range the later files are signed for was tried, so
+    # the first of them asks on its own and its new link shows the change
+    s = world.session = Session(None, cdn_refused={OLD})
+    phase = SimpleNamespace(calls=None)
+
+    def signed_for(s):
+        if phase.calls is None:
+            return OLD
+        # that file's own ask, then only the fifth shared ask, are signed
+        # for the address downloads leave from now
+        return NEW if 1 < len(s.api_calls) - phase.calls <= 5 else THIRD
+
+    s.answer = new_signature(s, signed_for)
+    four_refused_asks_and_a_failed_one(s)
+    items = queue(1) + queue(20, start=1, signed_for=NEW)
+
+    async def go():
+        refused, out = [], []
+        for number, ele in enumerate(items):
+            if number == 1:
+                phase.calls = len(s.api_calls)
+                s.cdn_refused = {OLD, NEW}
+            out.append(await download(s, ele, refused))
+        return out
+
+    assert asyncio.run(go()) == [False] + [True] * 20
+    assert [len(call) for call in s.api_calls[phase.calls:]] == [1] + [19] * 5
 
 
 def test_a_shared_call_that_fails_twice_is_made_again_for_the_next_file(world):
