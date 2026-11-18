@@ -186,7 +186,8 @@ class _Run:
         self.media = []  # every media queued, in order
         self.offered = set()  # post ids whose media was selected
         self.finished = []  # areas whose scan reached its end
-        self.scanned = {}  # downloaded area -> (newest post id, scanned to the last page)
+        # downloaded area -> (newest post id, oldest post id, scanned to the last page)
+        self.scanned = {}
         self.labels = {}  # label id -> label dict with its posts
         self.current = {}  # worker task -> the media it is downloading
         self.rows = set()  # media keys whose row is written this run
@@ -396,7 +397,7 @@ async def _take_page(run, area, posts, download, number):
 @free.space_checker
 async def _scan_area(run, area, download, early_stop=None):
     number = 0
-    newest = None
+    newest = oldest = None
     full = True
     async with contextlib.aclosing(PAGES[area](run)) as pages:
         async for posts in pages:
@@ -405,6 +406,10 @@ async def _scan_area(run, area, download, early_stop=None):
             ids = [p.id for p in posts]
             newest = max(
                 (i for i in (newest, incremental.newest_id(ids)) if i is not None),
+                default=None,
+            )
+            oldest = min(
+                (i for i in (oldest, incremental.oldest_id(ids)) if i is not None),
                 default=None,
             )
             if early_stop and early_stop.after_page(ids):
@@ -420,7 +425,7 @@ async def _scan_area(run, area, download, early_stop=None):
     run.finished.append(area)
     if download:
         # only a scan whose files are downloaded may mark the area
-        run.scanned[area] = (newest, full)
+        run.scanned[area] = (newest, oldest, full)
 
 
 @stop.fetching
@@ -653,8 +658,8 @@ async def _commit(run):
                 set_after_checks(run.model_id, area)
         # the scan reached its end and every download ran: a later run may
         # stop where this one began
-        for area, (newest, full) in run.scanned.items():
-            incremental.record(run.ele, area, newest, full)
+        for area, (newest, oldest, full) in run.scanned.items():
+            incremental.record(run.ele, area, newest, full, oldest=oldest)
         if run.labels:
             update_check(list(run.labels.values()), run.model_id, None, labels_api.API)
         await post_area.clean_stray_media(run.username, run.model_id, run.collection)
