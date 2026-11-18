@@ -6,7 +6,8 @@ unless ``--after`` was given, at the API's limit of about one call every
 time (paging relies on it: ``before=<last id>``).
 
 Each area keeps a mark in the profile cache: the newest post id its last
-scan saw, written only by a page-by-page download (``pipeline``) whose scan
+scan saw and the oldest one its last full scan saw, written only by a
+page-by-page download (``pipeline``) whose scan
 of that area ran to its end and whose downloads all ran (the run wasn't
 stopped). Rows in the database aren't proof of that: a labels-only run or
 an interrupted scan-first run writes post rows for an area it never scanned
@@ -22,10 +23,13 @@ that page. A full scan happens when any of these is true (``early_stop_for``):
   downloads off, the full-scan flag from an earlier ``--after`` run,
   ``--retry-permanent-skips``;
 - ``--post-id`` or ``--force-all``;
-- the database doesn't have the mark's newest post. The mark is kept in the
-  profile cache, so it outlives a database that was reset, restored or moved;
-  such a mark is dropped at once (before the scan writes any row, or a scan
-  stopped after its first page would make it look right again);
+- the database doesn't have both the mark's newest post and the oldest post
+  of the last full scan. The mark is kept in the profile cache, so it
+  outlives a database that was reset, restored or moved; such a mark is
+  dropped at once (before the scan writes any row, or a scan stopped after
+  its first page would make it look right again). Both ends are asked for
+  because another kind of run (``manual``, a purchased-only run, a
+  scan-first run) can write the newest post back on its own;
 - the account's access to the creator changed (subscribed, following, tier),
   so older locked posts may now be viewable;
 - the last full scan of the area is more than ``FANSLY_FULL_SCAN_DAYS`` days
@@ -88,10 +92,16 @@ def newest_id(page_ids):
     return max(ids) if ids else None
 
 
-def record(ele, area, newest, full, now=None):
+def oldest_id(page_ids):
+    ids = _ids(page_ids)
+    return min(ids) if ids else None
+
+
+def record(ele, area, newest, full, now=None, oldest=None):
     """Write the area's mark after its scan ran to its end in a run that
-    wasn't stopped. ``newest`` is the newest post id the scan saw, ``full``
-    whether it went to the last page rather than stopping early."""
+    wasn't stopped. ``newest`` and ``oldest`` are the newest and the oldest
+    post id the scan saw, ``full`` whether it went to the last page rather
+    than stopping early. Only a full scan's ``oldest`` is kept."""
     if area not in AREAS:
         return
     s = settings.get_settings()
@@ -107,11 +117,18 @@ def record(ele, area, newest, full, now=None):
     newest = max(
         (i for i in (_int(newest), _int(old.get("newest"))) if i is not None), default=None
     )
-    if newest is None:
+    oldest = _int(oldest) if full else _int(old.get("oldest"))
+    if newest is None or oldest is None:
         return
     cache.set(
         mark_key(ele.id, area),
-        {"newest": newest, "at": now, "full_at": full_at, "access": access(ele)},
+        {
+            "newest": newest,
+            "oldest": oldest,
+            "at": now,
+            "full_at": full_at,
+            "access": access(ele),
+        },
     )
 
 
@@ -161,13 +178,13 @@ async def early_stop_for(ele, area, now=None):
     own = set()
     if isinstance(mark, dict) and _int(mark.get("newest")) is not None:
         own = _ids(await AREA_IDS[area](model_id=ele.id, username=ele.name))
-        if _int(mark["newest"]) not in own:
+        if not {_int(mark["newest"]), _int(mark.get("oldest"))} <= own:
             # checked whatever else decides this run: the scan about to start
             # writes rows that would make a later check pass
             cache.set(key, None)
             log.debug(
-                f"{area}: scanning fully: the database doesn't have the last "
-                "scan's newest post"
+                f"{area}: scanning fully: the database doesn't have the newest "
+                "and the oldest post of the last scans"
             )
             return None
     reason = _full_scan_reason(ele, area, mark, now)
