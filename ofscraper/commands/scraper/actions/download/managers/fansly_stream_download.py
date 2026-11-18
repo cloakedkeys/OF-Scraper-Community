@@ -855,7 +855,8 @@ class FanslyStreamDownloadManager(DownloadManager):
 
     async def _replace_silent(self, temp, ele):
         """Downloading a silent video again (see ``silent.recheck``): keep the
-        new copy only if it has sound, then make room for it."""
+        new copy only if it has sound. ``_finish`` puts it in the silent
+        copy's place."""
         old = getattr(ele, "replace_silent", None)
         if not old:
             return
@@ -863,8 +864,23 @@ class FanslyStreamDownloadManager(DownloadManager):
         if getattr(self, "audio_refused", None) or not (
             ffprobe and await self._probe(_has_packets, ffprobe, temp, "a:0")
         ):
+            # silent.recheck counts this as refused again
+            ele.still_silent = True
             raise Exception("still without sound; the saved copy is kept")
-        await self._probe(lambda: pathlib.Path(old).unlink(missing_ok=True))
+
+    def _replace_in_place(self, temp, old):
+        """Move ``temp`` next to the silent copy at ``old``, then replace it in
+        one step (``os.replace``): the silent copy stays until the new one is
+        whole beside it."""
+        old = pathlib.Path(old)
+        beside = old.with_name(old.name + ".sound.part")
+        try:
+            shutil.move(str(temp), str(beside))
+            os.replace(beside, old)
+        except BaseException:
+            beside.unlink(missing_ok=True)
+            raise
+        return old
 
     async def _remember_sound(self, model_id, ele, path_to_file):
         """Flag a video saved silent because its audio was refused, so its
@@ -888,6 +904,10 @@ class FanslyStreamDownloadManager(DownloadManager):
             return silent.GONE
         try:
             url, audio_url = await self._stream_urls(c, best)
+        except Exception:
+            # the master playlist itself: says nothing about the audio
+            return silent.FAILED
+        try:
             if best.kind == fansly_video.DASH:
                 tracks = fansly_video.local_dash(
                     await self._fetch_text(c, url, best.cookies), url
@@ -933,11 +953,18 @@ class FanslyStreamDownloadManager(DownloadManager):
 
     async def _finish(self, temp, placeholderObj, ele, username, model_id, total):
         loop = asyncio.get_event_loop()
-        # can end up under another name if a different file already has this one (#48)
-        path_to_file = await loop.run_in_executor(
-            self.ctx.thread,
-            partial(common_paths.moveHelper, temp, placeholderObj.trunicated_filepath, ele),
-        )
+        old = getattr(ele, "replace_silent", None)
+        if old:
+            # a silent copy downloaded again with sound takes its place
+            path_to_file = await loop.run_in_executor(
+                self.ctx.thread, partial(self._replace_in_place, temp, old)
+            )
+        else:
+            # can end up under another name if a different file already has this one (#48)
+            path_to_file = await loop.run_in_executor(
+                self.ctx.thread,
+                partial(common_paths.moveHelper, temp, placeholderObj.trunicated_filepath, ele),
+            )
         common_paths.addGlobalDir(path_to_file.parent, self.ctx.dirSet)
         if ele.postdate:
             await loop.run_in_executor(

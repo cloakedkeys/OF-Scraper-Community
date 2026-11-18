@@ -7,6 +7,8 @@ download are faked, and the profile cache is a dict.
 """
 
 import asyncio
+import threading
+import time
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -14,22 +16,39 @@ import pytest
 
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.utils.settings as settings
+from ofscraper.commands.scraper.actions.download import stop
 from ofscraper.commands.scraper.actions.download.utils import silent
+from ofscraper.sites.fansly import normalize
 
 MODEL = 100000000000000002
 
 
-def make_ele(n):
+def raw_post(n, kind="post"):
+    out = {"id": 3000 + n, "text": "", "createdAt": "2026-01-02T03:04:05+00:00",
+           "postedAt": "2026-01-02T03:04:05+00:00", "price": 0, "isOpened": True,
+           "responseType": kind, "hashtags": []}
+    if kind == "message":
+        out.update(fromUser={"id": MODEL}, groupId="77")
+    return out
+
+
+def make_ele(n, kind="post", area=None):
+    post = SimpleNamespace(_post={**raw_post(n, kind), "media": [{"id": 2000 + n}]},
+                           _responsetype=area, _label=None, _purchased=False)
     return SimpleNamespace(
         id=2000 + n,
         post_id=3000 + n,
-        media={"fansly": {"accountMediaId": str(1000 + n), "media": {"id": str(2000 + n)}}},
+        media={"fansly": {"accountMediaId": str(1000 + n), "media": {"id": str(2000 + n)},
+                          "isPreview": False}},
         replace_silent=None,
+        _post=post,
     )
 
 
 def answer(n):
-    return {"id": str(1000 + n), "media": {"id": str(2000 + n), "variants": [{}]}}
+    return {"id": str(1000 + n), "access": True,
+            "media": {"id": str(2000 + n), "mimetype": "video/mp4", "variants": [{}],
+                      "locations": [{"locationId": "1", "location": "https://cdn.test/v.mp4"}]}}
 
 
 @pytest.fixture
@@ -38,6 +57,7 @@ def run(monkeypatch):
     state = SimpleNamespace(
         store=store, asked=[], checks=[], downloads=[], verdict=silent.REFUSED,
         saved=True, api_error=None, answers=None, mediatypes=["Images", "Videos"],
+        posts=None, posts_error=None, posts_asked=[], on_download=None,
     )
 
     def get(key, default=None):
@@ -65,7 +85,15 @@ def run(monkeypatch):
 
     async def download(c, ele):
         state.downloads.append((ele.id, ele.replace_silent))
+        if state.on_download:
+            await state.on_download(ele)
         return state.saved
+
+    async def posts_by_id(c, ids):
+        state.posts_asked.append(list(ids))
+        if state.posts_error:
+            raise state.posts_error
+        return state.posts or []
 
     real = settings.get_settings()
     monkeypatch.setattr(
@@ -76,6 +104,7 @@ def run(monkeypatch):
     monkeypatch.setattr(silent.cache, "get", get)
     monkeypatch.setattr(silent.cache, "set", set_)
     monkeypatch.setattr(silent.fansly_api, "account_media", account_media)
+    monkeypatch.setattr(silent.fansly_api, "posts_by_id", posts_by_id)
     monkeypatch.setattr(
         silent.manager, "Manager",
         SimpleNamespace(session=SimpleNamespace(aget_ofsession=session)),
@@ -110,12 +139,22 @@ def test_accepted_audio_downloads_again_in_replace_mode_and_drops_the_flag(run):
     assert silent.flags(MODEL) == {}
 
 
-def test_a_failed_download_again_keeps_the_flag_and_uses_a_check(run):
+def test_a_failed_download_again_keeps_the_flag_and_uses_no_check(run):
+    # download() answers ("skipped", 0) for a network or disk failure
     ele = make_ele(0)
     silent.flag(MODEL, ele, "out/video.mp4")
     run.verdict, run.saved = silent.ACCEPTED, False
+    for _ in range(silent.limit() + 1):
+        run.once([ele])
+    assert len(run.downloads) == silent.limit() + 1
+    assert silent.flags(MODEL)["2000"]["checks"] == 0
+
+
+def test_a_new_copy_still_without_sound_uses_a_check(run):
+    ele = make_ele(0)
+    silent.flag(MODEL, ele, "out/video.mp4")
+    run.verdict, run.saved = silent.ACCEPTED, silent.REFUSED
     run.once([ele])
-    assert len(run.downloads) == 1
     assert silent.flags(MODEL)["2000"]["checks"] == 1
 
 
@@ -171,12 +210,100 @@ def test_one_call_fetches_links_for_every_flagged_video(run):
     assert sorted(run.checks) == ["2000", "2001", "2002"]
 
 
-def test_accepted_audio_for_a_video_not_in_this_run_waits_without_using_a_check(run):
+def test_a_timeline_video_this_run_did_not_scan_is_built_from_its_post(run):
+    # an early stop: the old post isn't scanned, so it is fetched by id
     silent.flag(MODEL, make_ele(0), "out/video.mp4")
     run.verdict = silent.ACCEPTED
+    run.posts = [{**raw_post(0), "media": normalize.media_for(answer(0))}]
+    run.once([])
+    assert run.posts_asked == [["3000"]]
+    assert run.downloads == [(2000, "out/video.mp4")]
+    assert silent.flags(MODEL) == {}
+
+
+def test_a_message_video_this_run_did_not_scan_is_built_from_its_flag(run, monkeypatch):
+    built = []
+    real = silent.posts_.Post
+
+    def post(*args, **kwargs):
+        found = real(*args, **kwargs)
+        built.append(found)
+        return found
+
+    monkeypatch.setattr(silent.posts_, "Post", post)
+    silent.flag(MODEL, make_ele(0, kind="message"), "out/video.mp4")
+    run.verdict = silent.ACCEPTED
+    run.once([])
+    # no call fetches one message: the copy kept in the flag and the fresh links
+    assert run.posts_asked == []
+    assert run.downloads == [(2000, "out/video.mp4")]
+    assert built[0].responsetype == "Messages" and built[0].id == 3000
+    assert silent.flags(MODEL) == {}
+
+
+@pytest.mark.parametrize("case, checks", [("gone", 1), ("fetch failed", 0)])
+def test_a_post_that_cannot_be_fetched_downloads_nothing(run, case, checks):
+    silent.flag(MODEL, make_ele(0), "out/video.mp4")
+    run.verdict = silent.ACCEPTED
+    if case == "gone":
+        run.posts = []
+    else:
+        run.posts_error = ConnectionError("reset")
     run.once([])
     assert run.downloads == []
-    assert silent.flags(MODEL)["2000"]["checks"] == 0
+    assert silent.flags(MODEL)["2000"]["checks"] == checks
+
+
+def test_flags_saved_at_once_are_all_kept(run, monkeypatch):
+    real_get = silent.cache.get
+
+    def slow_get(key, default=None):
+        found = real_get(key, default)
+        time.sleep(0.05)
+        return found
+
+    monkeypatch.setattr(silent.cache, "get", slow_get)
+    eles = [make_ele(n) for n in range(4)]
+    threads = [threading.Thread(target=silent.flag, args=(MODEL, e, f"out/{e.id}.mp4"))
+               for e in eles]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(silent.flags(MODEL)) == ["2000", "2001", "2002", "2003"]
+
+
+def test_a_flagged_preview_is_checked_with_its_own_links(run):
+    ele = make_ele(0)
+    ele.media["fansly"]["isPreview"] = True
+    silent.flag(MODEL, ele, "out/p.mp4")
+    run.answers = [{"id": "1000", "media": {"id": "9999", "variants": [{}]},
+                    "preview": {"id": "2000", "variants": [{}]}}]
+    run.once([ele])
+    assert run.checks == ["2000"]
+    assert silent.flags(MODEL)["2000"]["checks"] == 1
+
+
+def test_ctrl_c_stops_the_checks(run):
+    eles = [make_ele(n) for n in range(3)]
+    for ele in eles:
+        silent.flag(MODEL, ele, f"out/{ele.id}.mp4")
+    run.verdict = silent.ACCEPTED
+
+    async def stop_now(ele):
+        stop.request()
+        await asyncio.sleep(30)  # cancelled: it runs inside stop.transfer
+
+    run.on_download = stop_now
+    try:
+        run.once(eles)
+    finally:
+        stop.clear()
+    assert len(run.downloads) == 1
+    # the stopped download uses nothing, the others aren't checked
+    assert len(run.checks) == 1
+    assert all(r["checks"] == 0 for r in silent.flags(MODEL).values())
+    assert len(silent.flags(MODEL)) == 3
 
 
 def test_flagging_again_keeps_the_count_and_clear_removes_it(run):

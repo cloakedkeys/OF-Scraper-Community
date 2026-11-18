@@ -75,8 +75,13 @@ async def downloader(username=None, model_id=None, posts=None, media=None, **kwa
 
 
 async def _download_again(c, ele, model_id=None, username=None):
+    """True: saved again with sound; REFUSED: the new copy still has none;
+    False: the download failed (network, disk), which uses no check."""
+    ele.still_silent = False
     media_type, _ = await download(c, ele, model_id, username)
-    return str(media_type).lower() == "videos"
+    if str(media_type).lower() == "videos":
+        return True
+    return silent.REFUSED if getattr(ele, "still_silent", False) else False
 
 
 @run

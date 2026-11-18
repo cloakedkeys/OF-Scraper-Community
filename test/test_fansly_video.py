@@ -1167,14 +1167,44 @@ def test_downloading_a_silent_video_again_replaces_it_only_with_sound(
     run = refused_audio_download(env, tmp_path, caplog, direct_args=None, setup=setup)
     if sound:
         assert run.result[0] == "Videos"
-        assert not old.exists()
-        assert sorted(s["codec_type"] for s in probe(run.out)["streams"]) == ["audio", "video"]
+        # the copy with sound takes the silent copy's place
+        assert files_in(env.out, env.temp) == [old.name]
+        assert sorted(s["codec_type"] for s in probe(old)["streams"]) == ["audio", "video"]
         assert sound_marks == [("clear", run.ele.id)]
     else:
         assert run.result == ("skipped", 0)
         assert old.read_bytes() == b"silent copy"
         assert files_in(env.out, env.temp) == [old.name]
         assert sound_marks == []
+        # silent.recheck counts this as refused again, not as a failed download
+        assert run.ele.still_silent is True
+
+
+@needs_ffmpeg
+def test_the_silent_copy_stays_until_the_copy_with_sound_replaces_it(
+        env, tmp_path, caplog, sound_marks, monkeypatch):
+    old = env.out / "saved-earlier.mp4"
+    old.write_bytes(b"silent copy")
+    seen = []
+    real = stream_mod.os.replace
+
+    def replace(src, dst):
+        if pathlib.Path(dst) != old:
+            return real(src, dst)
+        # the new copy is whole beside the silent one, which is still there
+        seen.append((pathlib.Path(src).parent == old.parent, old.read_bytes()))
+        raise PermissionError("the file is in use")
+
+    def setup(srv, raw, ele, direct_path):
+        ele.replace_silent = str(old)
+        srv.refuse.clear()
+
+    monkeypatch.setattr(stream_mod.os, "replace", replace)
+    run = refused_audio_download(env, tmp_path, caplog, direct_args=None, setup=setup)
+    assert run.result == ("skipped", 0)
+    assert seen == [(True, b"silent copy")]
+    assert old.read_bytes() == b"silent copy"
+    assert files_in(env.out, env.temp) == [old.name]
 
 
 @needs_ffmpeg
@@ -1183,6 +1213,8 @@ def test_downloading_a_silent_video_again_replaces_it_only_with_sound(
     ("playlist_refused", stream_mod.silent.REFUSED),
     ("file_refused", stream_mod.silent.REFUSED),
     ("file_missing", stream_mod.silent.FAILED),
+    # the master playlist says nothing about the audio: no check is used
+    ("master_refused", stream_mod.silent.FAILED),
 ])
 def test_the_audio_check_asks_for_the_playlist_and_its_first_file(env, tmp_path, case, expected):
     video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
@@ -1198,6 +1230,8 @@ def test_the_audio_check_asks_for_the_playlist_and_its_first_file(env, tmp_path,
             srv.refuse.add(first)
         elif case == "file_missing":
             del srv.files[first]
+        elif case == "master_refused":
+            srv.refuse.add(next(p for p in srv.files if p.startswith(root) and p.count("/") == root.count("/") + 1))
 
         async def go():
             async with ofsession.download_session() as c:
@@ -1207,7 +1241,9 @@ def test_the_audio_check_asks_for_the_playlist_and_its_first_file(env, tmp_path,
         requested = [p for p, _ in srv.seen]
     # two small requests after the master: no video segment is fetched
     assert not any("/r2160/" in p and p.endswith(".ts") for p in requested)
-    if case != "playlist_refused":
+    if case == "master_refused":
+        assert first not in requested
+    elif case != "playlist_refused":
         assert requested.count(first) == 1
 
 
