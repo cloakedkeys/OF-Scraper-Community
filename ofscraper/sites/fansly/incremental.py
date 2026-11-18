@@ -35,7 +35,9 @@ that page. A full scan happens when any of these is true (``early_stop_for``):
 - the last full scan of the area is more than ``FANSLY_FULL_SCAN_DAYS`` days
   old. A post can appear later with an old id (scheduled, unhidden, unlocked
   on its own); no mark can see it, so a periodic full scan bounds how long it
-  can be missed.
+  can be missed;
+- the last full scan is dated in the future: the clock was wrong then, and
+  the mark would otherwise count as fresh until the clock caught up.
 """
 
 import logging
@@ -165,6 +167,8 @@ def _full_scan_reason(ele, area, mark, now):
     full_at = mark.get("full_at")
     if not days or days <= 0 or full_at is None or now - full_at > days * DAY:
         return f"the last full scan is more than {days} days old"
+    if full_at > now:
+        return "the last full scan is dated in the future"
     return None
 
 
