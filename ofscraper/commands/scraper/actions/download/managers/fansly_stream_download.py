@@ -255,8 +255,24 @@ def _frame(times) -> float:
     return steps[len(steps) // 2] if steps else 0.0
 
 
-# audio an MP4 takes as it is (``-c copy``); anything else is not re-encoded
-COPYABLE_AUDIO = {"aac", "mp3", "ac3", "eac3", "alac", "flac", "opus"}
+def _audio_stream(ffprobe, path):
+    """True when ffprobe reads ``path`` and it has an audio stream, False when
+    it reads it and it has none, None when it can't read it (an error page, a
+    cut-off file): then nothing is known about the sound."""
+    out = subprocess.run(
+        [str(ffprobe), "-v", "error", "-show_entries", "stream=codec_type",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True,
+    )
+    kinds = {line.strip().strip(",") for line in out.stdout.split()}
+    if out.returncode != 0 or not kinds:
+        return None
+    return "audio" in kinds
+
+
+# the sound taken from the direct file: AAC, copied as it is (``-c copy``);
+# anything else falls back to the silent copy rather than re-encoding
+COPYABLE_AUDIO = {"aac"}
 # how many frames the direct file's video may differ in length from the
 # stream's before its sound is taken as out of step
 SOUND_FRAMES = 2
@@ -506,70 +522,86 @@ class FanslyStreamDownloadManager(DownloadManager):
 
         The stream is chosen for its larger video; the direct MP4 of the same
         upload usually carries the sound the stream's audio track lacks. The
-        result replaces ``temp`` only if it passes the checks; otherwise
-        ``temp`` stays the silent copy and a warning says why (for a refused
-        track)."""
+        result replaces ``temp`` only if it passes the checks. Anything else,
+        a failure of any kind included (ffmpeg's time limit, an ffprobe
+        error, a locked file, a full disk), keeps ``temp`` as the silent copy,
+        with a warning for a refused track."""
+        joined = temp.with_name(temp.name + ".sound")
+        try:
+            problem = await self._add_direct_sound(
+                c, folder, temp, joined, video_input, dash, deadline, medialog
+            )
+        except Exception as e:
+            problem = f"taking the sound from the direct file failed: {e}"
+        finally:
+            with contextlib.suppress(OSError):
+                joined.unlink(missing_ok=True)
+        if problem:
+            self.ctx.log.info(f"{medialog} {problem}")
+            if getattr(self, "audio_refused", None):
+                self._warn_silent(medialog)
+
+    async def _add_direct_sound(self, c, folder, temp, joined, video_input, dash, deadline,
+                                medialog):
+        """``_sound_from_direct``'s steps. Returns why the sound wasn't added,
+        or None when it was (or the video has no sound to add)."""
         ele = getattr(self, "ele", None)
         raw = fansly_video.raw_media(ele) if ele is not None else None
         ffprobe = get_ffprobe()
         loop = asyncio.get_running_loop()
-        problem = None
-        joined = temp.with_name(temp.name + ".sound")
+        if not (ele.url if ele is not None else None) or not fansly_video.has_direct(raw):
+            return "there is no direct file to take the sound from"
+        if not ffprobe:
+            return "ffprobe is not found to check the direct file's sound"
+        direct = folder / "direct.mp4"
         try:
-            if not (ele.url if ele is not None else None) or not fansly_video.has_direct(raw):
-                problem = "there is no direct file to take the sound from"
-                return
-            if not ffprobe:
-                problem = "ffprobe is not found to check the direct file's sound"
-                return
-            direct = folder / "direct.mp4"
-            try:
-                await self._fetch_direct(c, ele, direct, deadline)
-            except (SegmentError, asyncio.TimeoutError) as e:
-                problem = f"the direct file could not be fetched for its sound: {e}"
-                return
-            if not await self._probe(_has_packets, ffprobe, direct, "a:0"):
-                # evidence the video has no sound at all: nothing was lost
-                self.ctx.log.info(
-                    f"{medialog} the direct file has no sound either; "
-                    "saving the video as it is"
-                )
-                self.audio_refused = None
-                self.audio_inside = False
-                return
-            codec = await self._probe(_codec, ffprobe, direct, "a:0")
-            if codec not in COPYABLE_AUDIO:
-                problem = f"the direct file's sound ({codec or 'unknown'}) can't be copied into MP4"
-                return
-            cmd = fansly_video.local_join_command(
-                get_ffmpeg(), video_input, joined.absolute(), dash=dash,
-                audio_file=direct.name,
-            )
-            try:
-                await self._run_cmd(
-                    cmd, joined, max(1.0, deadline - loop.time()),
-                    "add the direct file's sound", cwd=folder,
-                )
-            except StreamTimeout:
-                raise
-            except Exception as e:
-                problem = str(e)
-                return
-            problem = await self._sound_mismatch(ffprobe, direct, joined, ele)
-            if problem:
-                return
-            joined.replace(temp)
+            await self._fetch_direct(c, ele, direct, deadline)
+        except (SegmentError, asyncio.TimeoutError) as e:
+            return f"the direct file could not be fetched for its sound: {e}"
+        sound = await self._probe(_audio_stream, ffprobe, direct)
+        if sound is None:
+            # an error page or a cut-off file says nothing about the sound
+            return "the direct file could not be read to check its sound"
+        if not sound:
+            # evidence the video has no sound at all: nothing was lost
             self.ctx.log.info(
-                f"{medialog} took the sound from the direct file"
-                + (f" (the CDN refused {self.audio_refused})" if self.audio_refused else "")
+                f"{medialog} the direct file has no sound either; saving the video as it is"
             )
             self.audio_refused = None
-        finally:
-            joined.unlink(missing_ok=True)
-            if problem:
-                self.ctx.log.info(f"{medialog} {problem}")
-                if getattr(self, "audio_refused", None):
-                    self._warn_silent(medialog)
+            self.audio_inside = False
+            return None
+        codec = await self._probe(_codec, ffprobe, direct, "a:0")
+        if codec not in COPYABLE_AUDIO:
+            return f"the direct file's sound is {codec or 'of an unknown kind'}, not AAC"
+        self._check_sound_space(temp, direct)
+        cmd = fansly_video.local_join_command(
+            get_ffmpeg(), video_input, joined.absolute(), dash=dash,
+            audio_file=direct.name,
+        )
+        await self._run_cmd(
+            cmd, joined, max(1.0, deadline - loop.time()),
+            "add the direct file's sound", cwd=folder,
+        )
+        problem = await self._sound_mismatch(ffprobe, direct, joined, ele)
+        if problem:
+            return problem
+        joined.replace(temp)
+        self.ctx.log.info(
+            f"{medialog} took the sound from the direct file"
+            + (f" (the CDN refused {self.audio_refused})" if self.audio_refused else "")
+        )
+        self.audio_refused = None
+        return None
+
+    def _check_sound_space(self, temp, direct):
+        """Fail when the drive can't hold the copy with sound next to ``temp``."""
+        need = temp.stat().st_size + direct.stat().st_size + JOIN_SPACE_MARGIN
+        free = _free_space(pathlib.Path(temp).parent)
+        if free < need:
+            raise NotEnoughSpace(
+                f"not enough disk space to add the sound: needs about "
+                f"{format_size(need)}, {format_size(free)} free"
+            )
 
     async def _fetch_direct(self, c, ele, path, deadline):
         """The direct file into ``path``, kept for resume. A signed link the
@@ -594,15 +626,28 @@ class FanslyStreamDownloadManager(DownloadManager):
     async def _sound_mismatch(self, ffprobe, direct, joined, ele):
         """Why the joined copy can't be kept, or None.
 
-        Both files come from one upload and ffmpeg starts each input at zero,
-        so their videos should line up. A trimmed or re-timed rendition would
-        put the sound out of step by the difference in length."""
-        direct_video, joined_video, joined_audio = [
+        Both files come from one upload, so their videos should line up. The
+        sound must keep the start it had against the direct file's video
+        (ffmpeg starts each input at its own first packet, so an offset there
+        would be lost), within one frame. A trimmed or re-timed rendition
+        would put the sound out of step by the difference in length."""
+        direct_video, direct_audio, joined_video, joined_audio = [
             await self._probe(_packet_times, ffprobe, path, stream)
-            for path, stream in ((direct, "v:0"), (joined, "v:0"), (joined, "a:0"))
+            for path, stream in (
+                (direct, "v:0"), (direct, "a:0"), (joined, "v:0"), (joined, "a:0")
+            )
         ]
+        if not (direct_video and direct_audio and joined_video and joined_audio):
+            return "the joined copy could not be measured"
         frame = max(_frame(direct_video), _frame(joined_video))
         margin = SOUND_FRAMES * frame + 0.001
+        direct_offset = min(direct_audio) - min(direct_video)
+        joined_offset = min(joined_audio) - min(joined_video)
+        if abs(joined_offset - direct_offset) > frame + 0.001:
+            return (
+                f"the direct file's sound starts {direct_offset:+.3f}s from its video, "
+                f"but {joined_offset:+.3f}s from the stream's, so it would be out of step"
+            )
         stream_length = fansly_video.timeline(joined_video)[0]
         direct_length = fansly_video.timeline(direct_video)[0]
         if not stream_length or not direct_length:
@@ -612,8 +657,15 @@ class FanslyStreamDownloadManager(DownloadManager):
                 f"the direct file's video ({direct_length:.2f}s) and the stream's "
                 f"({stream_length:.2f}s) differ in length, so the sound would be out of step"
             )
-        if fansly_video.timeline(joined_audio)[0] > stream_length + margin:
+        sound_length = fansly_video.timeline(joined_audio)[0]
+        if sound_length > stream_length + margin:
             return "the direct file's sound is longer than the stream's video"
+        short = max(fansly_video.SHORT_MIN, fansly_video.SHORT_SHARE * stream_length)
+        if sound_length < stream_length - short:
+            return (
+                f"the direct file's sound covers {sound_length:.1f}s of the "
+                f"{stream_length:.1f}s video"
+            )
         reason = fansly_video.incomplete_reason(
             joined_video, joined_audio,
             fansly_video.expected_duration(fansly_video.raw_media(ele)),

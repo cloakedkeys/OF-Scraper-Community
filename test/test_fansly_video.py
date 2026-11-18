@@ -971,6 +971,119 @@ def test_a_copy_with_the_direct_sound_that_fails_the_check_is_discarded(env, tmp
     assert files_in(env.out, env.temp) == [run.out.name]
 
 
+def direct_bytes(tmp_path, *args):
+    """A direct file made by ffmpeg from ``args`` (inputs and options)."""
+    folder = tmp_path / "custom-direct"
+    folder.mkdir(exist_ok=True)
+    out = folder / "direct.mp4"
+    subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *args, str(out)],
+                   check=True)
+    return out.read_bytes()
+
+
+def with_direct(data):
+    def setup(srv, raw, ele, direct_path):
+        srv.files[direct_path] = data
+
+    return setup
+
+
+TEST_VIDEO = ["-f", "lavfi", "-i", "testsrc=size=80x60:rate=10:duration=3"]
+
+
+def sine(seconds):
+    return ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}"]
+
+
+def kinds_of(path):
+    return sorted(s["codec_type"] for s in probe(path)["streams"])
+
+
+def saved_silent_with_warning(run, caplog, why):
+    assert run.result[0] == "Videos" and run.result[1] > 0
+    assert kinds_of(run.out) == ["video"]
+    assert why in caplog.text
+    # the refusal warning: the later re-check (silent.py) looks for it
+    assert "without sound" in warnings_in(caplog)
+
+
+@needs_ffmpeg
+def test_a_direct_file_that_cannot_be_read_is_not_taken_for_silence(env, tmp_path, caplog):
+    # an error page where the file should be says nothing about the sound
+    run = refused_audio_download(
+        env, tmp_path, caplog, setup=with_direct(b"<html>temporarily unavailable</html>")
+    )
+    saved_silent_with_warning(run, caplog, "could not be read to check its sound")
+    assert "has no sound either" not in caplog.text
+
+
+@needs_ffmpeg
+def test_sound_that_starts_elsewhere_against_its_video_is_not_used(env, tmp_path, caplog):
+    # the direct file's video starts 0.5 s after its sound: same lengths
+    data = direct_bytes(tmp_path, "-itsoffset", "0.5", *TEST_VIDEO, *sine(3),
+                        "-c:v", "mpeg4", "-g", "10", "-c:a", "aac")
+    run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(data))
+    saved_silent_with_warning(run, caplog, "out of step")
+
+
+@needs_ffmpeg
+def test_sound_that_is_not_aac_is_not_used(env, tmp_path, caplog):
+    data = direct_bytes(tmp_path, *TEST_VIDEO, *sine(3), "-c:v", "mpeg4", "-g", "10",
+                        "-c:a", "mp3", "-shortest")
+    run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(data))
+    saved_silent_with_warning(run, caplog, "is mp3, not AAC")
+
+
+@needs_ffmpeg
+def test_sound_that_covers_part_of_the_video_is_not_used(env, tmp_path, caplog):
+    data = direct_bytes(tmp_path, *TEST_VIDEO, *sine(1.5), "-c:v", "mpeg4", "-g", "10",
+                        "-c:a", "aac")
+    run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(data))
+    saved_silent_with_warning(run, caplog, "covers 1.")
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("failure", ["time limit", "ffprobe error", "disk full", "locked file"])
+def test_any_failure_while_adding_the_sound_saves_the_silent_copy(
+    env, tmp_path, caplog, monkeypatch, failure
+):
+    if failure == "time limit":
+        real = stream_mod.FanslyStreamDownloadManager._run_cmd
+
+        async def run_cmd(self, cmd, temp, timeout, what, cwd=None):
+            if what == "add the direct file's sound":
+                raise stream_mod.StreamTimeout("ffmpeg ran longer than 1s and was stopped")
+            return await real(self, cmd, temp, timeout, what, cwd=cwd)
+
+        monkeypatch.setattr(stream_mod.FanslyStreamDownloadManager, "_run_cmd", run_cmd)
+        why = "ran longer"
+    elif failure == "ffprobe error":
+        async def broken(*a, **k):
+            raise subprocess.CalledProcessError(1, "ffprobe")
+
+        monkeypatch.setattr(stream_mod.FanslyStreamDownloadManager, "_sound_mismatch", broken)
+        why = "returned non-zero exit status"
+    elif failure == "disk full":
+        def check(self, temp, direct):
+            raise stream_mod.NotEnoughSpace("not enough disk space to add the sound")
+
+        monkeypatch.setattr(stream_mod.FanslyStreamDownloadManager, "_check_sound_space", check)
+        why = "not enough disk space to add the sound"
+    else:
+        real_replace = pathlib.Path.replace
+
+        def replace(self, target):
+            if self.name.endswith(".sound"):
+                raise PermissionError("the file is in use")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(pathlib.Path, "replace", replace)
+        why = "the file is in use"
+    run = refused_audio_download(env, tmp_path, caplog)
+    saved_silent_with_warning(run, caplog, why)
+    assert files_in(env.out, env.temp) == [run.out.name]
+
+
 @needs_ffmpeg
 def test_segments_without_their_listed_sound_take_it_from_the_direct_file(env, tmp_path, caplog):
     segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
