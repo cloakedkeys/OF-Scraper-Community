@@ -177,12 +177,15 @@ def _fansly_signatures(raw):
 SAME_LINK = "Fansly gave the same link again"
 THIS_FILE_ONLY = "the CDN accepts another link signed for the same address"
 GIVEN_UP = "Fansly keeps signing links for an address the CDN refuses"
-FETCH_AHEAD_OFF = "fetching links ahead failed too often in this run"
+FETCH_AHEAD_OFF = "fetching links ahead is paused after failed calls"
 # shared calls in a row whose new links for a range were refused, before the
 # files signed for it ask on their own
 RANGE_TRIES = 2
-# failed shared calls in a row before the run stops fetching links ahead
+# failed shared calls in a row before fetching links ahead pauses, and for
+# how many seconds. A pause, not the rest of the run: a burst of rate
+# limiting is over in a minute, and an address change may come much later
 CALL_FAILURES = 3
+FETCH_AHEAD_PAUSE = 120
 
 
 def _raw(ele):
@@ -312,9 +315,10 @@ class FanslyRefresher:
 
     One 403 is not proof that a range is dead: a deleted file answers 403
     too. So before a range is marked refused (``address.refused``), one other
-    waiting link signed for it is tried on the CDN (one byte), from another
-    post when there is one: the files of a deleted post wait side by side.
-    If the CDN accepts it, only this file gets a new link, on its own.
+    waiting link signed for it is tried on the CDN (one byte). It must come
+    from another post: the files of a deleted post wait side by side and are
+    all refused. If the CDN accepts it, or only files of the same post are
+    waiting, only this file gets a new link, on its own.
 
     The shared call asks once and judges the answer itself (``_judge``). A
     link Fansly gave again unchanged (it keeps a link for a while) says
@@ -326,9 +330,10 @@ class FanslyRefresher:
     (#536): its next address is tried and the call made once more. So a
     shared call is at most two API calls.
 
-    It gives up, and leaves the files to the per-file asks, for a range
-    whose new links were still refused ``RANGE_TRIES`` shared calls in a row,
-    and for the run after ``CALL_FAILURES`` failed shared calls in a row.
+    It leaves the files to the per-file asks for a range whose new links
+    were still refused ``RANGE_TRIES`` shared calls in a row, and for
+    ``FETCH_AHEAD_PAUSE`` seconds after ``CALL_FAILURES`` failed shared calls
+    in a row (then one more failed call pauses it again).
 
     Items are added with ``expect`` and removed with ``done``; one call runs
     at a time.
@@ -340,8 +345,9 @@ class FanslyRefresher:
         self._stale = {}
         # range -> shared calls in a row whose new links for it were refused
         self._still_refused = {}
-        # failed shared calls in a row
+        # failed shared calls in a row, and until when no shared call is made
         self._failures = 0
+        self._paused_until = 0
         self._lock = None
         self._loop = None
 
@@ -350,6 +356,7 @@ class FanslyRefresher:
         self._stale.clear()
         self._still_refused.clear()
         self._failures = 0
+        self._paused_until = 0
 
     def expect(self, items):
         """Items about to be downloaded, in download order."""
@@ -363,8 +370,8 @@ class FanslyRefresher:
 
     async def _range_refused(self, ele, link):
         """(whether the range ``link`` is signed for is refused, the other
-        link that was tried): one other waiting link signed for it is tried
-        on the CDN."""
+        link that was tried): one waiting link of another post signed for it
+        is tried on the CDN. None waiting: not known, so not refused."""
         signed_for = address.link_range(link)
         others = [
             o
@@ -374,11 +381,11 @@ class FanslyRefresher:
             and o.url != link
             and address.link_range(o.url) == signed_for
         ]
-        if not others:
-            return False, None
         post = getattr(ele, "post_id", None)
         apart = [o for o in others if getattr(o, "post_id", None) != post]
-        other = (apart or others)[-1].url
+        if not apart:
+            return False, None
+        other = apart[-1].url
         try:
             async with manager.Manager.session.aget_ofsession() as c:
                 return await address.cdn_refuses(c, other) is True, other
@@ -517,7 +524,7 @@ class FanslyRefresher:
             signed_for = address.link_range(link or ele.url)
             if self._still_refused.get(signed_for, 0) >= RANGE_TRIES:
                 return GIVEN_UP
-            if self._failures >= CALL_FAILURES:
+            if time.monotonic() < self._paused_until:
                 return FETCH_AHEAD_OFF
             batch = {str(first): [ele]}
             for item in self._waiting.values():
@@ -534,11 +541,12 @@ class FanslyRefresher:
                     found = await self._call(list(batch))
                 except Exception as E:
                     self._failures += 1
-                    if self._failures == CALL_FAILURES:
+                    if self._failures >= CALL_FAILURES:
+                        self._paused_until = time.monotonic() + FETCH_AHEAD_PAUSE
                         log.info(
-                            "Fetching Fansly links ahead failed "
-                            f"{CALL_FAILURES} times in a row. Asking for each "
-                            "file's link on its own for the rest of the run"
+                            "Fetching Fansly links ahead keeps failing. Asking "
+                            "for each file's link on its own for the next "
+                            f"{FETCH_AHEAD_PAUSE} seconds"
                         )
                     if got_new:
                         break

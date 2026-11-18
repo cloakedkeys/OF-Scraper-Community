@@ -233,6 +233,20 @@ def test_the_files_of_one_deleted_post_are_not_taken_for_a_dead_range(world):
     assert not address.is_refused(rest[0].url)
 
 
+def test_a_deleted_post_with_nothing_else_waiting_marks_no_range(world):
+    # only the post's own files are waiting: none of them can show that the
+    # range is refused
+    s = world.session = Session(None, deleted={"0.png", "1.png", "2.png"})
+    s.answer = new_signature(s, lambda s: OLD)
+    gone = [make_ele(n, post=7000) for n in range(3)]
+    refresh.fansly_refresher.expect(gone)
+    results, _ = run(s, gone)
+    assert results == [False] * 3
+    assert shared(s) == []
+    assert not address.is_refused(gone[0].url)
+    assert s.dns_cleared == 0 and address._steered == {}
+
+
 def test_a_range_marked_wrongly_costs_one_shared_call_and_is_cleared(world):
     # the file tried to confirm the refusal (the last waiting) is deleted too
     s = world.session = Session(None, deleted={"0.png", "39.png"})

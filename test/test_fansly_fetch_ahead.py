@@ -136,7 +136,8 @@ def fansly(monkeypatch):
 
 
 def waiting(count, **kwargs):
-    items = [make_ele(n, **kwargs) for n in range(count)]
+    # each file in a post of its own
+    items = [make_ele(n, **{"post": 100000000000000100 + n, **kwargs}) for n in range(count)]
     refresh.fansly_refresher.expect(items)
     return items
 
@@ -262,6 +263,47 @@ def test_after_failed_shared_calls_in_a_row_files_ask_on_their_own(fansly):
     assert asyncio.run(refused([following])) == [True]
     assert fansly.calls == [[following.media["fansly"]["accountMediaId"]]]
     assert address._range(items[-1].url) == OLD
+
+
+def test_fetching_ahead_starts_again_after_its_pause(fansly, monkeypatch):
+    # a burst of rate limiting early in the run, an address change later
+    clock = SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    items = waiting(8)
+    fansly.error = RuntimeError("429")
+
+    async def refused(some):
+        return [await refresh.refresh_media_link(ele, link=ele.url) for ele in some]
+
+    asyncio.run(refused(items[: refresh.CALL_FAILURES]))
+    fansly.error = None
+    fansly.calls.clear()
+    clock.now += refresh.FETCH_AHEAD_PAUSE - 1
+    asyncio.run(refresh.fresh_before_download(items[3]))
+    assert fansly.calls == []
+    clock.now += 2
+    # one shared call for every file still waiting
+    asyncio.run(refresh.fresh_before_download(items[3]))
+    assert len(fansly.calls) == 1 and len(fansly.calls[0]) == 8
+    assert {address._range(ele.url) for ele in items} == {NEW}
+
+
+def test_one_more_failed_call_after_the_pause_pauses_again(fansly, monkeypatch):
+    clock = SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    items = waiting(8)
+    fansly.error = RuntimeError("429")
+
+    async def refused(some):
+        return [await refresh.refresh_media_link(ele, link=ele.url) for ele in some]
+
+    asyncio.run(refused(items[: refresh.CALL_FAILURES]))
+    clock.now += refresh.FETCH_AHEAD_PAUSE + 1
+    fansly.calls.clear()
+    asyncio.run(refresh.fresh_before_download(items[3]))
+    assert len(fansly.calls) == 2  # the call and its retry
+    asyncio.run(refresh.fresh_before_download(items[4]))
+    assert len(fansly.calls) == 2
 
 
 def test_a_cancelled_waiter_does_not_cancel_the_call(fansly):
