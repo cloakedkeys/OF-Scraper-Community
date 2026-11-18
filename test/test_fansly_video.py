@@ -855,8 +855,9 @@ def serve_direct(srv, raw, tmp_path, *args, path=None):
 
 
 def refused_audio_download(env, tmp_path, caplog, direct_args=("-s", "80x60"),
-                           refused="segment", setup=None):
-    video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+                           refused="segment", setup=None, video_args=()):
+    video_segments = make_segments(tmp_path, "v", "-an", *video_args,
+                                   "-bsf:v", "dump_extra=freq=keyframe")
     audio_segments = make_segments(tmp_path, "a", "-vn")
     raw = raw_media()
     with Server({}) as srv:
@@ -1024,6 +1025,81 @@ def test_sound_that_starts_elsewhere_against_its_video_is_not_used(env, tmp_path
                         "-c:v", "mpeg4", "-g", "10", "-c:a", "aac")
     run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(data))
     saved_silent_with_warning(run, caplog, "out of step")
+
+
+def has_encoder(name):
+    if not FFMPEG:
+        return False
+    out = subprocess.run([FFMPEG, "-hide_banner", "-encoders"], capture_output=True, text=True)
+    return f" {name} " in out.stdout
+
+
+needs_x264 = pytest.mark.skipif(not has_encoder("libx264"), reason="ffmpeg has no libx264")
+
+
+@needs_ffmpeg
+@needs_x264
+@pytest.mark.parametrize(
+    "direct, stream",
+    [(["-bf", "3"], ["-bf", "0"]), (["-bf", "0"], ["-bf", "3"])],
+    ids=["b-frames-in-the-direct-file", "b-frames-in-the-stream"],
+)
+def test_frames_stored_in_another_order_do_not_read_as_an_offset(
+    env, tmp_path, caplog, direct, stream
+):
+    # B-frames are stored ahead of the frames shown before them, so a stream's
+    # first stored time is earlier than its first shown one, by an amount set
+    # by the encoder's options. The two copies of one upload are encoded
+    # separately; both here are in step.
+    data = direct_bytes(tmp_path, *TEST_VIDEO, *sine(3), "-c:v", "libx264", *direct,
+                        "-g", "10", "-c:a", "aac", "-shortest")
+    run = refused_audio_download(
+        env, tmp_path, caplog, setup=with_direct(data),
+        video_args=("-c:v", "libx264", *stream, "-g", "10"),
+    )
+    assert "out of step" not in caplog.text
+    assert kinds_of(run.out) == ["audio", "video"]
+    assert "without sound" not in warnings_in(caplog)
+
+
+def test_the_wait_for_a_new_direct_link_keeps_to_the_time_limit(monkeypatch, tmp_path):
+    manager = object.__new__(stream_mod.FanslyStreamDownloadManager)
+
+    async def refused(c, url, path, cookies):
+        raise stream_mod.SegmentError("status 403")
+
+    async def never(ele):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(manager, "_fetch_segment", refused, raising=False)
+    monkeypatch.setattr(stream_mod, "_refused", lambda e: True)
+    monkeypatch.setattr(stream_mod, "refresh_media_link", never)
+    ele = SimpleNamespace(url="https://cdn.invalid/direct.mp4")
+
+    async def go():
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with pytest.raises(asyncio.TimeoutError):
+            await manager._fetch_direct(None, ele, tmp_path / "direct.mp4", started + 0.2)
+        return loop.time() - started
+
+    assert asyncio.run(go()) < 5
+
+
+@needs_ffmpeg
+def test_a_sound_copy_left_by_a_killed_run_is_removed(env, tmp_path):
+    video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    audio_segments = make_segments(tmp_path, "a", "-vn")
+    raw = raw_media()
+    with Server({}) as srv:
+        serve_hls(srv, raw, SPLIT_AUDIO_MASTER,
+                  {"r2160": video_segments, "audio": audio_segments})
+        ele = make_ele(raw)
+        left = env.temp / f"{ele.filename}_{ele.id}_{ele.post_id}.part.sound"
+        left.write_bytes(b"half a join")
+        result = download_locally(ele)
+    assert result[0] == "Videos"
+    assert files_in(env.out, env.temp) == [f"{ele.filename}.mp4"]
 
 
 @needs_ffmpeg
