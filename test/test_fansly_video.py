@@ -1281,6 +1281,107 @@ def test_the_silent_copy_stays_until_the_copy_with_sound_replaces_it(
     assert seen == [(True, b"silent copy")]
     assert old.read_bytes() == b"silent copy"
     assert files_in(env.out, env.temp) == [old.name]
+    # silent.recheck counts a check: the next run would end the same way
+    assert "could not be replaced" in run.ele.not_kept
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("skipped_by", ["size", "script", "script-for-good"])
+def test_a_copy_with_sound_that_a_filter_skips_leaves_the_silent_copy_and_its_row(
+        env, tmp_path, caplog, sound_marks, monkeypatch, skipped_by):
+    old = env.out / "saved-earlier.mp4"
+    old.write_bytes(b"silent copy")
+    forced = []
+
+    async def force_download(self, ele, username, model_id, **kw):
+        forced.append(kw)
+
+    async def script(total, ele):
+        return dm.SKIP_PERMANENT if skipped_by == "script-for-good" else True
+
+    monkeypatch.setattr(stream_mod.FanslyStreamDownloadManager, "_force_download", force_download)
+    if skipped_by == "size":
+        env.stub.size_max = 10
+    else:
+        monkeypatch.setattr(dm, "skip_download_script", script)
+
+    def setup(srv, raw, ele, direct_path):
+        ele.replace_silent = str(old)
+        srv.refuse.clear()
+
+    run = refused_audio_download(env, tmp_path, caplog, direct_args=None, setup=setup)
+    assert run.result == ("forced_skipped", 0)
+    assert old.read_bytes() == b"silent copy"
+    assert files_in(env.out, env.temp) == [old.name]
+    # the row keeps the silent copy's file, and its flag stays for the count
+    assert forced == [] and env.marks == [] and sound_marks == []
+    assert "skipped" in run.ele.not_kept
+
+
+@needs_ffmpeg
+def test_a_silent_copy_moved_away_with_its_folder_gets_the_copy_with_sound_there(
+        env, tmp_path, caplog, sound_marks):
+    old = env.out / "moved-away" / "saved-earlier.mp4"
+
+    def setup(srv, raw, ele, direct_path):
+        ele.replace_silent = str(old)
+        srv.refuse.clear()
+
+    run = refused_audio_download(env, tmp_path, caplog, direct_args=None, setup=setup)
+    assert run.result[0] == "Videos"
+    assert sorted(s["codec_type"] for s in probe(old)["streams"]) == ["audio", "video"]
+
+
+def test_the_audio_check_tries_a_file_that_carries_sound():
+    text = (
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-TARGETDURATION:1\n"
+        '#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\n'
+        '#EXT-X-MAP:URI="init.mp4"\n'
+        "#EXTINF:1.0,\nseg-0.m4s\n#EXTINF:1.0,\nseg-1.m4s\n#EXT-X-ENDLIST\n"
+    )
+    files = video.local_playlist(text, "https://cdn.example/audio/media.m3u8", "a").files
+    assert [url.rsplit("/", 1)[1] for url, _ in files[:2]] == ["key.bin", "init.mp4"]
+    assert video.first_media_url(files) == "https://cdn.example/audio/seg-0.m4s"
+    assert video.first_media_url(files[:2]) is None
+
+
+@needs_ffmpeg
+def test_the_audio_check_is_not_answered_by_a_setup_file(env, tmp_path):
+    # the init segment is served, the sound itself is refused
+    video_segments = make_segments(tmp_path, "v", "-an", "-bsf:v", "dump_extra=freq=keyframe")
+    raw = raw_media()
+    playlist = (
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-TARGETDURATION:1\n"
+        '#EXT-X-MAP:URI="init.mp4"\n#EXTINF:1.0,\nseg-0.m4s\n#EXT-X-ENDLIST\n'
+    )
+    with Server({}) as srv:
+        root = serve_hls(srv, raw, SPLIT_AUDIO_MASTER, {"r2160": video_segments})
+        srv.files[f"{root}/audio/media.m3u8"] = playlist.encode()
+        srv.files[f"{root}/audio/init.mp4"] = b"init"
+        srv.files[f"{root}/audio/seg-0.m4s"] = b"sound"
+        srv.refuse.add(f"{root}/audio/seg-0.m4s")
+
+        async def go():
+            async with ofsession.download_session() as c:
+                return await stream_mod.FanslyStreamDownloadManager().audio_check(c, raw["media"])
+
+        assert asyncio.run(go()) == stream_mod.silent.REFUSED
+        requested = [p for p, _ in srv.seen]
+    assert f"{root}/audio/init.mp4" not in requested
+
+
+def test_a_video_saved_from_its_direct_file_needs_no_more_audio_checks(
+        env, monkeypatch, sound_marks):
+    raw = raw_media()
+    url = variant(raw["media"], video.HLS_MIME)["locations"][0]["location"]
+
+    async def main_download(self, c, ele, username, model_id):
+        return "Videos", 10
+
+    monkeypatch.setattr(run_mod.MainDownloadManager, "main_download", main_download)
+    ele = make_ele(raw)
+    assert asyncio.run(run_download(FakeSession({url: EMPTY_MASTER}), ele)) == ("Videos", 10)
+    assert sound_marks == [("clear", ele.id)]
 
 
 @needs_ffmpeg

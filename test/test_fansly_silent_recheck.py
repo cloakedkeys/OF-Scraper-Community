@@ -58,6 +58,7 @@ def run(monkeypatch):
         store=store, asked=[], checks=[], downloads=[], verdict=silent.REFUSED,
         saved=True, api_error=None, answers=None, mediatypes=["Images", "Videos"],
         posts=None, posts_error=None, posts_asked=[], on_download=None,
+        saved_path=None,
     )
 
     def get(key, default=None):
@@ -112,7 +113,11 @@ def run(monkeypatch):
 
     def once(media=()):
         by_id = {str(m.id): m for m in media}
-        asyncio.run(silent.recheck("dl", "a-creator", MODEL, by_id, check_audio, download))
+        asyncio.run(
+            silent.recheck(
+                "dl", "a-creator", MODEL, by_id, check_audio, download, state.saved_path
+            )
+        )
 
     state.once = once
     return state
@@ -156,6 +161,46 @@ def test_a_new_copy_still_without_sound_uses_a_check(run):
     run.verdict, run.saved = silent.ACCEPTED, silent.REFUSED
     run.once([ele])
     assert silent.flags(MODEL)["2000"]["checks"] == 1
+
+
+def test_a_copy_with_sound_that_is_not_kept_uses_a_check(run):
+    # over the size limit, skipped by skip_download_script, or the silent
+    # file can't be replaced: the next run would end the same way
+    ele = make_ele(0)
+    silent.flag(MODEL, ele, "out/video.mp4")
+    run.verdict, run.saved = silent.ACCEPTED, silent.NOT_KEPT
+    for _ in range(silent.limit() + 2):
+        run.once([ele])
+    assert len(run.downloads) == silent.limit()
+    assert silent.flags(MODEL) == {}
+
+
+def test_a_silent_file_that_was_moved_is_found_where_the_database_has_it(run, tmp_path):
+    ele = make_ele(0)
+    flagged, moved = tmp_path / "old" / "video.mp4", tmp_path / "new" / "video.mp4"
+    moved.parent.mkdir()
+    moved.write_bytes(b"silent copy")
+    silent.flag(MODEL, ele, flagged)
+    asked = []
+
+    async def saved_path(item):
+        asked.append(item.id)
+        return moved
+
+    run.verdict, run.saved, run.saved_path = silent.ACCEPTED, False, saved_path
+    run.once([ele])
+    assert run.downloads == [(2000, str(moved))]
+    # a file still at the flag's path is the one replaced
+    flagged.parent.mkdir()
+    flagged.write_bytes(b"silent copy")
+    asked.clear()
+    run.once([ele])
+    assert run.downloads[-1] == (2000, str(flagged)) and asked == []
+    # nowhere: the flag's path, where the copy with sound is then saved
+    flagged.unlink()
+    moved.unlink()
+    run.once([ele])
+    assert run.downloads[-1] == (2000, str(flagged))
 
 
 def test_after_the_last_refused_check_the_flag_goes_and_no_more_checks_run(run, caplog):

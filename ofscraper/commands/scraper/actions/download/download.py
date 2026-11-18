@@ -27,6 +27,7 @@ from ofscraper.commands.scraper.actions.download.managers.fansly_stream_download
     FanslyStreamDownloadManager,
 )
 from ofscraper.commands.scraper.actions.download.utils import silent
+from ofscraper.db.operations_.media import prev_download_media_data
 import ofscraper.sites as sites
 from functools import partial
 from ofscraper.commands.scraper.actions.download import stop
@@ -76,12 +77,30 @@ async def downloader(username=None, model_id=None, posts=None, media=None, **kwa
 
 async def _download_again(c, ele, model_id=None, username=None):
     """True: saved again with sound; REFUSED: the new copy still has none;
-    False: the download failed (network, disk), which uses no check."""
+    NOT_KEPT: it has sound but wasn't kept (a filter skipped it, or the
+    silent file could not be replaced); False: the download failed (network,
+    disk), which uses no check."""
     ele.still_silent = False
+    ele.not_kept = None
     media_type, _ = await download(c, ele, model_id, username)
     if str(media_type).lower() == "videos":
         return True
-    return silent.REFUSED if getattr(ele, "still_silent", False) else False
+    if getattr(ele, "still_silent", False):
+        return silent.REFUSED
+    if getattr(ele, "not_kept", None):
+        logging.getLogger("shared").info(
+            f"Media {ele.id}: {ele.not_kept}; the video without sound stays as it is"
+        )
+        return silent.NOT_KEPT
+    return False
+
+
+async def _saved_path(ele, model_id=None, username=None):
+    """The file the database has for ``ele``, or None."""
+    row = await prev_download_media_data(ele, model_id=model_id, username=username)
+    if row and row.get("directory") and row.get("filename"):
+        return pathlib.Path(row["directory"], row["filename"])
+    return None
 
 
 @run
@@ -100,6 +119,7 @@ async def recheck_silent(username, model_id, all_media):
                 {str(m.id): m for m in all_media or []},
                 FanslyStreamDownloadManager().audio_check,
                 partial(_download_again, model_id=model_id, username=username),
+                partial(_saved_path, model_id=model_id, username=username),
             )
     except Exception as E:
         logging.getLogger("shared").debug(f"Fansly: checking silent videos failed: {E}")

@@ -14,8 +14,11 @@ replaced once the new copy passes its checks. A video this run didn't scan
 a timeline post is fetched with ``post?ids=``; a message or a purchase,
 which have no such call, from the copy of the post kept in the flag and the
 fresh links. Refused (or the media is gone, or the new copy still has no
-sound): one check is used. Anything else (network, rate limit, a failed
-download): nothing is used.
+sound, or it could not be kept: the size limits or ``skip_download_script``
+skipped it, or the silent file could not be replaced): one check is used,
+so a video that can never be replaced isn't downloaded on every run for
+ever. Anything else (network, rate limit, a failed download): nothing is
+used.
 
 The flags live in the profile cache, one entry per creator; every change is
 made under one lock, so flags saved at once don't overwrite each other.
@@ -24,6 +27,7 @@ made under one lock, so flags saved at once don't overwrite each other.
 import asyncio
 import collections
 import logging
+import pathlib
 import threading
 
 import ofscraper.classes.of.posts as posts_
@@ -38,6 +42,9 @@ from ofscraper.sites.fansly import normalize
 log = logging.getLogger("shared")
 
 ACCEPTED, REFUSED, GONE, FAILED = "accepted", "refused", "gone", "failed"
+# the new copy has sound but wasn't kept (a filter skipped it, or the silent
+# file could not be replaced)
+NOT_KEPT = "not kept"
 
 # every read-modify-write of a creator's flags
 _lock = threading.Lock()
@@ -139,14 +146,34 @@ async def _rebuild(api, model_id, username, media_id, record, account_media):
     return next((m for m in built.all_media if str(m.id) == media_id), None)
 
 
-async def recheck(c, username, model_id, media_by_id, check_audio, download):
+async def _silent_path(record, ele, saved_path):
+    """Where the silent copy is: the path kept in the flag or, when no file
+    is there any more (moved, and the database updated since), the folder
+    and name the database has for it."""
+    path = record.get("path")
+    if path and pathlib.Path(path).is_file():
+        return path
+    if saved_path is not None:
+        try:
+            found = await saved_path(ele)
+        except Exception as E:
+            log.debug(f"Media {ele.id}: could not read where it is saved: {type(E).__name__}")
+            found = None
+        if found and pathlib.Path(found).is_file():
+            return str(found)
+    return path
+
+
+async def recheck(c, username, model_id, media_by_id, check_audio, download, saved_path=None):
     """Check the creator's flagged videos once (see the module docstring).
 
     ``media_by_id``: this run's Media by id, used for a download again.
     ``check_audio(c, raw)``: one of ACCEPTED, REFUSED, GONE, FAILED for a raw
     Fansly Media with fresh links. ``download(c, ele)``: True when ``ele``
     was saved again with sound, REFUSED when the new copy still has none,
-    anything else when the download failed.
+    NOT_KEPT when it has sound but wasn't kept, anything else when the
+    download failed. ``saved_path(ele)``: the file the database has for
+    ``ele``, or None.
     """
     records = flags(model_id)
     allowed = limit()
@@ -169,7 +196,7 @@ async def recheck(c, username, model_id, media_by_id, check_audio, download):
                 outcome = await _check_one(
                     c, api, username, model_id, media_id, record,
                     answers.get(record["account_media_id"]) or {},
-                    media_by_id, check_audio, download,
+                    media_by_id, check_audio, download, saved_path,
                 )
                 outcomes[outcome] += 1
                 _record(model_id, media_id, outcome, allowed)
@@ -184,7 +211,7 @@ async def recheck(c, username, model_id, media_by_id, check_audio, download):
 
 
 async def _check_one(c, api, username, model_id, media_id, record, account_media,
-                     media_by_id, check_audio, download):
+                     media_by_id, check_audio, download, saved_path=None):
     raw = account_media.get("preview" if record.get("preview") else "media") or {}
     if str(raw.get("id")) != media_id or not raw.get("variants") and not raw.get("locations"):
         return GONE
@@ -205,7 +232,7 @@ async def _check_one(c, api, username, model_id, media_id, record, account_media
         if ele is None:
             return GONE
     ele.media.setdefault("fansly", {})["media"] = raw
-    ele.replace_silent = record.get("path")
+    ele.replace_silent = await _silent_path(record, ele, saved_path)
     try:
         # Ctrl+C cancels it like any other download
         with stop.transfer(ele):
@@ -218,11 +245,12 @@ async def _check_one(c, api, username, model_id, media_id, record, account_media
         ele.replace_silent = None
     if saved is True:
         return "saved with sound"
-    return REFUSED if saved == REFUSED else FAILED
+    return saved if saved in (REFUSED, NOT_KEPT) else FAILED
 
 
 def _record(model_id, media_id, outcome, allowed):
-    """Store one check's outcome: only a refusal (or gone media) uses a check."""
+    """Store one check's outcome: a refusal, gone media and a copy that
+    wasn't kept use a check."""
 
     def change(records):
         record = records.get(media_id)
@@ -232,14 +260,14 @@ def _record(model_id, media_id, outcome, allowed):
         if outcome == "saved with sound":
             records.pop(media_id)
             return
-        if outcome not in (REFUSED, GONE):
+        if outcome not in (REFUSED, GONE, NOT_KEPT):
             return False
         record["checks"] = record.get("checks", 0) + 1
         if record["checks"] >= allowed:
             records.pop(media_id)
             log.info(
-                f"Media {media_id}: its audio was refused {record['checks']} "
-                f"{'time' if record['checks'] == 1 else 'times'}; keeping the "
+                f"Media {media_id}: no copy with sound after {record['checks']} "
+                f"{'check' if record['checks'] == 1 else 'checks'}; keeping the "
                 "video without sound"
             )
 

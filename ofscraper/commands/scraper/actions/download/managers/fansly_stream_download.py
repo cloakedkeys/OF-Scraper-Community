@@ -381,6 +381,14 @@ class FanslyStreamDownloadManager(DownloadManager):
 
             if await self._check_forced_skip(ele, total) == 0:
                 temp.unlink(missing_ok=True)
+                if getattr(ele, "replace_silent", None):
+                    # the silent copy stays saved as it is: its row keeps its
+                    # file, and silent.recheck counts the check as used
+                    ele.not_kept = (
+                        "the copy with sound was skipped by the size limits "
+                        "or skip_download_script"
+                    )
+                    return "forced_skipped", 0
                 if self._skipped_by_script(ele):
                     # as main_download: counted as skipped, saved only
                     # for a permanent skip (#351)
@@ -912,6 +920,8 @@ class FanslyStreamDownloadManager(DownloadManager):
         whole beside it."""
         old = pathlib.Path(old)
         beside = old.with_name(old.name + ".sound.part")
+        # the silent copy may have been moved away with its folder
+        old.parent.mkdir(parents=True, exist_ok=True)
         try:
             shutil.move(str(temp), str(beside))
             os.replace(beside, old)
@@ -960,8 +970,17 @@ class FanslyStreamDownloadManager(DownloadManager):
                 return silent.ACCEPTED if self.audio_inside else silent.GONE
             if not audio or not audio.files:
                 return silent.GONE
+            # a file that carries sound: a key or an init segment can be
+            # served when the media isn't
+            sample = (
+                audio.files[min(1, len(audio.files) - 1)][0]
+                if best.kind == fansly_video.DASH
+                else fansly_video.first_media_url(audio.files)
+            )
+            if not sample:
+                return silent.GONE
             async with c.requests_async(
-                url=audio.files[0][0], cookies=best.cookies or None,
+                url=sample, cookies=best.cookies or None,
                 actions=[HEADERS], headers={"Range": "bytes=0-0"}, retries=1,
             ) as r:
                 if r.status in (401, 403):
@@ -994,9 +1013,14 @@ class FanslyStreamDownloadManager(DownloadManager):
         old = getattr(ele, "replace_silent", None)
         if old:
             # a silent copy downloaded again with sound takes its place
-            path_to_file = await loop.run_in_executor(
-                self.ctx.thread, partial(self._replace_in_place, temp, old)
-            )
+            try:
+                path_to_file = await loop.run_in_executor(
+                    self.ctx.thread, partial(self._replace_in_place, temp, old)
+                )
+            except PermissionError:
+                # in use or read-only: the next download would end the same
+                ele.not_kept = "the saved copy could not be replaced (in use or read-only)"
+                raise
         else:
             # can end up under another name if a different file already has this one (#48)
             path_to_file = await loop.run_in_executor(
