@@ -1137,27 +1137,54 @@ def has_encoder(name):
 needs_x264 = pytest.mark.skipif(not has_encoder("libx264"), reason="ffmpeg has no libx264")
 
 
-def stored_ahead(tmp_path, source, rate):
+def first_sound_packet(path):
+    """Seconds the first sound packet lasts."""
+    out = subprocess.run(
+        [FFPROBE, "-v", "error", "-select_streams", "a:0", "-read_intervals", "%+#1",
+         "-show_entries", "packet=duration_time", "-of", "csv=p=0", str(path)],
+        check=True, capture_output=True, text=True).stdout
+    return float(out.split()[0].strip(","))
+
+
+def stored_ahead(tmp_path, source, rate, shape="ffmpeg"):
     """A direct file as Fansly's usually are: frames stored ahead of the
     ones shown before them and no edit list, so the first frame is shown two
-    frames after the sound starts."""
+    frames after the sound starts.
+
+    ``ffmpeg``: as ffmpeg writes it, in one go. It makes the first sound
+    packet two frames longer, so the sound is in step and longer than the
+    video. ``saved``: as the saved Fansly videos sampled are, with a first
+    sound packet of normal length (the two tracks written apart, then joined
+    with their times kept)."""
+    codecs = ["-c:v", "libx264", "-bf", "2", "-g", str(rate), "-c:a", "aac"]
     direct = tmp_path / "ahead.mp4"
-    direct.write_bytes(direct_bytes(
-        tmp_path, *source, "-c:v", "libx264", "-bf", "2", "-g", str(rate), "-c:a", "aac",
-        "-use_editlist", "0",
-    ))
+    if shape == "ffmpeg":
+        direct.write_bytes(direct_bytes(tmp_path, *source, *codecs, "-use_editlist", "0"))
+        assert first_sound_packet(direct) > 2 / rate
+    else:
+        for name, only in (("v.mp4", "-an"), ("a.mp4", "-vn")):
+            (tmp_path / name).write_bytes(
+                direct_bytes(tmp_path, *source, *codecs, only, "-use_editlist", "0")
+            )
+        direct.write_bytes(direct_bytes(
+            tmp_path, "-copyts", "-i", str(tmp_path / "v.mp4"), "-i", str(tmp_path / "a.mp4"),
+            "-map", "0:v", "-map", "1:a", "-c", "copy", "-use_editlist", "0",
+        ))
+        assert first_sound_packet(direct) < 0.03
     assert video_after_sound(direct) == pytest.approx(2 / rate, abs=0.002)
     return direct
 
 
 @needs_ffmpeg
 @needs_x264
-@pytest.mark.parametrize("rate", [24, 30, 60])
+@pytest.mark.parametrize(
+    "shape, rate", [("ffmpeg", 24), ("ffmpeg", 30), ("ffmpeg", 60), ("saved", 30), ("saved", 60)]
+)
 def test_frames_stored_ahead_with_no_edit_list_keep_the_direct_files_sync(
-    env, tmp_path, caplog, rate
+    env, tmp_path, caplog, shape, rate
 ):
     source = flash_source(rate)
-    direct = stored_ahead(tmp_path, source, rate)
+    direct = stored_ahead(tmp_path, source, rate, shape)
     run = refused_audio_download(
         env, tmp_path, caplog, setup=with_direct(direct.read_bytes()), source=source,
         video_args=("-g", str(rate)),
