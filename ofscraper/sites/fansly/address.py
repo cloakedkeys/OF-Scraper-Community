@@ -20,6 +20,7 @@ import binascii
 import json
 import logging
 import socket
+import time
 from urllib.parse import parse_qs, urlsplit
 
 from aiohttp.abc import AbstractResolver
@@ -29,6 +30,10 @@ log = logging.getLogger("shared")
 
 # address range -> whether the CDN accepts links signed for it
 _accepted = {}
+# address range -> a link signed for it that the CDN accepted
+_witness = {}
+# a kept link this close to running out (seconds) is not tried again
+WITNESS_MARGIN = 60
 # host -> which of its addresses (in sorted order) requests go to
 _steered = {}
 _told = False
@@ -37,12 +42,23 @@ _told = False
 def reset():
     global _told
     _accepted.clear()
+    _witness.clear()
     _steered.clear()
     _told = False
 
 
-def _range(url):
-    """The address range a link is signed for, or None."""
+_UNREADABLE = (
+    binascii.Error,
+    ValueError,
+    KeyError,
+    IndexError,
+    TypeError,
+    AttributeError,
+)
+
+
+def _condition(url):
+    """The conditions a link's policy sets (a dict), or None."""
     try:
         policy = parse_qs(urlsplit(url).query).get("Policy", [None])[0]
         if not policy:
@@ -50,17 +66,36 @@ def _range(url):
         # CloudFront's URL-safe base64
         policy = policy.replace("-", "+").replace("_", "=").replace("~", "/")
         policy += "=" * (-len(policy) % 4)
-        statement = json.loads(base64.b64decode(policy))["Statement"][0]
-        return statement["Condition"]["IpAddress"]["AWS:SourceIp"] or None
-    except (
-        binascii.Error,
-        ValueError,
-        KeyError,
-        IndexError,
-        TypeError,
-        AttributeError,
-    ):
+        return json.loads(base64.b64decode(policy))["Statement"][0]["Condition"]
+    except _UNREADABLE:
         return None
+
+
+def _range(url):
+    """The address range a link is signed for, or None."""
+    try:
+        return _condition(url)["IpAddress"]["AWS:SourceIp"] or None
+    except _UNREADABLE:
+        return None
+
+
+def _run_out(url) -> bool:
+    """True when the link's policy ends within ``WITNESS_MARGIN`` seconds."""
+    try:
+        return float(_condition(url)["DateLessThan"]["AWS:EpochTime"]) <= (
+            time.time() + WITNESS_MARGIN
+        )
+    except _UNREADABLE:
+        return False
+
+
+def _keep(signed_for, url, verdict):
+    """What the CDN said about ``url``, a link signed for ``signed_for``."""
+    _accepted[signed_for] = verdict
+    if verdict:
+        _witness[signed_for] = url
+    else:
+        _witness.pop(signed_for, None)
 
 
 def link_ranges(data) -> dict:
@@ -113,7 +148,7 @@ async def usable(c, data) -> bool:
             verdict = await _cdn_accepts(c, url)
             if verdict is None:
                 continue
-            _accepted[signed_for] = verdict
+            _keep(signed_for, url, verdict)
         if not _accepted[signed_for]:
             if not _told:
                 _told = True
@@ -164,13 +199,27 @@ async def try_link(c, url):
         return None
     verdict = await _cdn_accepts(c, url)
     if verdict is not None:
-        _accepted[signed_for] = verdict
+        _keep(signed_for, url, verdict)
     return verdict
 
 
+def accepted_link(url):
+    """A link of another file that the CDN accepted earlier, signed for the
+    same range as ``url``; None when none is kept or it has run out.
+
+    That file was there then, so what the CDN says to it now is about the
+    range: a link of a file that may be deleted says nothing."""
+    signed_for = _range(url) if url else None
+    other = _witness.get(signed_for) if signed_for else None
+    if not other or urlsplit(other).path == urlsplit(url).path or _run_out(other):
+        return None
+    return other
+
+
 def refused(url):
-    """The CDN refused downloads of ``url`` and of another link signed for
-    the same range (the caller checked with ``cdn_refuses``).
+    """The CDN refuses links signed for the range ``url`` is signed for (the
+    caller has the evidence: ``accepted_link`` is refused now, or the file's
+    new link, signed for another range, is accepted).
 
     The address downloads leave from changed (a VPN switch), so every link
     signed for the old range is refused, those of files not started yet
@@ -181,7 +230,7 @@ def refused(url):
     """
     signed_for = _range(url)
     if signed_for:
-        _accepted[signed_for] = False
+        _keep(signed_for, url, False)
 
 
 def is_refused(url) -> bool:

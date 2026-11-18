@@ -11,6 +11,7 @@ documentation ranges (RFC 5737).
 """
 
 import asyncio
+import time
 import base64
 import json
 from contextlib import asynccontextmanager
@@ -30,7 +31,7 @@ from ofscraper.sites.fansly import address, api
 OLD, NEW = "192.0.2.0/24", "198.51.100.0/24"
 
 
-def link(n, signed_for, tag):
+def link(n, signed_for, tag, until=1900000000):
     if signed_for is None:
         query = f"Expires=1900000000&Signature=sig-{tag}&Key-Pair-Id=k"
     else:
@@ -39,7 +40,7 @@ def link(n, signed_for, tag):
                 {
                     "Resource": f"https://cdn3.fansly.com/100/{n}.png",
                     "Condition": {
-                        "DateLessThan": {"AWS:EpochTime": 1900000000},
+                        "DateLessThan": {"AWS:EpochTime": until},
                         "IpAddress": {"AWS:SourceIp": signed_for},
                     },
                 }
@@ -88,6 +89,12 @@ def make_ele(n, signed_for=OLD, tag="old", post=100000000000000005):
     return Media(media, 0, post)
 
 
+def scan_link(signed_for, n=9999):
+    """The link of the scan that was tried on the CDN, and accepted, before
+    the address changed."""
+    address._keep(signed_for, link(n, signed_for, "scan"), True)
+
+
 @pytest.fixture
 def fansly(monkeypatch):
     """``account/media``: each id answered with a link signed for ``NEW``
@@ -123,8 +130,11 @@ def fansly(monkeypatch):
 
     address.reset()
     refresh.fansly_refresher.reset()
+    scan_link(OLD)
     monkeypatch.setattr(refresh.fansly_api, "account_media", fake_account_media)
     monkeypatch.setattr(refresh, "FANSLY_ASK_WAIT", 0)
+    # files don't wait a pause out, unless a test says so
+    monkeypatch.setattr(refresh, "PAUSE_WAITS", 0, raising=False)
     monkeypatch.setattr(address, "_cdn_accepts", cdn_accepts)
     monkeypatch.setattr(
         refresh.manager, "Manager",
@@ -382,6 +392,63 @@ def test_a_new_link_the_cdn_accepts_clears_the_refusal(fansly, monkeypatch):
     assert not address.is_refused(old) and address.is_accepted(old)
     # a link without a range says nothing
     assert asyncio.run(address.try_link(None, link(1, None, "plain"))) is None
+
+
+def test_the_link_tried_again_is_one_the_cdn_accepted_for_another_file(fansly):
+    refused = link(1, OLD, "old")
+    assert address.accepted_link(refused) == link(9999, OLD, "scan")
+    # nothing kept for the range, or only this file's own link
+    assert address.accepted_link(link(1, NEW, "old")) is None
+    address._keep(OLD, link(1, OLD, "scan"), True)
+    assert address.accepted_link(refused) is None
+    # a kept link that has run out would be refused whatever the range
+    address._keep(OLD, link(2, OLD, "scan", until=int(time.time()) + 5), True)
+    assert address.accepted_link(refused) is None
+    # a refusal of the range drops it
+    scan_link(OLD)
+    address.refused(refused)
+    assert address.accepted_link(refused) is None
+
+
+def test_files_wait_for_the_end_of_a_pause_then_share_a_call(fansly, monkeypatch):
+    clock = SimpleNamespace(now=1000.0)
+    waits = []
+    real_sleep = asyncio.sleep
+
+    async def sleep(seconds, *args):
+        waits.append(seconds)
+        clock.now += seconds
+        await real_sleep(0)
+
+    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(refresh.asyncio, "sleep", sleep)
+    monkeypatch.setattr(refresh, "PAUSE_WAITS", 1, raising=False)
+    items = waiting(9)
+    fansly.error = RuntimeError("429")
+
+    async def refused(some):
+        return [await refresh.refresh_media_link(ele, link=ele.url) for ele in some]
+
+    asyncio.run(refused(items[: refresh.CALL_FAILURES]))
+    fansly.error = None
+    fansly.calls.clear()
+    waits.clear()
+    # the pause is waited out, then one call for every file still waiting
+    asyncio.run(refresh.fresh_before_download(items[3]))
+    assert len(waits) == 1 and waits[0] == pytest.approx(refresh.FETCH_AHEAD_PAUSE, abs=1)
+    assert len(fansly.calls) == 1 and len(fansly.calls[0]) == 9
+    assert {address._range(ele.url) for ele in items} == {NEW}
+
+    # a second pause in a row is not waited out: the file asks on its own
+    address.refused(link(0, NEW, "x"))
+    later = waiting(4, signed_for=NEW)
+    fansly.error = RuntimeError("429")
+    asyncio.run(refused(later[: refresh.CALL_FAILURES]))
+    asyncio.run(refused(later[: refresh.CALL_FAILURES]))
+    waits.clear()
+    fansly.calls.clear()
+    asyncio.run(refresh.fresh_before_download(later[3]))
+    assert waits == [] and fansly.calls == []
 
 
 def test_the_url_of_a_refused_request_is_read_from_the_error():

@@ -23,7 +23,7 @@ import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import
 import ofscraper.commands.scraper.actions.download.utils.refresh as refresh
 from ofscraper.sites.fansly import address
 
-from test_fansly_fetch_ahead import NEW, OLD, account_media, make_ele
+from test_fansly_fetch_ahead import NEW, OLD, account_media, make_ele, scan_link
 
 
 class Response:
@@ -47,6 +47,7 @@ class Session:
         self.probes = 0
         self.dns_cleared = 0
         self.fail = 0  # API calls still to fail
+        self.down = None  # a function: True while the API fails
         self.failed = 0
 
     def clear_dns_cache(self):
@@ -62,8 +63,8 @@ class Session:
     @contextlib.asynccontextmanager
     async def requests_async(self, url=None, **kwargs):
         if "apiv3.fansly.com" in url:
-            if self.fail:
-                self.fail -= 1
+            if self.fail or (self.down and self.down()):
+                self.fail = max(0, self.fail - 1)
                 self.failed += 1
                 raise RuntimeError("503")
             ids = parse_qs(urlsplit(url).query)["ids"][0].split(",")
@@ -88,9 +89,11 @@ def world(monkeypatch):
 
     address.reset()
     refresh.fansly_refresher.reset()
-    # the scan's links were tried on the CDN before the address changed
-    address._accepted[OLD] = True
+    # one of the scan's links was tried on the CDN before the address changed
+    scan_link(OLD)
     monkeypatch.setattr(refresh, "FANSLY_ASK_WAIT", 0)
+    # files don't wait a pause out, unless a test says so
+    monkeypatch.setattr(refresh, "PAUSE_WAITS", 0, raising=False)
     monkeypatch.setattr(
         refresh.manager, "Manager",
         SimpleNamespace(session=SimpleNamespace(aget_ofsession=session)),
@@ -247,18 +250,78 @@ def test_a_deleted_post_with_nothing_else_waiting_marks_no_range(world):
     assert s.dns_cleared == 0 and address._steered == {}
 
 
+def test_two_deleted_posts_with_nothing_else_waiting_mark_no_range(world):
+    # each post's files are refused, and so is the other post's: the link the
+    # CDN accepted during the scan still is, so the range is fine
+    s = world.session = Session(None, deleted={f"{n}.png" for n in range(6)})
+    s.answer = new_signature(s, lambda s: OLD)
+    gone = [make_ele(n, post=7000 + n // 3) for n in range(6)]
+    refresh.fansly_refresher.expect(gone)
+    results, _ = run(s, gone)
+    assert results == [False] * 6
+    assert shared(s) == []
+    assert not address.is_refused(gone[0].url)
+    assert s.dns_cleared == 0 and address._steered == {}
+
+
+def test_one_post_waiting_after_an_address_change_shares_one_call(world):
+    s = world.session = Session(lambda n: account_media(n, NEW, "new"), cdn_refused={OLD})
+    items = [make_ele(n, post=7000) for n in range(40)]
+    refresh.fansly_refresher.expect(items)
+    results, refused = run(s, items)
+    assert all(results)
+    assert len(refused) == 1
+    assert len(s.api_calls) == 1 and len(s.api_calls[0]) == 40
+
+
+def test_with_no_link_tried_before_a_files_new_link_shows_the_change(world):
+    # nothing was tried on the CDN for the old range: the first file asks on
+    # its own, its new link is signed for another range and accepted, and
+    # the rest share one call
+    address.reset()
+    s = world.session = Session(lambda n: account_media(n, NEW, "new"), cdn_refused={OLD})
+    items = [make_ele(n, post=7000) for n in range(40)]
+    refresh.fansly_refresher.expect(items)
+    results, refused = run(s, items)
+    assert all(results)
+    assert len(refused) == 1
+    assert [len(call) for call in s.api_calls] == [1, 39]
+
+
 def test_a_range_marked_wrongly_costs_one_shared_call_and_is_cleared(world):
-    # the file tried to confirm the refusal (the last waiting) is deleted too
-    s = world.session = Session(None, deleted={"0.png", "39.png"})
+    # the file of the link tried to confirm the refusal is deleted too
+    s = world.session = Session(None, deleted={"0.png", "9999.png"})
     s.answer = new_signature(s, lambda s: OLD)
     items = queue(40)
     results, _ = run(s, items)
-    assert results == [False] + [True] * 38 + [False]
+    assert results == [False] + [True] * 39
     # the shared call's new links are tried on the CDN: accepted, mark gone
     assert len(shared(s)) == 1
     assert address.is_accepted(items[5].url)
-    assert alone(s) == [["1039"]]
+    assert alone(s) == []
     assert s.dns_cleared == 0
+
+
+def test_files_wait_out_a_burst_of_failed_calls_instead_of_failing(world, monkeypatch):
+    # the address changed, and the API fails for the first minute after it
+    clock = SimpleNamespace(now=1000.0)
+    real_sleep = asyncio.sleep
+
+    async def sleep(seconds, *args):
+        clock.now += seconds
+        await real_sleep(0)
+
+    monkeypatch.setattr(refresh.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(refresh.asyncio, "sleep", sleep)
+    monkeypatch.setattr(refresh, "PAUSE_WAITS", 2, raising=False)
+    s = world.session = Session(lambda n: account_media(n, NEW, "new"), cdn_refused={OLD})
+    s.down = lambda: clock.now < 1060
+    results, _ = run(s, queue(60))
+    # the files whose calls failed are lost; the rest wait and share one call
+    assert results.count(False) <= refresh.CALL_FAILURES
+    assert alone(s) == []
+    assert len(shared(s)) == 1
+    assert 1120 <= clock.now < 1130
 
 
 def test_an_address_that_changes_back_costs_one_more_shared_call(world):

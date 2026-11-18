@@ -186,6 +186,10 @@ RANGE_TRIES = 2
 # limiting is over in a minute, and an address change may come much later
 CALL_FAILURES = 3
 FETCH_AHEAD_PAUSE = 120
+# pauses in a row that files signed for a refused range wait out. Their links
+# are refused whatever they do, and asking for each alone only feeds a rate
+# limit; after these, an API that is still failing gets the per-file asks
+PAUSE_WAITS = 2
 
 
 def _raw(ele):
@@ -314,11 +318,14 @@ class FanslyRefresher:
     links already replaced.
 
     One 403 is not proof that a range is dead: a deleted file answers 403
-    too. So before a range is marked refused (``address.refused``), one other
-    waiting link signed for it is tried on the CDN (one byte). It must come
-    from another post: the files of a deleted post wait side by side and are
-    all refused. If the CDN accepts it, or only files of the same post are
-    waiting, only this file gets a new link, on its own.
+    too, and the files of deleted posts wait side by side. So before a range
+    is marked refused (``address.refused``), a link signed for it that the
+    CDN accepted earlier in the run is tried again (one byte,
+    ``address.accepted_link``): that file was there, so a refusal now is
+    about the range. If the CDN still accepts it, or no such link is kept,
+    only this file gets a new link, on its own; when that link is signed for
+    another range the CDN accepts, the address did change, and the old range
+    is marked then (``_moved``).
 
     The shared call asks once and judges the answer itself (``_judge``). A
     link Fansly gave again unchanged (it keeps a link for a while) says
@@ -331,9 +338,11 @@ class FanslyRefresher:
     shared call is at most two API calls.
 
     It leaves the files to the per-file asks for a range whose new links
-    were still refused ``RANGE_TRIES`` shared calls in a row, and for
-    ``FETCH_AHEAD_PAUSE`` seconds after ``CALL_FAILURES`` failed shared calls
-    in a row (then one more failed call pauses it again).
+    were still refused ``RANGE_TRIES`` shared calls in a row. After
+    ``CALL_FAILURES`` failed shared calls in a row it pauses for
+    ``FETCH_AHEAD_PAUSE`` seconds (then one more failed call pauses it
+    again). Files signed for a refused range wait the first ``PAUSE_WAITS``
+    pauses out and share the next call; after those they ask on their own.
 
     Items are added with ``expect`` and removed with ``done``; one call runs
     at a time.
@@ -348,6 +357,8 @@ class FanslyRefresher:
         # failed shared calls in a row, and until when no shared call is made
         self._failures = 0
         self._paused_until = 0
+        # pauses in a row, with no shared call that worked in between
+        self._pauses = 0
         self._lock = None
         self._loop = None
 
@@ -357,6 +368,7 @@ class FanslyRefresher:
         self._still_refused.clear()
         self._failures = 0
         self._paused_until = 0
+        self._pauses = 0
 
     def expect(self, items):
         """Items about to be downloaded, in download order."""
@@ -370,22 +382,11 @@ class FanslyRefresher:
 
     async def _range_refused(self, ele, link):
         """(whether the range ``link`` is signed for is refused, the other
-        link that was tried): one waiting link of another post signed for it
-        is tried on the CDN. None waiting: not known, so not refused."""
-        signed_for = address.link_range(link)
-        others = [
-            o
-            for o in self._waiting.values()
-            if o is not ele
-            and o.url
-            and o.url != link
-            and address.link_range(o.url) == signed_for
-        ]
-        post = getattr(ele, "post_id", None)
-        apart = [o for o in others if getattr(o, "post_id", None) != post]
-        if not apart:
+        link that was tried): a link signed for it that the CDN accepted
+        earlier is tried again. None kept: not known, so not refused."""
+        other = address.accepted_link(link)
+        if not other:
             return False, None
-        other = apart[-1].url
         try:
             async with manager.Manager.session.aget_ofsession() as c:
                 return await address.cdn_refuses(c, other) is True, other
@@ -484,6 +485,14 @@ class FanslyRefresher:
         leave ``ele`` to the per-file asks.
         """
         before = _raw(ele)
+        problem = await self._shielded(ele, link, before)
+        if problem == FETCH_AHEAD_OFF and self._pauses <= PAUSE_WAITS:
+            # this file's link is refused until a shared call works
+            await asyncio.sleep(max(0.0, self._paused_until - time.monotonic()) + 0.1)
+            problem = await self._shielded(ele, link, before)
+        return problem
+
+    async def _shielded(self, ele, link, before):
         # shielded: a cancelled download must not cancel a call that other
         # downloads wait for. Its error, if any, is read either way.
         task = asyncio.ensure_future(self._fresh(ele, link, before))
@@ -543,15 +552,21 @@ class FanslyRefresher:
                     self._failures += 1
                     if self._failures >= CALL_FAILURES:
                         self._paused_until = time.monotonic() + FETCH_AHEAD_PAUSE
+                        self._pauses += 1
                         log.info(
-                            "Fetching Fansly links ahead keeps failing. Asking "
-                            "for each file's link on its own for the next "
-                            f"{FETCH_AHEAD_PAUSE} seconds"
+                            "Fetching Fansly links ahead keeps failing. "
+                            + (
+                                f"Waiting {FETCH_AHEAD_PAUSE} seconds before the next try"
+                                if self._pauses <= PAUSE_WAITS
+                                else "Asking for each file's link on its own "
+                                f"for the next {FETCH_AHEAD_PAUSE} seconds"
+                            )
                         )
                     if got_new:
                         break
                     return f"fetching a new link failed: {E}"
                 self._failures = 0
+                self._pauses = 0
                 problem, changed = self._apply(batch, found, ele)
                 got_new = got_new or problem is None
                 replaced.update(id(item) for item in changed if item is not ele)
@@ -599,6 +614,20 @@ async def fresh_before_download(ele):
         log.debug(f"Media {ele.id}: its link is signed for a refused address; {problem}")
 
 
+def _moved(link, new):
+    """A file's refused ``link`` and its ``new`` one are signed for different
+    ranges, and the CDN accepts the new one's: the address downloads leave
+    from changed, so the old range is marked refused and the waiting files
+    signed for it share the next call."""
+    if (
+        address.link_range(new)
+        and address.link_range(new) != address.link_range(link)
+        and address.is_accepted(new)
+        and not address.is_refused(link)
+    ):
+        address.refused(link)
+
+
 async def _refresh_fansly_refused(ele, link) -> bool:
     if not address.link_range(link):
         # no address range in the link: ask for this item alone
@@ -609,7 +638,10 @@ async def _refresh_fansly_refused(ele, link) -> bool:
         return await _refresh_fansly(ele, asked=1)
     if problem in (THIS_FILE_ONLY, GIVEN_UP, FETCH_AHEAD_OFF):
         log.debug(f"Media {ele.id}: {problem}; asking for its link alone")
-        return await _refresh_fansly(ele)
+        changed = await _refresh_fansly(ele)
+        if changed and problem == THIS_FILE_ONLY:
+            _moved(link, ele.url)
+        return changed
     if problem:
         log.debug(f"Media {ele.id}: {problem}")
         return False
