@@ -345,10 +345,12 @@ class Server:
         self.thread.join()
 
 
-def ffmpeg_make(args, cwd):
-    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
-           "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=3",
-           "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+SOURCE = ["-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=3",
+          "-f", "lavfi", "-i", "sine=frequency=440:duration=3"]
+
+
+def ffmpeg_make(args, cwd, source=None):
+    cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", *(source or SOURCE),
            "-c:v", "mpeg4", "-g", "10", "-c:a", "aac", "-shortest", *args]
     subprocess.run(cmd, cwd=cwd, check=True, capture_output=True)
 
@@ -631,12 +633,12 @@ def media_playlist(names):
     return (body + "#EXT-X-ENDLIST\n").encode()
 
 
-def make_segments(tmp_path, name, *args):
+def make_segments(tmp_path, name, *args, source=None):
     """{file name: bytes} of 1-second MPEG-TS segments made by ffmpeg."""
     seg_dir = tmp_path / name
     seg_dir.mkdir()
     ffmpeg_make([*args, "-f", "segment", "-segment_time", "1", "-segment_format", "mpegts",
-                 f"{name}-%d.ts"], seg_dir)
+                 f"{name}-%d.ts"], seg_dir, source)
     return {p.name: p.read_bytes() for p in sorted(seg_dir.glob(f"{name}-*.ts"))}
 
 
@@ -856,9 +858,9 @@ def serve_direct(srv, raw, tmp_path, *args, path=None):
 
 
 def refused_audio_download(env, tmp_path, caplog, direct_args=("-s", "80x60"),
-                           refused="segment", setup=None, video_args=()):
+                           refused="segment", setup=None, video_args=(), source=None):
     video_segments = make_segments(tmp_path, "v", "-an", *video_args,
-                                   "-bsf:v", "dump_extra=freq=keyframe")
+                                   "-bsf:v", "dump_extra=freq=keyframe", source=source)
     audio_segments = make_segments(tmp_path, "a", "-vn")
     raw = raw_media()
     with Server({}) as srv:
@@ -1025,47 +1027,47 @@ def video_after_sound(path):
             - stream_mod._first_shown(FFPROBE, path, "a:0"))
 
 
-# direct files whose video is first shown after their sound starts
-LATE_VIDEO = {
-    # by half a second
-    "half-a-second": (0.5, ["-c:v", "mpeg4", "-g", "10", "-c:a", "aac"]),
-    # by two frames, with no edit list: frames stored ahead of the ones shown
-    # before them, as Fansly's direct files usually are
-    "stored-ahead": (0.2, ["-c:v", "libx264", "-bf", "2", "-g", "10", "-c:a", "aac",
-                           "-use_editlist", "0"]),
-}
+def flash_source(rate, at=1, seconds=3):
+    """ffmpeg inputs: a black picture that turns white and silence that
+    turns into a tone, both ``at`` seconds in."""
+    return [
+        "-f", "lavfi", "-i",
+        f"color=c=black:s=160x120:r={rate}:d={seconds},"
+        f"drawbox=w=iw:h=ih:color=white:t=fill:enable='gte(t,{at})'",
+        "-f", "lavfi", "-i",
+        f"aevalsrc='0.5*sin(2*PI*1000*t)*gte(t,{at})':d={seconds}:s=44100",
+    ]
+
+
+def picture_after_sound(path, tmp_path):
+    """Seconds the picture turns white after the tone starts, as ``path``
+    plays (decoded): what a viewer sees of its sync."""
+    plain = tmp_path / "measured.mp4"
+    shutil.copy(path, plain)
+
+    def first(graph, tag, found):
+        out = subprocess.run(
+            [FFPROBE, "-v", "error", "-f", "lavfi", graph, "-show_entries",
+             f"frame=pts_time:frame_tags={tag}", "-of", "csv=p=0"],
+            cwd=tmp_path, check=True, capture_output=True, text=True,
+        ).stdout
+        for line in out.splitlines():
+            parts = line.strip().strip(",").split(",")
+            if len(parts) > 1 and parts[1] not in ("", "-inf") and found(float(parts[1])):
+                return float(parts[0])
+        raise AssertionError(f"nothing found in {path.name}")
+
+    flash = first(f"movie={plain.name},signalstats", "lavfi.signalstats.YAVG",
+                  lambda level: level > 128)
+    tone = first(f"amovie={plain.name},asetnsamples=n=48,astats=metadata=1:reset=1",
+                 "lavfi.astats.Overall.Peak_level", lambda level: level > -20)
+    return flash - tone
 
 
 @needs_ffmpeg
-@pytest.mark.parametrize("shape", list(LATE_VIDEO))
-def test_a_video_that_starts_after_its_sound_keeps_that_start(env, tmp_path, caplog, shape):
-    if shape == "stored-ahead" and not has_encoder("libx264"):
-        pytest.skip("ffmpeg has no libx264")
-    late, codecs = LATE_VIDEO[shape]
-    direct = tmp_path / "late.mp4"
-    direct.write_bytes(
-        direct_bytes(tmp_path, "-itsoffset", str(late), *TEST_VIDEO, *sine(3), *codecs)
-    )
-    assert video_after_sound(direct) == pytest.approx(late, abs=0.01)
-    run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(direct.read_bytes()))
-    assert "out of step" not in caplog.text
-    assert kinds_of(run.out) == ["audio", "video"]
-    assert "without sound" not in warnings_in(caplog)
-    # the stream's video is shown as late after the sound as the direct file's
-    assert video_after_sound(run.out) == pytest.approx(late, abs=0.03)
-
-
-@needs_ffmpeg
-def test_a_joined_copy_whose_sound_moved_against_the_video_is_not_used(
-    env, tmp_path, caplog, monkeypatch
-):
-    # the check on the result: a join that lost the video's start is refused
-    real = video.local_join_command
-
-    def no_delay(*args, video_delay=0.0, **kwargs):
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(video, "local_join_command", no_delay)
+def test_a_video_that_starts_long_after_its_sound_is_not_used(env, tmp_path, caplog):
+    # by half a second: more than frames stored ahead explain, and nothing
+    # shows that the stream's video starts as late
     data = direct_bytes(tmp_path, "-itsoffset", "0.5", *TEST_VIDEO, *sine(3),
                         "-c:v", "mpeg4", "-g", "10", "-c:a", "aac")
     run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(data))
@@ -1106,16 +1108,24 @@ def test_a_direct_file_cut_without_re_encoding_is_used(env, tmp_path, caplog, cu
     # start of its video is the first frame that is played
     whole = tmp_path / "whole.mp4"
     subprocess.run(
-        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
-         f"testsrc=size=80x60:rate=10:duration={cut + 3}", *sine(cut + 3),
+        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+         *flash_source(10, at=cut + 1, seconds=cut + 3),
          "-c:v", "mpeg4", "-g", "250", "-c:a", "aac", str(whole)],
         check=True,
     )
-    data = direct_bytes(tmp_path, "-ss", str(cut), "-i", str(whole), "-c", "copy")
-    run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(data))
+    direct = tmp_path / "cut.mp4"
+    direct.write_bytes(direct_bytes(tmp_path, "-ss", str(cut), "-i", str(whole), "-c", "copy"))
+    run = refused_audio_download(
+        env, tmp_path, caplog, setup=with_direct(direct.read_bytes()), source=flash_source(10)
+    )
     assert "could not be measured" not in caplog.text and "out of step" not in caplog.text
     assert kinds_of(run.out) == ["audio", "video"]
     assert "without sound" not in warnings_in(caplog)
+    # the cut falls inside a sound packet (11 ms into it at 7 s): the sound
+    # starts at the cut, not at that packet's time
+    assert picture_after_sound(run.out, tmp_path) == pytest.approx(
+        picture_after_sound(direct, tmp_path), abs=0.005
+    )
 
 
 def has_encoder(name):
@@ -1126,6 +1136,59 @@ def has_encoder(name):
 
 
 needs_x264 = pytest.mark.skipif(not has_encoder("libx264"), reason="ffmpeg has no libx264")
+
+
+def stored_ahead(tmp_path, source, rate):
+    """A direct file as Fansly's usually are: frames stored ahead of the
+    ones shown before them and no edit list, so the first frame is shown two
+    frames after the sound starts."""
+    direct = tmp_path / "ahead.mp4"
+    direct.write_bytes(direct_bytes(
+        tmp_path, *source, "-c:v", "libx264", "-bf", "2", "-g", str(rate), "-c:a", "aac",
+        "-use_editlist", "0",
+    ))
+    assert video_after_sound(direct) == pytest.approx(2 / rate, abs=0.002)
+    return direct
+
+
+@needs_ffmpeg
+@needs_x264
+@pytest.mark.parametrize("rate", [24, 30, 60])
+def test_frames_stored_ahead_with_no_edit_list_keep_the_direct_files_sync(
+    env, tmp_path, caplog, rate
+):
+    source = flash_source(rate)
+    direct = stored_ahead(tmp_path, source, rate)
+    run = refused_audio_download(
+        env, tmp_path, caplog, setup=with_direct(direct.read_bytes()), source=source,
+        video_args=("-g", str(rate)),
+    )
+    assert "longer than" not in caplog.text and "out of step" not in caplog.text
+    assert kinds_of(run.out) == ["audio", "video"]
+    assert "without sound" not in warnings_in(caplog)
+    # the stream's video starts as late after the sound as the direct file's,
+    # and the picture is where it was against the sound
+    assert video_after_sound(run.out) == pytest.approx(2 / rate, abs=0.002)
+    assert picture_after_sound(run.out, tmp_path) == pytest.approx(
+        picture_after_sound(direct, tmp_path), abs=0.005
+    )
+
+
+@needs_ffmpeg
+@needs_x264
+def test_a_joined_copy_whose_sound_moved_against_the_video_is_not_used(
+    env, tmp_path, caplog, monkeypatch
+):
+    # the check on the result: a join that lost the video's start is refused
+    real = video.local_join_command
+
+    def no_delay(*args, video_delay=0.0, **kwargs):
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(video, "local_join_command", no_delay)
+    direct = stored_ahead(tmp_path, [*TEST_VIDEO, *sine(3)], 10)
+    run = refused_audio_download(env, tmp_path, caplog, setup=with_direct(direct.read_bytes()))
+    saved_silent_with_warning(run, caplog, "so it would be out of step")
 
 
 @needs_ffmpeg
