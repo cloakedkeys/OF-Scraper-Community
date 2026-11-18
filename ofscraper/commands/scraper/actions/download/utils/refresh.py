@@ -175,7 +175,8 @@ def _fansly_signatures(raw):
 
 
 SAME_LINK = "Fansly gave the same link again"
-THIS_FILE_ONLY = "nothing shows that the CDN refuses the address its link is signed for"
+THIS_FILE_ONLY = "the CDN accepts another link signed for the same address"
+RANGE_UNKNOWN = "nothing shows whether the CDN refuses the address its link is signed for"
 GIVEN_UP = "Fansly keeps signing links for an address the CDN refuses"
 FETCH_AHEAD_OFF = "fetching links ahead is paused after failed calls"
 # failed shared calls in a row before fetching links ahead pauses, and for
@@ -382,16 +383,17 @@ class FanslyRefresher:
     async def _range_refused(self, ele, link):
         """(whether the range ``link`` is signed for is refused, the other
         links that were tried): the links signed for it that the CDN
-        accepted earlier are tried again, and it is refused when all of them
-        are. One of their files may be deleted too; with two kept, both
-        would have to be. None kept: not known, so not refused."""
+        accepted earlier are tried again. True when all of them are refused
+        (one of their files may be deleted too; with two kept, both would
+        have to be), False when one is accepted, None when it isn't known:
+        none is kept, or a try failed."""
         tried = []
         try:
             async with manager.Manager.session.aget_ofsession() as c:
                 for other in address.accepted_links(link):
                     verdict = await address.cdn_refuses(c, other)
                     if verdict is None:
-                        return False, tried
+                        return None, tried
                     if not verdict:
                         # the range is fine, so the refused ones are gone
                         for dead in tried:
@@ -400,8 +402,8 @@ class FanslyRefresher:
                     tried.append(other)
         except Exception as E:
             log.debug(f"Media {ele.id}: could not try another link: {type(E).__name__}")
-            return False, tried
-        return bool(tried), tried
+            return None, tried
+        return (True if tried else None), tried
 
     async def _call(self, ids):
         """``account/media`` for ``ids``, asked once. A failed call is tried
@@ -490,8 +492,9 @@ class FanslyRefresher:
         link is signed for a refused range. Returns None when ``ele`` has new
         links (from this call or one made while it waited), otherwise why
         not. ``SAME_LINK`` (Fansly gave its link again), ``THIS_FILE_ONLY``
-        (only this link is refused), ``GIVEN_UP`` and ``FETCH_AHEAD_OFF``
-        leave ``ele`` to the per-file asks.
+        (only this link is refused), ``RANGE_UNKNOWN`` (no link to check its
+        range against), ``GIVEN_UP`` and ``FETCH_AHEAD_OFF`` leave ``ele`` to
+        the per-file asks.
         """
         before = _raw(ele)
         problem = await self._shielded(ele, link, before)
@@ -531,7 +534,7 @@ class FanslyRefresher:
             if link is not None and not address.is_refused(link):
                 confirmed, others = await self._range_refused(ele, link)
                 if not confirmed:
-                    return THIS_FILE_ONLY
+                    return RANGE_UNKNOWN if confirmed is None else THIS_FILE_ONLY
                 address.refused(link)
                 self._given_up.discard(address.link_range(link))
             if before is not None and self._stale.get(id(ele)) is before:
@@ -647,10 +650,12 @@ async def _refresh_fansly_refused(ele, link) -> bool:
     if problem == SAME_LINK:
         # the shared call was this item's first ask
         return await _refresh_fansly(ele, asked=1)
-    if problem in (THIS_FILE_ONLY, GIVEN_UP, FETCH_AHEAD_OFF):
+    if problem in (THIS_FILE_ONLY, RANGE_UNKNOWN, GIVEN_UP, FETCH_AHEAD_OFF):
         log.debug(f"Media {ele.id}: {problem}; asking for its link alone")
         changed = await _refresh_fansly(ele)
-        if changed and problem == THIS_FILE_ONLY:
+        if changed and problem == RANGE_UNKNOWN:
+            # with a link of the old range just accepted, that range is
+            # fine and the file was refused for a reason of its own
             _moved(link, ele.url)
         return changed
     if problem:

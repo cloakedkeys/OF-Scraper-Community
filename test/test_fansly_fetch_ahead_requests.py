@@ -288,6 +288,20 @@ def test_with_no_link_tried_before_a_files_new_link_shows_the_change(world):
     assert [len(call) for call in s.api_calls] == [1, 39]
 
 
+def test_a_range_whose_kept_link_was_just_accepted_is_not_marked_by_a_new_link(world):
+    # file 0 is refused for a reason of its own, and its new link is signed
+    # for another range the CDN accepts: the old range's kept link was
+    # accepted a moment ago, so the old range is fine
+    scan_link(NEW)
+    s = world.session = Session(lambda n: account_media(n, NEW, "new"), deleted={"0.png"})
+    items = queue(40)
+    results, _ = run(s, items)
+    assert results == [False] + [True] * 39
+    assert not address.is_refused(items[5].url)
+    assert shared(s) == []
+    assert alone(s) == [["1000"]]
+
+
 def test_a_range_marked_wrongly_costs_one_shared_call_and_is_cleared(world):
     # the file of the only link kept to confirm the refusal is deleted too
     s = world.session = Session(None, deleted={"0.png", "9999.png"})
