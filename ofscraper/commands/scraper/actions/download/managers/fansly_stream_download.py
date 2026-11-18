@@ -228,6 +228,27 @@ def _packet_times(ffprobe, path, stream):
     return times
 
 
+def _first_shown(ffprobe, path, stream):
+    """When the stream's first frame or sample is shown (seconds), or None.
+
+    Not its first packet's decode time: with B-frames that is earlier than
+    the first shown frame, by an amount that depends on the encoder's
+    settings, so it can't be compared between two encodings of one upload."""
+    out = subprocess.run(
+        [str(ffprobe), "-v", "error", "-select_streams", stream,
+         "-read_intervals", "%+#64", "-show_entries", "packet=pts_time",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    times = []
+    for value in out.split():
+        try:
+            times.append(float(value.strip(",")))
+        except ValueError:
+            pass  # N/A
+    return min(times) if times else None
+
+
 def _has_packets(ffprobe, path, stream) -> bool:
     """True when ``path`` has at least one packet of ``stream``; reads only the first."""
     out = subprocess.run(
@@ -347,6 +368,8 @@ class FanslyStreamDownloadManager(DownloadManager):
         placeholderObj = await placeholder.Placeholders(ele, "mp4").init()
         common_logs.path_to_file_logger(placeholderObj, ele, self.ctx.log, self.ctx.attempt)
         temp.unlink(missing_ok=True)
+        # a copy with the direct file's sound that a killed run left behind
+        temp.with_name(temp.name + ".sound").unlink(missing_ok=True)
 
         # BaseException: a cancelled run (Ctrl+C) also removes the .part
         try:
@@ -627,7 +650,12 @@ class FanslyStreamDownloadManager(DownloadManager):
             except fansly_video.StreamError as e:
                 raise SegmentError(str(e)) from e
             except SegmentError as e:
-                if ask or not _refused(e) or not await refresh_media_link(ele):
+                if ask or not _refused(e):
+                    raise
+                # within the download's time limit, as the fetch is
+                if not await asyncio.wait_for(
+                    refresh_media_link(ele), max(0.01, deadline - loop.time())
+                ):
                     raise
 
     async def _sound_mismatch(self, ffprobe, direct, joined, ele):
@@ -636,8 +664,10 @@ class FanslyStreamDownloadManager(DownloadManager):
         Both files come from one upload, so their videos should line up. The
         sound must keep the start it had against the direct file's video
         (ffmpeg starts each input at its own first packet, so an offset there
-        would be lost), within one frame. A trimmed or re-timed rendition
-        would put the sound out of step by the difference in length."""
+        would be lost), within one frame. The starts compared are when each
+        stream is first shown (``_first_shown``). A trimmed or re-timed
+        rendition would put the sound out of step by the difference in
+        length."""
         direct_video, direct_audio, joined_video, joined_audio = [
             await self._probe(_packet_times, ffprobe, path, stream)
             for path, stream in (
@@ -648,8 +678,16 @@ class FanslyStreamDownloadManager(DownloadManager):
             return "the joined copy could not be measured"
         frame = max(_frame(direct_video), _frame(joined_video))
         margin = SOUND_FRAMES * frame + 0.001
-        direct_offset = min(direct_audio) - min(direct_video)
-        joined_offset = min(joined_audio) - min(joined_video)
+        shown = [
+            await self._probe(_first_shown, ffprobe, path, stream)
+            for path, stream in (
+                (direct, "v:0"), (direct, "a:0"), (joined, "v:0"), (joined, "a:0")
+            )
+        ]
+        if any(at is None for at in shown):
+            return "the joined copy could not be measured"
+        direct_offset = shown[1] - shown[0]
+        joined_offset = shown[3] - shown[2]
         if abs(joined_offset - direct_offset) > frame + 0.001:
             return (
                 f"the direct file's sound starts {direct_offset:+.3f}s from its video, "

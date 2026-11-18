@@ -338,8 +338,11 @@ def _workers_error(run):
 
 async def _put(run, item):
     """Queue one file. Waits while the queue is full, unless every worker has
-    ended (an error escaped one): then nothing will make room, so the scan
-    stops with the workers' error instead of waiting for ever."""
+    ended (an error escaped one): then nothing will take it, so the scan
+    stops with the workers' error instead of waiting for ever, or ending as
+    if the files were downloaded."""
+    if run.workers and all(task.done() for task in run.workers):
+        raise WorkersEnded() from _workers_error(run)
     try:
         run.queue.put_nowait(item)
         return
@@ -575,7 +578,15 @@ async def _drain(run, workers):
             ends -= 1
         _, pending = await asyncio.wait(workers, timeout=0.25)
         if not pending:
-            return
+            break
+    # files still queued: every worker ended on an error before taking them
+    left = []
+    while not run.queue.empty():
+        item = run.queue.get_nowait()
+        if item is not _END:
+            left.append(item)
+    if left and not stop.requested.is_set():
+        raise _workers_error(run)
 
 
 # ------------------------------------------------------------------ run
@@ -673,11 +684,13 @@ async def run(ele, c, collection=None):
             visible=True,
         )
         log.warning(download_activity_str.format(username=username))
+        ended = False
         try:
             stopped = await _download(run_, produce)
+            ended = True
         finally:
-            if stop.requested.is_set() and collection is None:
-                # an interrupted scan isn't recorded as finished
+            if (not ended or stop.requested.is_set()) and collection is None:
+                # a scan that was interrupted or failed isn't recorded as finished
                 labels_api.discard_finished_labels(model_id)
         if not stopped:
             # videos saved without sound: check their audio again (silent.py)

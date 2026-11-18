@@ -847,7 +847,9 @@ def pipeline_media(monkeypatch, pages):
     async def go():
         run.queue = asyncio.Queue()
         run.selector = pipeline.Selector(MODEL_ID, NAME)
-        for number, (area, posts) in enumerate(pages, 1):
+        # the areas in the pipeline's own order, whatever order they come in
+        ordered = sorted(pages, key=lambda p: pipeline.ORDER.index(p[0]))
+        for number, (area, posts) in enumerate(ordered, 1):
             await pipeline._take_page(run, area, build(area, posts), True, number)
 
     asyncio.run(go())
@@ -910,7 +912,9 @@ def test_a_bought_file_is_saved_with_its_message_not_in_paid(
     monkeypatch.setattr(filters, "get_media_ids_downloaded_model_sync", lambda **k: set())
     monkeypatch.setattr(separate, "seperate_avatars", lambda media: media)
     monkeypatch.setattr(filters.me_util, "get_id", lambda: 999)
-    pages = [a for a in equivalence_pages() if a[0] in pipeline.ORDER]
+    # the purchase listed first: only the pipeline's area order puts it last
+    pages = sorted(equivalence_pages(), key=lambda a: a[0] != "Purchased")
+    assert pages[0][0] == "Purchased"
     expected = saved_paths(full_list_media(pages))
     got = saved_paths(pipeline_media(monkeypatch, pages))
     # filed under its message, as the scan-first path files it
@@ -949,6 +953,36 @@ def test_the_scan_stops_with_the_error_when_every_worker_has_ended(harness):
         harness.run()
     asked = sum(1 for e in harness.events if e.startswith("Timeline page"))
     assert asked < 8
+
+
+def test_files_left_queued_when_every_worker_has_ended_fail_the_run(harness):
+    async def die(ele):
+        raise RuntimeError("worker broke")
+
+    harness.workers = 1
+    harness.areas = ["Timeline"]
+    # one page that fits the queue: the scan never has to wait for room
+    harness.pages["Timeline"] = [page(post_dict(1, [101]), post_dict(2, [102]))]
+    harness.on_download = {101: die}
+    with pytest.raises(RuntimeError, match="worker broke"):
+        harness.run()
+    assert harness.downloads == []
+    assert "processed" not in harness.events
+
+
+def test_a_failed_run_does_not_keep_its_walls_as_finished(harness):
+    async def die(ele):
+        raise RuntimeError("worker broke")
+
+    harness.workers = 1
+    harness.areas = ["Labels"]
+    harness.pages["Labels"] = [page(post_dict(1, [101]), post_dict(2, [102]))]
+    harness.on_download = {101: die}
+    with pytest.raises(RuntimeError, match="worker broke"):
+        harness.run()
+    assert "wall finished" in harness.events
+    assert "labels discarded" in harness.events
+    assert "labels committed" not in harness.events
 
 
 # ------------------------------------------------------------------ database rows

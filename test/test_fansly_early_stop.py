@@ -171,6 +171,42 @@ def test_a_scan_that_failed_leaves_the_mark_as_it_was(repeat):
     assert mark(repeat) == before
 
 
+def test_a_database_that_was_reset_is_scanned_in_full(repeat):
+    # the database is deleted, restored or moved; the profile cache, which
+    # holds the marks, stays
+    repeat.recorded = {"posts": set(), "messages": set()}
+    repeat.downloaded = set()
+    repeat.run()
+    assert len(asked(repeat, "Timeline")) == 3
+    assert len(asked(repeat, "Messages")) == 2
+    assert sorted(repeat.downloads) == [10_095, 10_096, 10_097, 10_098, 10_099, 10_100,
+                                        20_059, 20_060]
+
+
+def test_a_full_scan_stopped_after_a_reset_is_not_taken_for_finished(repeat):
+    async def stop_now(ele):
+        stop.request()
+        return None
+
+    repeat.areas = ["Timeline"]
+    repeat.recorded = {"posts": set(), "messages": set()}
+    repeat.downloaded = set()
+    # stopped on the first file: page 1's rows, the mark's post among them,
+    # are in the database again
+    repeat.on_download[10_100] = stop_now
+    with pytest.raises(stop.DownloadsStopped):
+        repeat.run()
+    stop.clear()
+    assert 100 in repeat.recorded["posts"]
+    assert not mark(repeat)
+
+    new_run(repeat)
+    repeat.on_download.clear()
+    repeat.run()
+    assert len(asked(repeat, "Timeline")) == 3
+    assert sorted(repeat.downloads) == [10_095, 10_096, 10_097, 10_098, 10_099, 10_100]
+
+
 def test_posts_recorded_by_a_labels_only_run_do_not_hide_new_timeline_posts(repeat):
     # a --posts labels run records wall posts 110 and 109 and downloads them;
     # the timeline isn't scanned, so its mark stays at 100
@@ -284,7 +320,8 @@ def decision(monkeypatch, settings_stub):
     incremental.record(ele, "Timeline", 10, True)
 
     async def ids(**k):
-        return {1, 2}
+        # the database has the mark's post
+        return {1, 2, 10}
 
     async def pending(model_id, username):
         return set()
