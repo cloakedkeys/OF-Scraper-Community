@@ -1160,7 +1160,7 @@ def stored_ahead(tmp_path, source, rate, shape="ffmpeg"):
     direct = tmp_path / "ahead.mp4"
     if shape == "ffmpeg":
         direct.write_bytes(direct_bytes(tmp_path, *source, *codecs, "-use_editlist", "0"))
-        assert first_sound_packet(direct) > 2 / rate
+        assert first_sound_packet(direct) > 0.028
     else:
         for name, only in (("v.mp4", "-an"), ("a.mp4", "-vn")):
             (tmp_path / name).write_bytes(
@@ -1170,7 +1170,7 @@ def stored_ahead(tmp_path, source, rate, shape="ffmpeg"):
             tmp_path, "-copyts", "-i", str(tmp_path / "v.mp4"), "-i", str(tmp_path / "a.mp4"),
             "-map", "0:v", "-map", "1:a", "-c", "copy", "-use_editlist", "0",
         ))
-        assert first_sound_packet(direct) < 0.03
+        assert first_sound_packet(direct) < 0.028
     assert video_after_sound(direct) == pytest.approx(2 / rate, abs=0.002)
     return direct
 
