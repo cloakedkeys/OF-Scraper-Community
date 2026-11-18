@@ -394,20 +394,58 @@ def test_a_new_link_the_cdn_accepts_clears_the_refusal(fansly, monkeypatch):
     assert asyncio.run(address.try_link(None, link(1, None, "plain"))) is None
 
 
-def test_the_link_tried_again_is_one_the_cdn_accepted_for_another_file(fansly):
+def test_the_links_tried_again_are_ones_the_cdn_accepted_for_other_files(fansly):
     refused = link(1, OLD, "old")
-    assert address.accepted_link(refused) == link(9999, OLD, "scan")
-    # nothing kept for the range, or only this file's own link
-    assert address.accepted_link(link(1, NEW, "old")) is None
-    address._keep(OLD, link(1, OLD, "scan"), True)
-    assert address.accepted_link(refused) is None
+    assert address.accepted_links(refused) == [link(9999, OLD, "scan")]
+    # nothing kept for the range
+    assert address.accepted_links(link(1, NEW, "old")) == []
+    # two are kept, the newest first; a file is kept once, and a third
+    # replaces the oldest
+    scan_link(OLD, n=8)
+    scan_link(OLD, n=8)
+    assert address.accepted_links(refused) == [link(8, OLD, "scan"), link(9999, OLD, "scan")]
+    scan_link(OLD, n=9)
+    assert address.accepted_links(refused) == [link(9, OLD, "scan"), link(8, OLD, "scan")]
     # a kept link that has run out would be refused whatever the range
     address._keep(OLD, link(2, OLD, "scan", until=int(time.time()) + 5), True)
-    assert address.accepted_link(refused) is None
-    # a refusal of the range drops it
+    assert address.accepted_links(refused) == [link(9, OLD, "scan")]
+    # this file's own link says nothing about it
+    address._keep(OLD, link(1, OLD, "scan"), True)
+    assert address.accepted_links(refused) == [link(9, OLD, "scan")]
+    # a kept link whose file was deleted is dropped
+    address.gone(link(9, OLD, "scan"))
+    assert address.accepted_links(refused) == []
+    # a refusal of the range drops them all
     scan_link(OLD)
     address.refused(refused)
-    assert address.accepted_link(refused) is None
+    assert address.accepted_links(refused) == []
+
+
+def test_a_range_is_refused_only_when_every_kept_link_is(fansly, monkeypatch):
+    scan_link(OLD, n=9998)
+    first, second = waiting(2)
+    deleted = {"/100/9998.png"}
+
+    async def cdn_accepts(c, url):
+        fansly.probes.append(url)
+        return refresh._path(url) not in deleted
+
+    monkeypatch.setattr(address, "_cdn_accepts", cdn_accepts)
+    confirmed, tried = asyncio.run(
+        refresh.fansly_refresher._range_refused(first, first.url)
+    )
+    # the newest kept link is refused, the other one accepted: its file is
+    # gone, the range is fine, and it is not tried again
+    assert not confirmed
+    assert fansly.probes == [link(9998, OLD, "scan"), link(9999, OLD, "scan")]
+    assert address.accepted_links(first.url) == [link(9999, OLD, "scan")]
+    # both refused: the range is
+    scan_link(OLD, n=9998)
+    deleted.add("/100/9999.png")
+    confirmed, tried = asyncio.run(
+        refresh.fansly_refresher._range_refused(second, second.url)
+    )
+    assert confirmed and len(tried) == 2
 
 
 def test_files_wait_for_the_end_of_a_pause_then_share_a_call(fansly, monkeypatch):

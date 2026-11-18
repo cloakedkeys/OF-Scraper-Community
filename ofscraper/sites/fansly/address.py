@@ -12,6 +12,11 @@ A response whose range the CDN refuses is asked for again from the API
 host's next address, and requests stay on the first address whose links the
 CDN accepts. Until a response is refused, nothing changes.
 
+The accepted links are kept, up to ``WITNESSES`` per range (the second is
+tried from a later response, so it is another post's file). They are what a
+later refusal is checked against: their files were there, a refused file may
+just be deleted.
+
 Nothing here logs an address, a policy or a link.
 """
 
@@ -30,8 +35,10 @@ log = logging.getLogger("shared")
 
 # address range -> whether the CDN accepts links signed for it
 _accepted = {}
-# address range -> a link signed for it that the CDN accepted
+# address range -> links signed for it that the CDN accepted, each of another
+# file and from another response, newest last
 _witness = {}
+WITNESSES = 2
 # a kept link this close to running out (seconds) is not tried again
 WITNESS_MARGIN = 60
 # host -> which of its addresses (in sorted order) requests go to
@@ -89,11 +96,29 @@ def _run_out(url) -> bool:
         return False
 
 
+def _kept(signed_for, but=None):
+    """The kept links of a range that haven't run out, without the one of
+    ``but``'s file."""
+    path = urlsplit(but).path if but else None
+    return [
+        url
+        for url in _witness.get(signed_for, ())
+        if not _run_out(url) and urlsplit(url).path != path
+    ]
+
+
+def _wanted(signed_for, url) -> bool:
+    """True when fewer than ``WITNESSES`` links are kept for the range and
+    ``url`` is of a file none of them is of."""
+    kept = _kept(signed_for)
+    return len(kept) < WITNESSES and len(_kept(signed_for, url)) == len(kept)
+
+
 def _keep(signed_for, url, verdict):
     """What the CDN said about ``url``, a link signed for ``signed_for``."""
     _accepted[signed_for] = verdict
     if verdict:
-        _witness[signed_for] = url
+        _witness[signed_for] = [*_kept(signed_for, url), url][-WITNESSES:]
     else:
         _witness.pop(signed_for, None)
 
@@ -149,6 +174,11 @@ async def usable(c, data) -> bool:
             if verdict is None:
                 continue
             _keep(signed_for, url, verdict)
+        elif _accepted[signed_for] and _wanted(signed_for, url):
+            # a link of another file, from a later response. A refusal of it
+            # decides nothing: that file may be gone
+            if await _cdn_accepts(c, url):
+                _keep(signed_for, url, True)
         if not _accepted[signed_for]:
             if not _told:
                 _told = True
@@ -203,22 +233,29 @@ async def try_link(c, url):
     return verdict
 
 
-def accepted_link(url):
-    """A link of another file that the CDN accepted earlier, signed for the
-    same range as ``url``; None when none is kept or it has run out.
+def accepted_links(url):
+    """The links of other files that the CDN accepted earlier, signed for
+    the same range as ``url``, newest first; none when none is kept or they
+    have run out.
 
-    That file was there then, so what the CDN says to it now is about the
-    range: a link of a file that may be deleted says nothing."""
+    Those files were there then, so what the CDN says to them now is about
+    the range: a link of a file that may be deleted says nothing. One of
+    them may be deleted since, so the range is refused only when all are."""
     signed_for = _range(url) if url else None
-    other = _witness.get(signed_for) if signed_for else None
-    if not other or urlsplit(other).path == urlsplit(url).path or _run_out(other):
-        return None
-    return other
+    return _kept(signed_for, url)[::-1] if signed_for else []
+
+
+def gone(url):
+    """``url`` is kept no longer: the CDN refuses it and accepts another
+    link of its range, so its file was deleted."""
+    signed_for = _range(url) if url else None
+    if signed_for in _witness:
+        _witness[signed_for] = [u for u in _witness[signed_for] if u != url]
 
 
 def refused(url):
     """The CDN refuses links signed for the range ``url`` is signed for (the
-    caller has the evidence: ``accepted_link`` is refused now, or the file's
+    caller has the evidence: ``accepted_links`` are refused now, or the file's
     new link, signed for another range, is accepted).
 
     The address downloads leave from changed (a VPN switch), so every link

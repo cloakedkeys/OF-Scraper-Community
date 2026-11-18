@@ -316,10 +316,11 @@ class FanslyRefresher:
 
     One 403 is not proof that a range is dead: a deleted file answers 403
     too, and the files of deleted posts wait side by side. So before a range
-    is marked refused (``address.refused``), a link signed for it that the
-    CDN accepted earlier in the run is tried again (one byte,
-    ``address.accepted_link``): that file was there, so a refusal now is
-    about the range. If the CDN still accepts it, or no such link is kept,
+    is marked refused (``address.refused``), the links signed for it that
+    the CDN accepted earlier in the run are tried again (one byte each, up
+    to two, ``address.accepted_links``): those files were there, so a
+    refusal of all of them now is about the range. If the CDN still accepts
+    one, or no such link is kept,
     only this file gets a new link, on its own; when that link is signed for
     another range the CDN accepts, the address did change, and the old range
     is marked then (``_moved``).
@@ -380,17 +381,27 @@ class FanslyRefresher:
 
     async def _range_refused(self, ele, link):
         """(whether the range ``link`` is signed for is refused, the other
-        link that was tried): a link signed for it that the CDN accepted
-        earlier is tried again. None kept: not known, so not refused."""
-        other = address.accepted_link(link)
-        if not other:
-            return False, None
+        links that were tried): the links signed for it that the CDN
+        accepted earlier are tried again, and it is refused when all of them
+        are. One of their files may be deleted too; with two kept, both
+        would have to be. None kept: not known, so not refused."""
+        tried = []
         try:
             async with manager.Manager.session.aget_ofsession() as c:
-                return await address.cdn_refuses(c, other) is True, other
+                for other in address.accepted_links(link):
+                    verdict = await address.cdn_refuses(c, other)
+                    if verdict is None:
+                        return False, tried
+                    if not verdict:
+                        # the range is fine, so the refused ones are gone
+                        for dead in tried:
+                            address.gone(dead)
+                        return False, tried
+                    tried.append(other)
         except Exception as E:
             log.debug(f"Media {ele.id}: could not try another link: {type(E).__name__}")
-            return False, None
+            return False, tried
+        return bool(tried), tried
 
     async def _call(self, ids):
         """``account/media`` for ``ids``, asked once. A failed call is tried
@@ -516,9 +527,9 @@ class FanslyRefresher:
             ):
                 # replaced after the refused request was made
                 return None
-            other = None
+            others = []
             if link is not None and not address.is_refused(link):
-                confirmed, other = await self._range_refused(ele, link)
+                confirmed, others = await self._range_refused(ele, link)
                 if not confirmed:
                     return THIS_FILE_ONLY
                 address.refused(link)
@@ -541,7 +552,7 @@ class FanslyRefresher:
                 if item is ele or not item_id or not address.is_refused(item.url):
                     continue
                 batch.setdefault(str(item_id), []).append(item)
-            avoid = {_path(u) for u in (link, other) if u}
+            avoid = {_path(u) for u in (link, *others) if u}
             got_new, problem, replaced, refused = False, None, set(), set()
             every_address = False
             for ask in range(fansly_api.ADDRESS_ASKS):

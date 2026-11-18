@@ -289,7 +289,7 @@ def test_with_no_link_tried_before_a_files_new_link_shows_the_change(world):
 
 
 def test_a_range_marked_wrongly_costs_one_shared_call_and_is_cleared(world):
-    # the file of the link tried to confirm the refusal is deleted too
+    # the file of the only link kept to confirm the refusal is deleted too
     s = world.session = Session(None, deleted={"0.png", "9999.png"})
     s.answer = new_signature(s, lambda s: OLD)
     items = queue(40)
@@ -299,6 +299,21 @@ def test_a_range_marked_wrongly_costs_one_shared_call_and_is_cleared(world):
     assert len(shared(s)) == 1
     assert address.is_accepted(items[5].url)
     assert alone(s) == []
+    assert s.dns_cleared == 0
+
+
+def test_one_kept_link_deleted_too_marks_no_range_while_another_is_accepted(world):
+    # two links of the range were accepted during the scan; the file of the
+    # newest is deleted, and so is the file being downloaded
+    scan_link(OLD, n=9998)
+    s = world.session = Session(None, deleted={"0.png", "9998.png"})
+    s.answer = new_signature(s, lambda s: OLD)
+    items = queue(40)
+    results, _ = run(s, items)
+    assert results == [False] + [True] * 39
+    assert shared(s) == []
+    assert alone(s) == [["1000"]]
+    assert not address.is_refused(items[5].url)
     assert s.dns_cleared == 0
 
 
