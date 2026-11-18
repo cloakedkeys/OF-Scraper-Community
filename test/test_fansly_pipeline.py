@@ -992,6 +992,63 @@ def test_one_worker_ending_while_the_others_finish_fails_the_run(harness):
     assert "processed" not in harness.events
 
 
+def test_a_worker_cancelled_without_a_stop_fails_the_run(harness):
+    async def cancelled(ele):
+        raise asyncio.CancelledError()
+
+    harness.workers = 1
+    harness.areas = ["Timeline"]
+    harness.pages["Timeline"] = [page(post_dict(1, [101]), post_dict(2, [102]))]
+    # nobody asked for a stop, and nothing is left queued when the worker ends
+    harness.on_download = {102: cancelled}
+    with pytest.raises(RuntimeError, match="a download worker was cancelled"):
+        harness.run()
+    assert harness.downloads == [101]
+    assert "processed" not in harness.events
+
+
+def test_the_first_worker_to_fail_gives_the_run_its_error(harness):
+    async def late(ele):
+        await asyncio.sleep(0.05)
+        raise RuntimeError("failed second")
+
+    async def early(ele):
+        raise RuntimeError("failed first")
+
+    harness.workers = 2
+    harness.areas = ["Timeline"]
+    harness.pages["Timeline"] = [page(post_dict(1, [101]), post_dict(2, [102]))]
+    # the worker started first takes 101 and fails last
+    harness.on_download = {101: late, 102: early}
+    with pytest.raises(RuntimeError, match="failed first"):
+        harness.run()
+
+
+def test_a_worker_error_is_still_said_when_a_stop_follows_it(harness, monkeypatch):
+    said = []
+
+    class Log:
+        def __getattr__(self, name):
+            return said.append if name == "warning" else lambda *a, **k: None
+
+    async def die(ele):
+        raise RuntimeError("worker broke")
+
+    async def stop_now(ele):
+        await asyncio.sleep(0.05)
+        stop.request()
+        return None
+
+    monkeypatch.setattr(pipeline, "log", Log())
+    harness.workers = 2
+    harness.areas = ["Timeline"]
+    harness.pages["Timeline"] = [page(post_dict(1, [101]), post_dict(2, [102]))]
+    harness.on_download = {101: die, 102: stop_now}
+    with pytest.raises(stop.DownloadsStopped):
+        harness.run()
+    assert any("worker broke" in line for line in said)
+
+
 def test_a_failed_run_does_not_keep_its_walls_as_finished(harness):
     async def die(ele):
         raise RuntimeError("worker broke")
