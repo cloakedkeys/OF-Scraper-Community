@@ -226,7 +226,7 @@ def test_a_reset_database_given_its_newest_post_back_is_still_scanned_in_full(
 
 def test_a_mark_without_the_oldest_post_is_dropped(repeat):
     # written by an earlier version of this rule
-    del repeat.cache[incremental.mark_key(MODEL_ID, "Timeline")]["oldest"]
+    repeat.cache[incremental.mark_key(MODEL_ID, "Timeline")].pop("oldest", None)
     repeat.areas = ["Timeline"]
     repeat.run()
     assert len(asked(repeat, "Timeline")) == 3
@@ -399,6 +399,17 @@ def test_each_switch_forces_a_full_scan(decision, monkeypatch, switch):
 
 def test_within_the_full_scan_period_the_scan_may_stop(decision):
     assert decision.decide(now=time.time() + 7 * DAY - 60) is not None
+
+
+def test_a_full_scan_dated_in_the_future_means_a_full_scan(decision):
+    # the clock was a year ahead when the full scan was recorded
+    incremental.record(
+        decision.ele, "Timeline", 10, True, now=time.time() + 365 * DAY, oldest=1
+    )
+    assert decision.decide() is None
+    # the full scan this run does is dated now, and the next run may stop
+    incremental.record(decision.ele, "Timeline", 10, True, oldest=1)
+    assert decision.decide(now=time.time() + 60) is not None
 
 
 def test_an_early_stopped_scan_keeps_the_last_full_scan_time(decision):

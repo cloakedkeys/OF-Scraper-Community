@@ -193,6 +193,8 @@ class _Run:
         self.rows = set()  # media keys whose row is written this run
         self.locked_rows = {}  # media key -> a locked copy, row not yet written
         self.workers = []
+        self.ended = []  # workers, in the order they ended
+        self.cancelled = set()  # workers the pipeline cancelled itself
         self.queue = None
         self.selector = None
         self.download_session = None
@@ -328,9 +330,15 @@ class WorkersEnded(Exception):
 
 
 def _worker_error(run):
-    """The error a worker ended with, or None."""
-    for task in run.workers:
-        if task.done() and not task.cancelled() and task.exception() is not None:
+    """The error of the first worker that failed, or None. A worker cancelled
+    by anything but the pipeline itself left its file undone, so it failed."""
+    for task in [*run.ended, *run.workers]:
+        if not task.done():
+            continue
+        if task.cancelled():
+            if task not in run.cancelled:
+                return RuntimeError("a download worker was cancelled")
+        elif task.exception() is not None:
             return task.exception()
     return None
 
@@ -502,10 +510,14 @@ async def _fresh_links(run, chunk):
 
 async def _room(run):
     """Wait until the queue has room; stop with the workers' error if every
-    worker has ended (see ``_put``)."""
-    while run.queue.full():
-        if all(task.done() for task in run.workers):
+    worker has ended (see ``_put``). That is checked with room in the queue
+    too: nothing would take the file, and no call for new links is worth
+    making."""
+    while True:
+        if run.workers and all(task.done() for task in run.workers):
             raise WorkersEnded() from _workers_error(run)
+        if not run.queue.full():
+            return
         await asyncio.sleep(ROOM_POLL)
 
 
@@ -567,36 +579,42 @@ async def _worker(run):
             run.current.pop(task, None)
 
 
-def _cancel_streams(run, cancelled):
+def _cancel_streams(run):
     """A stop request cancels the scan and the direct-file transfers, but the
     stream downloader takes no part in it. Cancel the workers inside a stream
     download, so the run doesn't wait for every video to finish. The stream
     downloader keeps its finished segments for the next run."""
     for task, ele in list(run.current.items()):
-        if task not in cancelled and fansly_video.uses_stream(ele):
-            cancelled.add(task)
+        if task not in run.cancelled and fansly_video.uses_stream(ele):
+            run.cancelled.add(task)
             task.cancel()
 
 
 async def _drain(run, workers):
     """End the workers once the queue is empty, cancelling streams on a stop."""
     ends = len(workers)
-    cancelled = set()
     while True:
         if stop.requested.is_set():
-            _cancel_streams(run, cancelled)
+            _cancel_streams(run)
         while ends and not run.queue.full():
             run.queue.put_nowait(_END)
             ends -= 1
         _, pending = await asyncio.wait(workers, timeout=0.25)
         if not pending:
             break
+    error = _worker_error(run)
     if stop.requested.is_set():
+        if error is not None:
+            # the stop is what the run reports; the error is still said
+            log.warning(
+                f"[{run.username}] a download worker ended on an error: "
+                f"{type(error).__name__}: {error}"
+            )
+            log.traceback_(error)
         return
     # a worker that ended on an error left its file undone, and the files
     # still queued when it was the last one: the run fails with that error,
     # as the list downloader's does, instead of ending as a success
-    error = _worker_error(run)
     if error is not None:
         raise error
     left = []
@@ -636,6 +654,8 @@ async def _download(run, produce):
                 run.queue = asyncio.Queue(maxsize=QUEUE_PER_WORKER * count)
                 workers = [asyncio.create_task(_worker(run)) for _ in range(count)]
                 run.workers = workers
+                for task in workers:
+                    task.add_done_callback(run.ended.append)
                 try:
                     producer = asyncio.create_task(produce(run))
                     try:
@@ -648,6 +668,7 @@ async def _download(run, produce):
                 finally:
                     for task in workers:
                         if not task.done():
+                            run.cancelled.add(task)
                             task.cancel()
                     await asyncio.gather(*workers, return_exceptions=True)
         finally:
