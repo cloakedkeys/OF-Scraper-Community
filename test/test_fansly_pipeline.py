@@ -962,6 +962,36 @@ def test_files_left_queued_when_every_worker_has_ended_fail_the_run(harness):
     assert "processed" not in harness.events
 
 
+def test_a_worker_that_ends_on_the_last_file_fails_the_run(harness):
+    async def die(ele):
+        raise RuntimeError("worker broke")
+
+    harness.workers = 1
+    harness.areas = ["Timeline"]
+    harness.pages["Timeline"] = [page(post_dict(1, [101]), post_dict(2, [102]))]
+    # nothing is left in the queue when the only worker ends
+    harness.on_download = {102: die}
+    with pytest.raises(RuntimeError, match="worker broke"):
+        harness.run()
+    assert harness.downloads == [101]
+    assert "processed" not in harness.events
+
+
+def test_one_worker_ending_while_the_others_finish_fails_the_run(harness):
+    async def die(ele):
+        raise RuntimeError("worker broke")
+
+    harness.workers = 2
+    harness.areas = ["Timeline"]
+    harness.pages["Timeline"] = [page(*(post_dict(n, [100 + n]) for n in range(1, 5)))]
+    harness.on_download = {101: die}
+    with pytest.raises(RuntimeError, match="worker broke"):
+        harness.run()
+    # the other worker downloaded the rest before the run failed
+    assert sorted(harness.downloads) == [102, 103, 104]
+    assert "processed" not in harness.events
+
+
 def test_a_failed_run_does_not_keep_its_walls_as_finished(harness):
     async def die(ele):
         raise RuntimeError("worker broke")
