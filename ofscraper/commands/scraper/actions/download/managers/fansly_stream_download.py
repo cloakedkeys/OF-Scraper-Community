@@ -212,20 +212,33 @@ def _run_process(proc, cmd, timeout, cwd=None):
     return p.returncode, stderr
 
 
-def _packet_times(ffprobe, path, stream):
-    """Packet times (seconds) of one stream, read without decoding."""
+def _read_times(out, played=False):
+    """The times in ffprobe's ``time,flags`` lines. ``played``: leave out
+    packets the file marks as not played (the ``D`` flag)."""
+    times = []
+    for line in out.splitlines():
+        parts = line.strip().strip(",").split(",")
+        if played and len(parts) > 1 and "D" in parts[-1]:
+            continue
+        try:
+            times.append(float(parts[0]))
+        except ValueError:
+            pass  # N/A, or an empty line
+    return times
+
+
+def _packet_times(ffprobe, path, stream, played=False):
+    """Packet times (seconds) of one stream, read without decoding.
+
+    ``played``: only the packets that are played. An MP4 keeps packets it
+    marks as not played (an AAC encoder's lead-in, what an edit list cuts);
+    counted, they make a stream look longer than it plays."""
     out = subprocess.run(
         [str(ffprobe), "-v", "error", "-select_streams", stream,
-         "-show_entries", "packet=dts_time", "-of", "csv=p=0", str(path)],
+         "-show_entries", "packet=dts_time,flags", "-of", "csv=p=0", str(path)],
         capture_output=True, text=True, check=True,
     ).stdout
-    times = []
-    for value in out.split():
-        try:
-            times.append(float(value.strip(",")))
-        except ValueError:
-            pass  # N/A
-    return times
+    return _read_times(out, played)
 
 
 def _first_shown(ffprobe, path, stream):
@@ -233,19 +246,15 @@ def _first_shown(ffprobe, path, stream):
 
     Not its first packet's decode time: with B-frames that is earlier than
     the first shown frame, by an amount that depends on the encoder's
-    settings, so it can't be compared between two encodings of one upload."""
+    settings, so it can't be compared between two encodings of one upload.
+    Packets the file marks as not played don't count."""
     out = subprocess.run(
         [str(ffprobe), "-v", "error", "-select_streams", stream,
-         "-read_intervals", "%+#64", "-show_entries", "packet=pts_time",
+         "-read_intervals", "%+#64", "-show_entries", "packet=pts_time,flags",
          "-of", "csv=p=0", str(path)],
         capture_output=True, text=True, check=True,
     ).stdout
-    times = []
-    for value in out.split():
-        try:
-            times.append(float(value.strip(",")))
-        except ValueError:
-            pass  # N/A
+    times = _read_times(out, played=True)
     return min(times) if times else None
 
 
@@ -677,7 +686,7 @@ class FanslyStreamDownloadManager(DownloadManager):
         rendition would put the sound out of step by the difference in
         length."""
         direct_video, direct_audio, joined_video, joined_audio = [
-            await self._probe(_packet_times, ffprobe, path, stream)
+            await self._probe(_packet_times, ffprobe, path, stream, True)
             for path, stream in (
                 (direct, "v:0"), (direct, "a:0"), (joined, "v:0"), (joined, "a:0")
             )

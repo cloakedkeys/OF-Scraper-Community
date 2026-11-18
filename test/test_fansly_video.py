@@ -1027,6 +1027,32 @@ def test_sound_that_starts_elsewhere_against_its_video_is_not_used(env, tmp_path
     saved_silent_with_warning(run, caplog, "out of step")
 
 
+def test_times_of_packets_marked_as_not_played_are_left_out():
+    out = "-0.023220,KD_\n0.000000,K__\n0.023220,K__\nN/A,K__\n\n"
+    assert stream_mod._read_times(out) == [-0.02322, 0.0, 0.02322]
+    assert stream_mod._read_times(out, played=True) == [0.0, 0.02322]
+    # ffprobe without a flags column
+    assert stream_mod._read_times("0.5\n1.0,\n", played=True) == [0.5, 1.0]
+
+
+@needs_ffmpeg
+def test_packets_the_file_marks_as_hidden_do_not_count(env, tmp_path, caplog, rate=44100):
+    # 60 fps video with AAC sound, as phones record it. An MP4 keeps the
+    # encoder's lead-in packet and marks it as not played; counted, it makes
+    # the sound look longer than the video by more than two short frames
+    data = direct_bytes(
+        tmp_path, "-f", "lavfi", "-i", "testsrc=size=80x60:rate=60:duration=3",
+        "-f", "lavfi", "-i", f"sine=frequency=440:duration=3:sample_rate={rate}",
+        "-c:v", "mpeg4", "-g", "60", "-c:a", "aac",
+    )
+    run = refused_audio_download(
+        env, tmp_path, caplog, setup=with_direct(data), video_args=("-r", "60", "-g", "60"),
+    )
+    assert "longer than" not in caplog.text and "out of step" not in caplog.text
+    assert kinds_of(run.out) == ["audio", "video"]
+    assert "without sound" not in warnings_in(caplog)
+
+
 def has_encoder(name):
     if not FFMPEG:
         return False
