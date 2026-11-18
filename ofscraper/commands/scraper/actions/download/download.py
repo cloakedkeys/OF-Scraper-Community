@@ -82,7 +82,15 @@ async def _download_again(c, ele, model_id=None, username=None):
     disk), which uses no check."""
     ele.still_silent = False
     ele.not_kept = None
-    media_type, _ = await download(c, ele, model_id, username)
+    try:
+        media_type, _ = await download(c, ele, model_id, username)
+    finally:
+        # a size limit swaps the item's type for the download, and no
+        # download loop ends this one. The item gets its type back here, so
+        # the stats still count the video this run saved
+        restore = getattr(ele, "update_download_status", None)
+        if restore:
+            restore()
     if str(media_type).lower() == "videos":
         return True
     if getattr(ele, "still_silent", False):

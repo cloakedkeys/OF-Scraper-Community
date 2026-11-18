@@ -398,3 +398,29 @@ def test_no_checks_when_the_limit_is_zero(run, monkeypatch):
     monkeypatch.setattr(silent, "limit", lambda: 0)
     silent.flag(MODEL, make_ele(0), "out/video.mp4")
     assert silent.flags(MODEL) == {}
+
+
+def test_a_copy_not_kept_for_its_size_leaves_the_video_in_the_runs_counts(monkeypatch):
+    import ofscraper.commands.scraper.actions.download.download as download_mod
+    from ofscraper.classes.of.media import Media
+    from ofscraper.classes.of.posts import Post
+    from ofscraper.managers.stats import DownloadStats, StatsManager
+
+    post = Post({"id": 3001, "postedAt": "2026-01-02T03:04:05+00:00", "text": ""},
+                MODEL, "a-creator", responsetype="timeline")
+    ele = Media({"id": 2001, "type": "video", "canView": True, "size": 1000}, 0, post)
+    # saved without sound earlier in this run
+    ele.mark_download_succeeded()
+
+    async def too_big(c, ele, model_id, username):
+        # what the stream downloader does with a copy over size_max
+        ele.mediatype = "Forced_skipped"
+        ele.not_kept = "the copy with sound was skipped by the size limits"
+        return "forced_skipped", 0
+
+    monkeypatch.setattr(download_mod, "download", too_big)
+    again = asyncio.run(download_mod._download_again(None, ele, MODEL, "a-creator"))
+    assert again == silent.NOT_KEPT
+    stats = DownloadStats("a-creator")
+    StatsManager._update_download_stats_helper(None, stats, [ele])
+    assert (stats.video_count, stats.skipped_count, stats.failed_count) == (1, 0, 0)
