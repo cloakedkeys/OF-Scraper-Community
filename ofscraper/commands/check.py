@@ -325,8 +325,9 @@ async def _refresh_failed_posts(username, model_id, media):
             if key in seen:
                 continue
             seen.add(key)
-            if area == "paid":
+            if area in {"paid", "purchased"}:
                 # purchases can't be asked for one post: fetched once
+                # (a Fansly purchase's area is "purchased")
                 if paid_posts is None:
                     paid_posts = await _all_paid(username, model_id)
                 data = next(
@@ -701,6 +702,14 @@ async def post_check_retriver(forced=False, only_model_id=None):
                 yield user_name, model_id, [data], None
 
 
+# Fansly's own pages: the first part of their links isn't a creator
+FANSLY_PAGES = {
+    "post", "live", "messages", "explore", "home", "notifications",
+    "settings", "lists", "collection", "subscriptions", "vault", "search",
+    "tags", "wallet",
+}
+
+
 async def _fansly_creator(name, c=None):
     """(username, account id) of the Fansly creator ``name`` (a username or
     an account id, or a link to their profile), or (None, None) when Fansly
@@ -709,10 +718,10 @@ async def _fansly_creator(name, c=None):
     link = re.search(r"fansly\.com/([^/?#]+)", name, re.IGNORECASE)
     if link:
         name = link.group(1)
-        if name.lower() == "post":
+        if name.lower() in FANSLY_PAGES:
             log.warning(
-                "Skipping a Fansly post link: check mode takes the creator's "
-                "name or profile link"
+                f"Skipping a Fansly {name.lower()} link: check mode takes the "
+                "creator's name or profile link"
             )
             return None, None
     if name:

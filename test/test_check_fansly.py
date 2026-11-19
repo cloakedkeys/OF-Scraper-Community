@@ -147,13 +147,15 @@ def test_stories_check_is_refused_for_fansly(fansly_check, monkeypatch, caplog):
         ("https://fansly.com/creator_a/posts", ("creator_a", 111)),
         ("fansly.com/creator_b?tab=media", ("creator_b", 222)),
         ("https://fansly.com/post/123456", (None, None)),
+        ("https://fansly.com/live/creator_a", (None, None)),
+        ("https://fansly.com/messages/123456", (None, None)),
     ],
 )
 def test_profile_links_name_the_creator(fansly_check, caplog, link, expected):
     with caplog.at_level(logging.WARNING, logger="shared"):
         assert asyncio.run(check._fansly_creator(link, object())) == expected
     if expected == (None, None):
-        assert "Skipping a Fansly post link" in caplog.text
+        assert "Skipping a Fansly " in caplog.text and " link: check mode" in caplog.text
         assert fansly_check.models_asked == []  # not looked up as a name
 
 
@@ -174,6 +176,17 @@ def test_failed_purchased_posts_fetch_the_purchases_once(fansly_check, monkeypat
         fansly_check.fetched.append(("paid", str(model_id), None))
         return [{"id": 5}, {"id": 6}, {"id": 7}]
 
+    # built as purchase_check builds them, from Fansly's purchase shape
+    failed = [
+        SimpleNamespace(
+            post=check.posts_.Post(
+                {"id": i, "responseType": "purchased", "media": []},
+                111, "creator_a", purchased=True,
+            )
+        )
+        for i in (5, 6)
+    ]
+    assert failed[0].post.responsetype.lower() == "purchased"
     monkeypatch.setattr(check.fansly_scrape, "get_paid_posts", purchases)
     monkeypatch.setattr(check.posts_, "Post", lambda p, *a, **k: p)
     processed = []
@@ -182,9 +195,6 @@ def test_failed_purchased_posts_fetch_the_purchases_once(fansly_check, monkeypat
         processed.extend(posts)
 
     monkeypatch.setattr(check, "process_post_media", process)
-    failed = [
-        SimpleNamespace(post=SimpleNamespace(responsetype="paid", id=i)) for i in (5, 6)
-    ]
     loop = asyncio.new_event_loop()  # @run uses the thread's loop
     asyncio.set_event_loop(loop)
     try:
