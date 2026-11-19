@@ -7,13 +7,16 @@ adds the Fansly headers for ``apiv3.fansly.com``. Responses come wrapped in
 
 import logging
 
-from ofscraper.sites.fansly import constants, normalize
+from ofscraper.sites.fansly import address, constants, normalize
 from ofscraper.sites.fansly.me import unwrap
 
 log = logging.getLogger("shared")
 
+# the API host has four addresses: the first ask, then one per address
+ADDRESS_ASKS = 5
 ACCOUNT_IDS_BATCH = 5
-ACCOUNT_MEDIA_BATCH = 150
+# one account/media call answers at most 100 ids and says nothing about the rest
+ACCOUNT_MEDIA_BATCH = 100
 FOLLOWING_LIMIT = 50
 GROUPS_LIMIT = 20
 MESSAGES_LIMIT = 25
@@ -26,9 +29,32 @@ def _ids(values):
     return ",".join(str(v) for v in values)
 
 
-async def get_json(c, path):
-    async with c.requests_async(url=constants.api_url(path)) as r:
-        return unwrap(await r.json_())
+async def get_json(c, path, asks=None):
+    """The payload of one API call.
+
+    A response whose links are signed for an address the CDN refuses (#536)
+    is asked for again from the API host's next address, up to
+    ``ADDRESS_ASKS`` times in all, or ``asks`` times. A call limited by
+    ``asks`` moves the address at most ``asks - 1`` times and then uses the
+    links as they are, without forgetting the refused ranges. The link
+    refresher asks once and decides about the address itself
+    (``next_address``).
+    """
+    url = constants.api_url(path)
+    limit = asks or ADDRESS_ASKS
+    for ask in range(limit):
+        async with c.requests_async(url=url) as r:
+            data = unwrap(await r.json_())
+        if await address.usable(c, data):
+            return data
+        log.debug(f"Fansly: links signed for another address (ask {ask + 1} of {limit})")
+        if asks and ask + 1 >= limit:
+            break
+        address.try_next_address(c, url)
+    log.debug("Fansly: still signed for another address, using the links as they are")
+    if not asks:
+        address.forget_refused()
+    return data
 
 
 # ------------------------------------------------------------------ accounts
@@ -74,16 +100,22 @@ async def following_ids(c, my_account_id, limit=None):
     return out
 
 
+def next_address(c):
+    """Send the next API calls to the API host's next address."""
+    address.try_next_address(c, constants.api_url(""))
+
+
 # ------------------------------------------------------------------ media backfill
 
 
-async def account_media(c, ids):
-    """Full accountMedia objects by accountMedia id, 150 per call."""
+async def account_media(c, ids, asks=None):
+    """Full accountMedia objects by accountMedia id, 100 per call (``asks``:
+    see ``get_json``)."""
     out = []
     ids = [str(i) for i in ids]
     for start in range(0, len(ids), ACCOUNT_MEDIA_BATCH):
         batch = ids[start : start + ACCOUNT_MEDIA_BATCH]
-        out.extend(await get_json(c, f"account/media?ids={_ids(batch)}") or [])
+        out.extend(await get_json(c, f"account/media?ids={_ids(batch)}", asks=asks) or [])
     return out
 
 
@@ -193,7 +225,20 @@ def group_id_for(pages, account_id):
 
 async def messages(c, group_id, after=None):
     """All message dicts of one conversation, newest first (``before`` cursor)."""
-    out = []
+    return [
+        message
+        async for page in messages_pages(c, group_id, after=after)
+        for message in page
+    ]
+
+
+async def messages_pages(c, group_id, after=None):
+    """Message dicts of one conversation one page at a time, newest first.
+
+    ``before`` is the id of the last message of the previous page; paging
+    stops on an empty page, or once a page reaches messages older than
+    ``after`` (epoch seconds).
+    """
     before = None
     for _ in range(MAX_PAGES):
         path = f"message?groupId={group_id}&limit={MESSAGES_LIMIT}"
@@ -202,22 +247,58 @@ async def messages(c, group_id, after=None):
         response = await get_json(c, path) or {}
         page = response.get("messages") or []
         if not page:
-            break
-        out.extend(normalize.messages(response, await missing_media(c, response)))
+            return
+        yield normalize.messages(response, await missing_media(c, response))
         last = str(page[-1]["id"])
         if last == before:
-            break
+            return
         before = last
         oldest = normalize.to_seconds(page[-1].get("createdAt"))
         if after is not None and oldest is not None and oldest < after:
-            break
-    return out
+            return
 
 
 # ------------------------------------------------------------------ purchases
 
 
+async def _orders(c, account_id):
+    """The orders response, and one creator's purchase posts built from it."""
+    response = await get_json(c, "account/media/orders/?limit=9999&offset=0") or {}
+    return response, normalize.purchases(
+        response, account_id, await missing_media(c, response)
+    )
+
+
 async def purchases(c, account_id):
     """Purchased media of one creator (``account/media/orders/``), one post each."""
-    response = await get_json(c, "account/media/orders/?limit=9999&offset=0") or {}
-    return normalize.purchases(response, account_id, await missing_media(c, response))
+    return (await _orders(c, account_id))[1]
+
+
+async def purchase_pages(c, account_id):
+    """One creator's purchase posts in chunks of ``ACCOUNT_MEDIA_BATCH``.
+
+    The orders endpoint answers every purchase at once, so its links are all
+    signed at that moment. The first chunk is given as answered; each later
+    chunk's accountMedia is fetched again just before the chunk is given, so
+    its links are as new as the chunk. A post the new answer leaves out
+    keeps what the orders response gave.
+    """
+    response, found = await _orders(c, account_id)
+    orders = response.get("accountMediaOrders") or []
+    for start in range(0, len(found), ACCOUNT_MEDIA_BATCH):
+        chunk = found[start : start + ACCOUNT_MEDIA_BATCH]
+        if start:
+            ids = [str(post["id"]) for post in chunk]
+            wanted = set(ids)
+            rebuilt = normalize.purchases(
+                {
+                    "accountMediaOrders": [
+                        o for o in orders if str(o.get("accountMediaId")) in wanted
+                    ],
+                    "accountMedia": await account_media(c, ids),
+                },
+                account_id,
+            )
+            by_id = {post["id"]: post for post in rebuilt}
+            chunk = [by_id.get(post["id"], post) for post in chunk]
+        yield chunk
