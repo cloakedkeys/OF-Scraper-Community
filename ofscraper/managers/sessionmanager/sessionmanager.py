@@ -176,9 +176,11 @@ class SessionSleep:
             lock = self._alocks.get(loop)
             if lock is None:
                 # Not a WeakKeyDictionary: a lock that has been waited on
-                # holds its loop, so the entry would never expire. Drop the
-                # locks of finished loops instead.
-                for old in [x for x in self._alocks if x.is_closed()]:
+                # holds its loop, so the entry would never expire. @run
+                # never closes its loops, so drop the locks of every loop
+                # that isn't running: none of its tasks is inside the lock,
+                # and the loop gets a new one if it runs again.
+                for old in [x for x in self._alocks if not x.is_running()]:
                     del self._alocks[old]
                 lock = self._alocks[loop] = asyncio.Lock()
         return lock
