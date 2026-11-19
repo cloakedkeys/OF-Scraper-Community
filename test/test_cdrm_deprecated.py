@@ -56,7 +56,9 @@ def screen(monkeypatch):
 
 def _key_mode(monkeypatch, mode):
     monkeypatch.setattr(
-        network.settings, "get_settings", lambda: SimpleNamespace(key_mode=mode)
+        network.settings,
+        "get_settings",
+        lambda: SimpleNamespace(key_mode=mode, client_id=None, private_key=None),
     )
 
 
