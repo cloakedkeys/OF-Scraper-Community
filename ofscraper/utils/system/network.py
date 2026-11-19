@@ -9,6 +9,12 @@ import ofscraper.utils.console as console_
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 
+CDRM_DEPRECATED = (
+    "Key mode cdrm is deprecated and will be removed: it sends your OnlyFans "
+    "cookies and request headers to cdrm-project.com. Use key mode manual with "
+    "your own CDM files: https://cloakedkeys.gitbook.io/ofsc/cdm-options"
+)
+
 
 def check_cdm():
     console = console_.get_shared_console()
@@ -29,6 +35,8 @@ def check_cdm():
         )
         return True
     elif keymode == "cdrm":
+        alert.print(f"[red]{CDRM_DEPRECATED}\n[/red]")
+        log.warning(CDRM_DEPRECATED)
         url = of_env.getattr("CDRM")
     try:
         with sessionManager.sessionManager(
