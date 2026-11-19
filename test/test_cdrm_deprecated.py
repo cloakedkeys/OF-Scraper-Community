@@ -42,7 +42,6 @@ def screen(monkeypatch):
     import ofscraper.sites as sites
 
     monkeypatch.setattr(sites, "is_fansly", lambda: False)
-    monkeypatch.setattr(network.time, "sleep", lambda s: None)
     buf = io.StringIO()
     con = Console(file=buf, width=300)
     monkeypatch.setattr(network.console_, "get_console", lambda: con)
@@ -50,8 +49,14 @@ def screen(monkeypatch):
     handler = _Records()
     shared = logging.getLogger("shared")
     shared.addHandler(handler)
+    # setLevel, not the attribute: it also clears the logger's level cache
+    level, disabled = shared.level, shared.disabled
+    shared.setLevel(logging.DEBUG)
+    shared.disabled = False
     yield SimpleNamespace(buf=buf, records=handler.records)
     shared.removeHandler(handler)
+    shared.setLevel(level)
+    shared.disabled = disabled
 
 
 def _key_mode(monkeypatch, mode):
@@ -62,17 +67,15 @@ def _key_mode(monkeypatch, mode):
     )
 
 
-def test_cdrm_warns_on_screen_and_in_the_log(monkeypatch, screen):
+def test_cdrm_warns_once_and_does_not_probe_the_service(monkeypatch, screen):
     _key_mode(monkeypatch, "cdrm")
-
-    def offline(**kwargs):
-        raise OSError("no network in tests")
-
-    monkeypatch.setattr(network.sessionManager, "sessionManager", offline)
-    network.check_cdm()
-    assert "cdrm is deprecated" in screen.buf.getvalue()
-    warnings = [r for r in screen.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1 and "cdrm is deprecated" in warnings[0].getMessage()
+    assert network.check_cdm() is False
+    out = screen.buf.getvalue()
+    assert out.count("cdrm is deprecated") == 1
+    assert "CDM service" not in out  # the service isn't asked
+    # in the log at debug: a warning record would print it on the console again
+    assert not [r for r in screen.records if r.levelno >= logging.WARNING]
+    assert any("cdrm is deprecated" in r.getMessage() for r in screen.records)
 
 
 def test_manual_does_not_warn(monkeypatch, screen):
