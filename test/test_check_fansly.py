@@ -132,22 +132,68 @@ def test_stories_check_is_refused_for_fansly(fansly_check, monkeypatch, caplog):
     fansly_check.settings.command = "story_check"
     monkeypatch.setattr(check, "check_auth", _not_onlyfans)
     with caplog.at_level(logging.ERROR, logger="shared"):
-        check._checker()
+        with pytest.raises(SystemExit) as e:
+            check.checker()
+    assert e.value.code == 1  # refused, so not a success
     assert "The stories check is OnlyFans only" in caplog.text
+    # from the menu it goes back to the menu instead of exiting
+    assert check.checker(menu=True) is None
 
 
 @pytest.mark.parametrize(
-    "area,fetcher,post_id",
-    [("timeline", "timeline", ["5"]), ("messages", "messages", ["5"]), ("paid", "paid", None)],
+    "link,expected",
+    [
+        ("https://fansly.com/creator_a", ("creator_a", 111)),
+        ("https://fansly.com/creator_a/posts", ("creator_a", 111)),
+        ("fansly.com/creator_b?tab=media", ("creator_b", 222)),
+        ("https://fansly.com/post/123456", (None, None)),
+    ],
 )
-def test_a_failed_fansly_post_is_fetched_again_from_fansly(fansly_check, area, fetcher, post_id):
+def test_profile_links_name_the_creator(fansly_check, caplog, link, expected):
+    with caplog.at_level(logging.WARNING, logger="shared"):
+        assert asyncio.run(check._fansly_creator(link, object())) == expected
+    if expected == (None, None):
+        assert "Skipping a Fansly post link" in caplog.text
+        assert fansly_check.models_asked == []  # not looked up as a name
+
+
+@pytest.mark.parametrize(
+    "area,fetcher", [("timeline", "timeline"), ("messages", "messages")]
+)
+def test_a_failed_fansly_post_is_fetched_again_from_fansly(fansly_check, area, fetcher):
     async def go():
         return await check._fansly_refresh_post(area, "5", 111, "creator_a")
 
     data = asyncio.run(go())
-    assert fansly_check.fetched == [(fetcher, "111", post_id)]
-    if post_id:
-        assert [p["id"] for p in data] == [5]
+    assert fansly_check.fetched == [(fetcher, "111", ["5"])]
+    assert [p["id"] for p in data] == [5]
+
+
+def test_failed_purchased_posts_fetch_the_purchases_once(fansly_check, monkeypatch):
+    async def purchases(model_id, username, c=None):
+        fansly_check.fetched.append(("paid", str(model_id), None))
+        return [{"id": 5}, {"id": 6}, {"id": 7}]
+
+    monkeypatch.setattr(check.fansly_scrape, "get_paid_posts", purchases)
+    monkeypatch.setattr(check.posts_, "Post", lambda p, *a, **k: p)
+    processed = []
+
+    async def process(username, model_id, posts):
+        processed.extend(posts)
+
+    monkeypatch.setattr(check, "process_post_media", process)
+    failed = [
+        SimpleNamespace(post=SimpleNamespace(responsetype="paid", id=i)) for i in (5, 6)
+    ]
+    loop = asyncio.new_event_loop()  # @run uses the thread's loop
+    asyncio.set_event_loop(loop)
+    try:
+        assert check._refresh_failed_posts("creator_a", 111, failed) is True
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+    assert fansly_check.fetched == [("paid", "111", None)]
+    assert [p["id"] for p in processed] == [5, 6]
 
 
 def test_an_area_without_a_single_post_lookup_falls_back(fansly_check):

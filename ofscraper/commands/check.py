@@ -325,21 +325,20 @@ async def _refresh_failed_posts(username, model_id, media):
             if key in seen:
                 continue
             seen.add(key)
-            if sites.is_fansly():
+            if area == "paid":
+                # purchases can't be asked for one post: fetched once
+                if paid_posts is None:
+                    paid_posts = await _all_paid(username, model_id)
+                data = next(
+                    (p for p in paid_posts if str(p.get("id")) == str(post_id)),
+                    None,
+                )
+            elif sites.is_fansly():
                 data = await _fansly_refresh_post(area, post_id, model_id, username)
                 if data is None:
                     return False
             elif area in {"timeline", "archived", "pinned", "streams"}:
                 data = await asyncio.to_thread(get_individual_timeline_post, post_id)
-            elif area == "paid":
-                if paid_posts is None:
-                    paid_posts = await asyncio.to_thread(
-                        paid_.get_paid_posts, username, model_id
-                    )
-                data = next(
-                    (p for p in paid_posts if int(p.get("id")) == int(post_id)),
-                    None,
-                )
             elif area == "messages":
                 async with manager.Manager.session.aget_ofsession() as c:
                     data = await messages_.get_individual_messages_post(
@@ -423,6 +422,10 @@ def get_areas():
 
 
 def checker(menu=False):
+    if _no_fansly_stories(settings.get_settings().command):
+        if not menu:
+            raise SystemExit(1)  # a usage error, like other refused commands
+        return
     with stop.interrupt_handler():
         try:
             _checker()
@@ -440,8 +443,6 @@ def _no_fansly_stories(command):
 
 
 def _checker():
-    if _no_fansly_stories(settings.get_settings().command):
-        return
     check_auth()
     allow_check_dupes()
     set_after_check_mode()
@@ -702,8 +703,18 @@ async def post_check_retriver(forced=False, only_model_id=None):
 
 async def _fansly_creator(name, c=None):
     """(username, account id) of the Fansly creator ``name`` (a username or
-    an account id), or (None, None) when Fansly has no such account."""
+    an account id, or a link to their profile), or (None, None) when Fansly
+    has no such account."""
     name = str(name or "").strip()
+    link = re.search(r"fansly\.com/([^/?#]+)", name, re.IGNORECASE)
+    if link:
+        name = link.group(1)
+        if name.lower() == "post":
+            log.warning(
+                "Skipping a Fansly post link: check mode takes the creator's "
+                "name or profile link"
+            )
+            return None, None
     if name:
         for found in await fansly_scrape.get_models([name], c=c):
             if name.lower() in (str(found["username"]).lower(), str(found["id"])):
@@ -754,12 +765,15 @@ async def _fansly_refresh_post(area, post_id, model_id, username):
             return await fansly_scrape.get_messages(
                 model_id, username, c=c, post_id=[post_id]
             )
-        if area in {"paid", "purchased"}:
-            return [
-                p for p in await fansly_scrape.get_paid_posts(model_id, username, c=c)
-                if str(p.get("id")) == str(post_id)
-            ]
     return None
+
+
+async def _all_paid(username, model_id):
+    """All the creator's purchased posts, for refreshing failed ones."""
+    if sites.is_fansly():
+        async with manager.Manager.session.aget_ofsession() as c:
+            return await fansly_scrape.get_paid_posts(model_id, username, c=c)
+    return await asyncio.to_thread(paid_.get_paid_posts, username, model_id)
 
 
 def reset_data():
