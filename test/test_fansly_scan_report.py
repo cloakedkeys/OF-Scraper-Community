@@ -74,7 +74,8 @@ def test_a_whole_scan_logs_the_check(caplog):
 
     assert [len(p) for p in pages] == [3, 1]
     (summary,) = [r.getMessage() for r in caplog.records if "timeline check" in r.getMessage()]
-    assert "Fansly counts: 3 images + 2 in bundles" in summary
+    # the 2 bundled images are among the 3, as the scan's 3 distinct photos show
+    assert "Fansly counts: 3 images (2 of them in bundles)" in summary
     assert "scan found 4 posts" in summary
     # 1001 twice, 1002 and 1003 from the bundle
     assert "photos: 3 distinct (0 locked), 4 counting repeats" in summary

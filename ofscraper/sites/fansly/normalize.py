@@ -231,8 +231,9 @@ class ScanReport:
         if stats:
             lines.append(
                 "  Fansly counts: "
-                f"{stats.get('imageCount', '?')} images + {stats.get('bundleImageCount', '?')} in bundles, "
-                f"{stats.get('videoCount', '?')} videos + {stats.get('bundleVideoCount', '?')} in bundles, "
+                # the bundle counts are part of the totals, not extra
+                f"{stats.get('imageCount', '?')} images ({stats.get('bundleImageCount', '?')} of them in bundles), "
+                f"{stats.get('videoCount', '?')} videos ({stats.get('bundleVideoCount', '?')} of them in bundles), "
                 f"{stats.get('bundleCount', '?')} bundles"
             )
             lines.append(
