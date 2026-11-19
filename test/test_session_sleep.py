@@ -1,4 +1,5 @@
 import asyncio
+import gc
 
 from ofscraper.managers.sessionmanager.sessionmanager import SessionSleep
 
@@ -35,6 +36,17 @@ def test_do_sleep_works_across_event_loops():
     sleeper = make_sleeper()
     contend(sleeper, "async_do_sleep")
     contend(sleeper, "async_do_sleep")
+
+
+def test_finished_loops_do_not_keep_their_locks():
+    # a lock that was waited on holds its loop; @run starts a loop per call,
+    # so one lock per call used to pile up for the whole run
+    sleeper = make_sleeper()
+    for _ in range(3):
+        contend(sleeper, "async_do_sleep")
+    gc.collect()
+    # only the last loop's lock is left
+    assert len(sleeper._alocks) == 1
 
 
 def test_toomany_req_works_across_event_loops():
