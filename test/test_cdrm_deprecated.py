@@ -78,6 +78,26 @@ def test_cdrm_warns_once_and_does_not_probe_the_service(monkeypatch, screen):
     assert any("cdrm is deprecated" in r.getMessage() for r in screen.records)
 
 
+def test_check_mode_does_not_call_the_deprecation_an_error(monkeypatch, screen):
+    import ofscraper.commands.check as check
+
+    _key_mode(monkeypatch, "cdrm")
+
+    class _Stop(Exception):
+        pass
+
+    def stop(**kwargs):  # the first step after the CDM check
+        raise _Stop
+
+    monkeypatch.setattr(check.operations, "table_init_create", stop)
+    monkeypatch.setattr(check._process_user_batch, "counter", 0)
+    with pytest.raises(_Stop):
+        check._process_user_batch("a", 1, [], [], [])
+    messages = [r.getMessage() for r in screen.records]
+    assert any(m.startswith("CDM check failed;") for m in messages)
+    assert not any("raised an error" in m for m in messages)
+
+
 def test_manual_does_not_warn(monkeypatch, screen):
     _key_mode(monkeypatch, "manual")
     assert network.check_cdm() is True

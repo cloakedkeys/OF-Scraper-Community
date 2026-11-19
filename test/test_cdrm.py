@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 import ofscraper.commands.scraper.actions.download.utils.keyhelpers as keyhelpers
-import ofscraper.utils.system.network as network
 
 
 class _Response:
