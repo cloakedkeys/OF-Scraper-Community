@@ -7,11 +7,13 @@ adds the Fansly headers for ``apiv3.fansly.com``. Responses come wrapped in
 
 import logging
 
-from ofscraper.sites.fansly import constants, normalize
+from ofscraper.sites.fansly import address, constants, normalize
 from ofscraper.sites.fansly.me import unwrap
 
 log = logging.getLogger("shared")
 
+# the API host has four addresses: the first ask, then one per address
+ADDRESS_ASKS = 5
 ACCOUNT_IDS_BATCH = 5
 ACCOUNT_MEDIA_BATCH = 150
 FOLLOWING_LIMIT = 50
@@ -26,9 +28,32 @@ def _ids(values):
     return ",".join(str(v) for v in values)
 
 
-async def get_json(c, path):
-    async with c.requests_async(url=constants.api_url(path)) as r:
-        return unwrap(await r.json_())
+async def get_json(c, path, asks=None):
+    """The payload of one API call.
+
+    A response whose links are signed for an address the CDN refuses (#536)
+    is asked for again from the API host's next address, up to
+    ``ADDRESS_ASKS`` times in all, or ``asks`` times. A call limited by
+    ``asks`` moves the address at most ``asks - 1`` times and then uses the
+    links as they are, without forgetting the refused ranges. The link
+    refresher asks once and decides about the address itself
+    (``next_address``).
+    """
+    url = constants.api_url(path)
+    limit = asks or ADDRESS_ASKS
+    for ask in range(limit):
+        async with c.requests_async(url=url) as r:
+            data = unwrap(await r.json_())
+        if await address.usable(c, data):
+            return data
+        log.debug(f"Fansly: links signed for another address (ask {ask + 1} of {limit})")
+        if asks and ask + 1 >= limit:
+            break
+        address.try_next_address(c, url)
+    log.debug("Fansly: still signed for another address, using the links as they are")
+    if not asks:
+        address.forget_refused()
+    return data
 
 
 # ------------------------------------------------------------------ accounts
@@ -74,16 +99,22 @@ async def following_ids(c, my_account_id, limit=None):
     return out
 
 
+def next_address(c):
+    """Send the next API calls to the API host's next address."""
+    address.try_next_address(c, constants.api_url(""))
+
+
 # ------------------------------------------------------------------ media backfill
 
 
-async def account_media(c, ids):
-    """Full accountMedia objects by accountMedia id, 150 per call."""
+async def account_media(c, ids, asks=None):
+    """Full accountMedia objects by accountMedia id, 150 per call (``asks``:
+    see ``get_json``)."""
     out = []
     ids = [str(i) for i in ids]
     for start in range(0, len(ids), ACCOUNT_MEDIA_BATCH):
         batch = ids[start : start + ACCOUNT_MEDIA_BATCH]
-        out.extend(await get_json(c, f"account/media?ids={_ids(batch)}") or [])
+        out.extend(await get_json(c, f"account/media?ids={_ids(batch)}", asks=asks) or [])
     return out
 
 

@@ -404,6 +404,8 @@ async def _take_page(run, area, posts, download, number):
     progress_updater.activity.update_task(
         description=f"Scanning {run.username}: {area}, page {number}", visible=True
     )
+    # waiting: a refused link fetches new links for these too
+    refresh.fansly_refresher.expect(media)
     for item in media:
         item.download_unstarted = True
         item.download_stopped = False
@@ -546,6 +548,9 @@ async def _produce_ordered(run):
         await _room(run)
         chunk = waiting[:size]
         await _fresh_links(run, chunk)
+        # waiting: a refused link fetches new links for these too (files left
+        # for the next call are registered again, which changes nothing)
+        refresh.fansly_refresher.expect(chunk)
         signed_at = _clock()
         taken = 0
         for item in chunk:
@@ -658,6 +663,7 @@ async def _download(run, produce):
     count = get_max_workers()
     log.info(f"Downloading up to {count} {'file' if count == 1 else 'files'} at a time")
     common_globals.mainProcessVariableInit()
+    refresh.fansly_refresher.reset()
     with progress_utils.setup_live("download"):
         try:
             async with manager.Manager.session.get_download_session() as dc:
@@ -684,6 +690,7 @@ async def _download(run, produce):
                             task.cancel()
                     await asyncio.gather(*workers, return_exceptions=True)
         finally:
+            refresh.fansly_refresher.reset()
             await asyncio.get_running_loop().run_in_executor(
                 common_globals.thread, cache.close
             )
