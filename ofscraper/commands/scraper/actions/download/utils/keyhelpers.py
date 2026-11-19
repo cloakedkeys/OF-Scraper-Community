@@ -157,7 +157,7 @@ async def un_encrypt(item, c, ele, input_=None):
         if not key:
             raise Exception(f"{get_medialog(ele)} Could not get key")
         key = key.strip()
-        log.debug(f"{get_medialog(ele)} got a new key")
+        log.debug(f"{get_medialog(ele)} key ready")
         newpath = pathlib.Path(
             re.sub(
                 r"\.part$", f".{item['ext']}", str(item["path"]), flags=re.IGNORECASE
