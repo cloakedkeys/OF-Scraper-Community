@@ -148,7 +148,7 @@ async def paid_pages(model_id, username, c=None):
                 yield page
 
 
-async def get_models(usernames=None):
+async def get_models(usernames=None, c=None):
     """Creators to scrape, as OnlyFans-shaped model dicts.
 
     With usernames: every value goes to ``account?usernames=``, and the
@@ -160,7 +160,7 @@ async def get_models(usernames=None):
 
     usernames = [str(u) for u in (usernames or []) if u and u != "ALL"]
     ids = [u for u in usernames if u.isdigit()]
-    async with _session(None) as c:
+    async with _session(c) as c:
         if usernames:
             accounts = list(await api.accounts_by_username(c, usernames))
             if ids:
