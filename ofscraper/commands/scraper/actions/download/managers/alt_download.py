@@ -81,6 +81,8 @@ class AltDownloadManager(DownloadManager):
         self.ctx.log.debug(
             f"{common_logs.get_medialog(ele)} Downloading with protected media downloader"
         )
+        # don't download a video that can't be decrypted
+        keyhelpers.check_manual_cdm()
 
         sharedPlaceholderObj = await placeholder.Placeholders(ele, "mp4").init()
         self.ctx.log.debug(

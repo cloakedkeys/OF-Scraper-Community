@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import pathlib
 import re
 import struct
@@ -18,6 +19,7 @@ import ofscraper.utils.settings as settings
 from ofscraper.commands.scraper.actions.utils.retries import (
     get_cmd_download_req_retries,
 )
+from ofscraper.commands.scraper.actions.download.utils.retries import NoRetry
 from ofscraper.commands.scraper.actions.utils.log import get_medialog
 from ofscraper.utils.system.subprocess import async_run
 from ofscraper.utils.system.ffmpeg import get_ffmpeg
@@ -29,6 +31,52 @@ log = None
 def setLog(input_):
     global log
     log = input_
+
+
+class CdmFilesMissing(NoRetry):
+    """Manual key mode can't load its CDM files, so no DRM video can be
+    decrypted; retrying won't change that."""
+
+
+_logged_cdm_problem = None
+
+
+def cdm_files_problem():
+    """Why manual key mode can't load its CDM files, or None.
+
+    A blank path becomes Path("") == "." and fails with "Is a directory"
+    only after the whole video has been downloaded.
+    """
+    s = settings.get_settings()
+    problems = []
+    for name, value in (("client-id", s.client_id), ("private-key", s.private_key)):
+        value = str(value or "").strip()
+        if not value:
+            problems.append(f"{name} is not set")
+        elif not pathlib.Path(value).is_file():
+            problems.append(f"{name} file not found: {value}")
+    if not problems:
+        return None
+    return (
+        f"Key mode is manual, but the CDM files can't be used ({'; '.join(problems)}). "
+        "Set client-id and private-key under cdm_options in config.json, or use "
+        "another key mode. DRM videos are skipped until then."
+    )
+
+
+def check_manual_cdm():
+    """Raise CdmFilesMissing before downloading a DRM video that can't be
+    decrypted. The reason is logged once, not once per video."""
+    global _logged_cdm_problem
+    if settings.get_settings().key_mode != "manual":
+        return
+    problem = cdm_files_problem()
+    if not problem:
+        return
+    if problem != _logged_cdm_problem:
+        _logged_cdm_problem = problem
+        logging.getLogger("shared").error(problem)
+    raise CdmFilesMissing(problem)
 
 
 def strip_pssh(path):
