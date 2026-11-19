@@ -37,7 +37,7 @@ def load_main_config():
     config["CACHEDEFAULT"] = os.getenv("OFSC_CACHE_DEFAULT", "sqlite")
 
     # KEY_DEFAULT: Default key mode for content decryption.
-    # Default: "manual" (cdrm is deprecated: it sends the OnlyFans cookies to a third party)
+    # Default: "manual" (cdrm is deprecated: its service no longer works)
     config["KEY_DEFAULT"] = os.getenv("OFSC_KEY_DEFAULT", "manual")
     config["KEY_OPTIONS"] = const.KEY_OPTIONS
 

@@ -1,4 +1,5 @@
-"""Key mode cdrm is deprecated: it sends the OnlyFans cookies to cdrm-project.com.
+"""Key mode cdrm is deprecated: its service, cdrm-project.com, no longer works
+(and it was sent the OnlyFans cookies).
 
 New configs default to manual, and a run that still uses cdrm warns on the
 console and in the log. A config that already says cdrm keeps it.

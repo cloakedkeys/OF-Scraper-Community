@@ -371,7 +371,7 @@ def cdm_config():
                 "message": "Select default key mode for decryption",
                 "default": data.get_key_mode(),
                 "choices": [
-                    Choice(x, "cdrm (deprecated: sends your cookies to a third party)")
+                    Choice(x, "cdrm (deprecated: the service no longer works)")
                     if x == "cdrm"
                     else x
                     for x in of_env.getattr("KEY_OPTIONS")

@@ -166,7 +166,7 @@ Each key lists these fields, when they apply: **Default**, **Read by** (the gett
 - **Default:** `"manual"` · **Read by:** `get_key_mode()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`KEY_DEFAULT`](env.md#key_default), [`KEY_OPTIONS`](env.md#key_options)
 - **CLI override:** `--key-mode`
-- How DRM content keys are obtained. `manual` (the default) uses the local CDM files in `private-key` and `client-id`. `cdrm` is deprecated: it asks cdrm-project.com and sends it the request headers, cookies included, and each run that uses it warns. A config that already says `cdrm` keeps it. Other values fall back to the default. The `-k`/`--key-mode` option overrides it.
+- How DRM content keys are obtained. `manual` (the default) uses the local CDM files in `private-key` and `client-id`. `cdrm` is deprecated: it asked cdrm-project.com, which no longer works, and sent it the request headers, cookies included; each run that uses it warns. A config that already says `cdrm` keeps it. Other values fall back to the default. The `-k`/`--key-mode` option overrides it.
 
 ## `performance_options`
 

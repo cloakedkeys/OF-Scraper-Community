@@ -10,9 +10,10 @@ import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 
 CDRM_DEPRECATED = (
-    "Key mode cdrm is deprecated and will be removed: it sends your OnlyFans "
-    "cookies and request headers to cdrm-project.com. Use key mode manual with "
-    "your own CDM files: https://cloakedkeys.gitbook.io/ofsc/cdm-options"
+    "Key mode cdrm is deprecated and will be removed: its service, "
+    "cdrm-project.com, no longer works, so DRM videos can't be decrypted with it. "
+    "Use key mode manual with your own CDM files: "
+    "https://cloakedkeys.gitbook.io/ofsc/cdm-options"
 )
 
 
