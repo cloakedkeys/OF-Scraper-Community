@@ -11,6 +11,8 @@ Given/When/Then:
    then a fallback source's rule is used.
 5. Given every source fails, when the auth is checked, then it's reported as
    couldn't check, not as bad auth.
+6. Given digitalcriminals and rafa fail, then xagler is tried last; datawhores
+   is neither offered nor fetched.
 """
 
 import json
@@ -26,7 +28,7 @@ import ofscraper.data.api.init as init
 import ofscraper.utils.auth.request as request
 
 URLS = {
-    "datawhores": "DATAWHORES_URL",
+    "generic": "DYNAMIC_GENERIC_URL",
     "xagler": "XAGLER_URL",
     "rafa": "RAFA_URL",
     "digitalcriminals": "DIGITALCRIMINALS",
@@ -59,7 +61,10 @@ class NotJson:
 
 @pytest.fixture
 def hosts(monkeypatch):
-    """Each source's host answers with replies[source]; requests are recorded."""
+    """Each source's host answers with replies[source]; requests are recorded.
+
+    A URL that isn't one of these hosts is recorded as the URL itself.
+    """
     replies = {}
     asked = []
     by_url = {}
@@ -70,7 +75,7 @@ def hosts(monkeypatch):
 
     @contextmanager
     def requests(url, *args, **kwargs):
-        source = by_url[url]
+        source = by_url.get(url, url)
         asked.append(source)
         reply = replies[source]
         if isinstance(reply, Exception):
@@ -139,6 +144,35 @@ def test_failed_default_source_is_not_tried_twice(hosts, monkeypatch):
 
     assert auth[1] == "200:{}:{:x}:2"
     assert hosts.asked == ["digitalcriminals", "rafa"]
+
+
+def test_xagler_is_the_last_fallback(hosts, monkeypatch, caplog):
+    choose(monkeypatch, "dc")
+    hosts.replies.update(
+        digitalcriminals=not_found("https://digitalcriminals.rules.example/rule.json"),
+        rafa=NotJson,
+        xagler=rule("400"),
+    )
+    with caplog.at_level(logging.INFO, logger="shared"):
+        auth = request.get_request_auth()
+
+    assert auth[1] == "400:{}:{:x}:2"
+    assert hosts.asked == ["digitalcriminals", "rafa", "xagler"]
+    assert "Using the xagler dynamic rule instead" in caplog.text
+
+
+def test_datawhores_is_not_offered_or_fetched(hosts, monkeypatch):
+    import ofscraper.utils.const as const
+
+    assert "datawhores" not in const.DYNAMIC_OPTIONS
+    assert "datawhores" not in request.of_env.getattr("DYNAMIC_OPTIONS_ALL")
+    # a name that reaches the request code anyway is not fetched
+    choose(monkeypatch, "datawhores")
+    hosts.replies.update(digitalcriminals=rule("100"))
+    auth = request.get_request_auth()
+
+    assert auth[1] == "100:{}:{:x}:2"
+    assert hosts.asked == ["digitalcriminals"]
 
 
 def test_manual_rule_not_set_falls_back(hosts, monkeypatch, caplog):
@@ -235,13 +269,14 @@ OBSOLETE_PREFIX_RULE = {
     ids=["incomplete", "obsolete-prefix", "obsolete-format"],
 )
 def test_unusable_rule_falls_back(hosts, monkeypatch, caplog, reply, reason):
-    choose(monkeypatch, "datawhores")
-    hosts.replies.update(datawhores=reply, digitalcriminals=rule("100"))
+    # e.g. a generic URL still pointed at an old rule
+    choose(monkeypatch, "generic")
+    hosts.replies.update(generic=reply, digitalcriminals=rule("100"))
     with caplog.at_level(logging.INFO, logger="shared"):
         auth = request.get_request_auth()
 
     assert auth[1] == "100:{}:{:x}:2"
-    assert f"datawhores: {reason}" in caplog.text
+    assert f"generic: {reason}" in caplog.text
 
 
 def test_check_rule_rejects_the_obsolete_rule():
