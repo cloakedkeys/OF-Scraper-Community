@@ -145,6 +145,8 @@ async def recheck_silent(username, model_id, all_media):
 @run_async
 async def download_process(username, model_id, medialist, posts):
     values = await process_dicts(username, model_id, medialist, posts)
+    # off the event loop: it hashes the files it is about to delete
+    await asyncio.to_thread(remove_downloads_with_hashes, username, model_id)
     return values
 
 
@@ -238,7 +240,23 @@ async def process_dicts(username, model_id, medialist, posts, on_result=None):
         )
 
 
+# the media types whose duplicate files remove_hash_match removes, as the
+# database stores them
+HASH_MEDIA_TYPES = ("Audios", "Images", "Videos")
+
+
 def remove_downloads_with_hashes(username, model_id):
-    hash.remove_dupes_hash(username, model_id, "audios")
-    hash.remove_dupes_hash(username, model_id, "images")
-    hash.remove_dupes_hash(username, model_id, "videos")
+    """After a creator's downloads, with remove_hash_match on: delete the
+    later copies of files the creator already has. Returns the paths
+    deleted. Not after a stopped run, which may have left a file unfinished."""
+    if not settings.get_settings().hash or stop.requested.is_set():
+        return []
+    removed = []
+    for mediatype in HASH_MEDIA_TYPES:
+        removed.extend(hash.remove_dupes_hash(username, model_id, mediatype))
+    if removed:
+        logging.getLogger("shared").warning(
+            f"Removed {len(removed)} duplicate "
+            f"{'file' if len(removed) == 1 else 'files'} of {username}"
+        )
+    return removed

@@ -325,11 +325,11 @@ def test_removing_duplicates_leaves_the_other_creators_file(tmp_path, monkeypatc
         files[model_id].write_bytes(b"same bytes")
     execute(
         path,
-        "INSERT INTO medias (media_id, post_id, model_id, downloaded, filename,"
-        " hash, size) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO medias (media_id, post_id, model_id, downloaded, directory,"
+        " filename, hash, size) VALUES (?,?,?,?,?,?,?,?)",
         [
-            (1, 10, ONE, 1, str(files[ONE]), "same", 10),
-            (1, 10, TWO, 1, str(files[TWO]), "same", 10),
+            (1, 10, ONE, 1, str(tmp_path), files[ONE].name, "same", 10),
+            (1, 10, TWO, 1, str(tmp_path), files[TWO].name, "same", 10),
         ],
     )
     real = settings.get_settings()
@@ -346,8 +346,8 @@ def test_removing_duplicates_leaves_the_other_creators_file(tmp_path, monkeypatc
     )
     monkeypatch.setattr(
         hash_,
-        "get_dupe_media_files",
-        lambda **kwargs: media.get_dupe_media_files(db_path=path, **kwargs),
+        "get_dupe_media_copies",
+        lambda **kwargs: media.get_dupe_media_copies(db_path=path, **kwargs),
     )
 
     hash_.remove_dupes_hash("creator_two", TWO)

@@ -505,6 +505,33 @@ def get_dupe_media_files(
         return [dict(row)["filename"] for row in cur.fetchall()]
 
 
+# {filters}: the media type and the creator, see get_dupe_media_copies
+mediaDupeCopies = """
+SELECT media_id, directory, filename
+FROM medias
+WHERE hash=(?) AND directory IS NOT NULL AND filename IS NOT NULL{filters}
+ORDER BY id
+"""
+
+
+@wrapper.operation_wrapper
+def get_dupe_media_copies(
+    model_id=None, username=None, conn=None, hash=None, mediatype=None, **kwargs
+) -> list:
+    """(media id, folder, file name) of the creator's saved files with this
+    hash, the one saved first (the lowest row) first. remove_dupes_hash keeps
+    the first and deletes the others, so the order and the creator matter."""
+    with contextlib.closing(conn.cursor()) as cur:
+        filters, params = db_columns.creator_filter(cur, "medias", model_id)
+        if mediatype:
+            filters, params = filters + " AND media_type = ?", params + [mediatype]
+        cur.execute(mediaDupeCopies.format(filters=filters), [hash] + params)
+        return [
+            (row["media_id"], row["directory"], row["filename"])
+            for row in map(dict, cur.fetchall())
+        ]
+
+
 @wrapper.operation_wrapper_async
 def mark_media_as_downloaded(
     media,
