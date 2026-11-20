@@ -4,7 +4,9 @@
   ``pathlib.Path``) and recorded in the database, before the
   after_download_script runs. All three downloaders send it: normal files,
   DRM videos and Fansly HLS/DASH streams. A stop during the script still
-  counts the item as downloaded.
+  counts the item as downloaded. The Fansly check of videos saved without
+  sound, after a run's downloads, sends it for a video it saves again, with
+  no item_finished.
 - ``item_finished(ele, username, result, reason)``: the download loop has
   counted one item. ``result`` is "downloaded", "failed", "skipped" or
   "stopped". ``reason`` says why an item failed or was skipped (see
