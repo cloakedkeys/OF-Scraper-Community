@@ -18,6 +18,7 @@ import ofscraper.utils.host_allowlist as host_allowlist
 import ofscraper.utils.settings as settings
 from ofscraper.utils.system.ffprobe import verify_media_integrity
 from ofscraper.utils.cache.profile import set_profile_cache
+from ofscraper.utils.logs.utils.sensitive import hide_links
 
 from ofscraper.commands.scraper.actions.download.managers.downloadmanager import (
     DownloadManager,
@@ -147,11 +148,12 @@ class MainDownloadManager(DownloadManager):
                         return (0, tempholderObj.tempfilepath, None)
                     raise E
                 except Exception as E:
+                    # an aiohttp error's text holds the whole signed link
                     self.ctx.log.traceback_(
-                        f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] {traceback.format_exc()}"
+                        f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] {hide_links(traceback.format_exc(), hide_path=True)}"
                     )
                     self.ctx.log.traceback_(
-                        f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] {E}"
+                        f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] {hide_links(E, hide_path=True)}"
                     )
                     if self._skipped_by_size(ele, E):
                         pathlib.Path(tempholderObj.tempfilepath).unlink(missing_ok=True)
@@ -193,7 +195,7 @@ class MainDownloadManager(DownloadManager):
             headers = self._get_resume_header(resume_size, total, validator)
             saved_total, total = total, None
             self.ctx.log.debug(
-                f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] Downloading media with url {ele.url}"
+                f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] Downloading media with url {common_logs.get_url_log(ele)}"
             )
 
             async with c.requests_async(
@@ -387,7 +389,7 @@ class MainDownloadManager(DownloadManager):
 
     async def _fresh_data_handler_main(self, ele, tempholderObj):
         self.ctx.log.debug(
-            f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] fresh download for media {ele.url}"
+            f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] fresh download for media {common_logs.get_url_log(ele)}"
         )
         resume_size = self._get_resume_size(tempholderObj)
         self.ctx.log.debug(
