@@ -239,6 +239,7 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
   ```
 
 - **Organize downloads in Stash:** copy each download's creator, date, caption and source into [Stash](https://stashapp.cc). See [Stash](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/STASH.md).
+- **Keep the database in PostgreSQL:** as an option, one PostgreSQL database can replace the per-creator SQLite files. See [PostgreSQL](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/POSTGRESQL.md).
 
 ## Reporting a problem
 
