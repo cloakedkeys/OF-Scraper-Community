@@ -52,8 +52,11 @@ def test_file_name_drops_strike_and_link_syntax(site):
 
 def test_database_text_is_plain(site):
     site("fansly")
+    # the codes come off when the post is read (normalize._item_dict);
+    # db_cleanup gets the plain caption and doesn't strip it a second time
     caption = "**[s:lg]NEW VIDEO \U0001f4a6[/s]**\n\n[c:blue]Out now[/c]"
-    assert base().db_cleanup(caption) == "NEW VIDEO \U0001f4a6 Out now"
+    assert base().db_cleanup(strip_fansly_markup(caption)) == "NEW VIDEO \U0001f4a6 Out now"
+    assert base().db_cleanup(strip_fansly_markup(r"\*sale\* today")) == "*sale* today"
 
 
 def test_onlyfans_text_is_unchanged(site):

@@ -59,8 +59,9 @@ class base:
     def db_cleanup(self, string):
         string = string or ""
         string = re.sub("<[^>]*>", "", string)
-        if _is_fansly():
-            string = strip_fansly_markup(string)
+        # Fansly text is plain already (normalize._item_dict): removing the
+        # codes again would turn an escaped "\*sale\*", shown as "*sale*",
+        # into "sale"
         string = " ".join(string.split())
         string = BeautifulSoup(string, html_parser).get_text()
         return string
