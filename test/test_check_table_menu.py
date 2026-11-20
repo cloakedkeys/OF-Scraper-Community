@@ -21,6 +21,7 @@ import ofscraper.data.api.common.scan_range as scan_range
 import ofscraper.prompts.promptConvert as prompt_convert
 import ofscraper.prompts.prompt_groups.actions as actions_prompt
 import ofscraper.prompts.prompts as prompts
+import ofscraper.utils.checkers as checkers
 import ofscraper.utils.config.data as config_data
 import ofscraper.utils.console as console_
 import ofscraper.utils.menu as menu
@@ -316,6 +317,25 @@ def test_gather_rows_refuses_fansly_stories_and_unknown_commands(session):
     assert session.runs == []
     with pytest.raises(ValueError):
         check.gather_rows("download")
+
+
+@pytest.mark.parametrize(
+    "error", [checkers.AuthCheckUnavailable, checkers.AuthCheckLeft]
+)
+def test_a_failing_auth_check_logs_no_traceback(session, monkeypatch, error):
+    session.args = check_menu.check_args(session.args, "post_check", CREATORS)
+
+    def fail(**kwargs):
+        raise error("no auth")
+
+    logged = []
+    monkeypatch.setattr(check, "check_auth", fail)
+    monkeypatch.setattr(check.log, "traceback_", logged.append, raising=False)
+
+    with pytest.raises(error):
+        check.checker(menu=True)
+    assert logged == []
+    assert session.runs == []
 
 
 def test_tables_share_one_download_thread(session, monkeypatch):
