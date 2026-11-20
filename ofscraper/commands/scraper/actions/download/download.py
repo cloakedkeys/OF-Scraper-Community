@@ -248,12 +248,13 @@ HASH_MEDIA_TYPES = ("Audios", "Images", "Videos")
 def remove_downloads_with_hashes(username, model_id):
     """After a creator's downloads, with remove_hash_match on: delete the
     later copies of files the creator already has. Returns the paths
-    deleted. Not after a stopped run, which may have left a file unfinished."""
-    if not settings.get_settings().hash or stop.requested.is_set():
+    deleted. Nothing is deleted once a stop is asked for (a stopped run may
+    have left a file unfinished), or in a run that only saves text."""
+    if settings.get_settings().text_only:
         return []
-    removed = []
-    for mediatype in HASH_MEDIA_TYPES:
-        removed.extend(hash.remove_dupes_hash(username, model_id, mediatype))
+    removed = hash.remove_dupes_hash(
+        username, model_id, HASH_MEDIA_TYPES, stopped=stop.requested.is_set
+    )
     if removed:
         logging.getLogger("shared").warning(
             f"Removed {len(removed)} duplicate "
