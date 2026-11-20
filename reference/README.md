@@ -98,7 +98,7 @@ Upstream's docs don't cover these:
 
 Code running in the same process, such as a GUI, can follow downloads without changing the download code. `ofscraper/utils/events.py` has `subscribe(name, fn)` and `unsubscribe(name, fn)`. Subscribers get keyword arguments:
 
-- **`item_downloaded(ele, path)`:** a media file has been saved at `path`, after `after_download_script` ran. Sent for normal files, DRM videos and Fansly HLS/DASH streams.
+- **`item_downloaded(ele, path)`:** a media file has been saved at `path` and recorded in the database. It's sent before `after_download_script` runs, and a stop during the script still counts the item as downloaded. Sent for normal files, DRM videos and Fansly HLS/DASH streams.
 - **`item_finished(ele, username, result, reason)`:** the download loop has counted one item. `result` is `downloaded`, `failed`, `skipped` or `stopped`. `reason` is None unless the item failed or was skipped:
   - skipped: `size limit`, `skip_download_script`, `CDM keys not found`, `protected stream`, or `skipped`.
   - failed: `no link` (locked or removed media), or the error's text with links removed and cookies and the home folder's name hidden as in the logs. `download failed` when there's no error.

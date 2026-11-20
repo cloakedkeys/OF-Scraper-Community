@@ -12,6 +12,7 @@ r"""
 """
 
 import asyncio
+import pathlib
 import re
 import traceback
 from contextlib import nullcontext
@@ -72,6 +73,8 @@ async def handle_one(data, task1, total, on_result=None):
         ele: Media = data[1]
         ele.download_stopped = False
         ele.download_unstarted = False
+        # the saved file's path, set when item_downloaded is sent
+        ele.download_saved = None
         # Stream videos retain their existing cancellation behavior.
         context = nullcontext() if fansly_video.uses_stream(ele) else stop.transfer(ele)
         with context:
@@ -84,9 +87,15 @@ async def handle_one(data, task1, total, on_result=None):
         if not getattr(ele, "download_started", False):
             ele.download_unstarted = True
             return False
-        ele.download_stopped = True
-        media_type = "stopped"
-        num_bytes_downloaded = 0
+        if getattr(ele, "download_saved", None) is not None:
+            # stopped in after_download_script: the file is saved and
+            # recorded, and item_downloaded was sent
+            media_type = ele.mediatype
+            num_bytes_downloaded = _saved_size(ele.download_saved)
+        else:
+            ele.download_stopped = True
+            media_type = "stopped"
+            num_bytes_downloaded = 0
     except Exception as e:
         common_globals.log.info(
             f"{get_medialog(ele)} Download Failed because\n{e}"
@@ -168,6 +177,14 @@ async def handle_one(data, task1, total, on_result=None):
         )
         common_globals.log.traceback_(traceback.format_exc())
     return True
+
+
+def _saved_size(path):
+    try:
+        return pathlib.Path(path).stat().st_size
+    except OSError:
+        # the after-download script may have moved it
+        return 0
 
 
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+")

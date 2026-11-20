@@ -1,8 +1,10 @@
 """Download events that other code (a GUI, a plugin) can subscribe to.
 
 - ``item_downloaded(ele, path)``: a media file is saved at ``path`` (a
-  ``pathlib.Path``), after the after_download_script. All three downloaders
-  send it: normal files, DRM videos and Fansly HLS/DASH streams.
+  ``pathlib.Path``) and recorded in the database, before the
+  after_download_script runs. All three downloaders send it: normal files,
+  DRM videos and Fansly HLS/DASH streams. A stop during the script still
+  counts the item as downloaded.
 - ``item_finished(ele, username, result, reason)``: the download loop has
   counted one item. ``result`` is "downloaded", "failed", "skipped" or
   "stopped". ``reason`` says why an item failed or was skipped (see

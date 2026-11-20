@@ -427,8 +427,11 @@ class DownloadManager:
             raise Exception(of_env.getattr("SPACE_DOWNLOAD_MESSAGE"))
 
     async def _after_download_script(self, filepath, ele):
-        await after_download_script(filepath)
+        # saved and recorded: sent before the script, so a stop during the
+        # script doesn't hide the file, and run.py counts it as downloaded
+        ele.download_saved = filepath
         await events.emit("item_downloaded", ele=ele, path=filepath)
+        await after_download_script(filepath)
 
     def _size_written(self, ele, size):
         """The size of a file whose reply didn't say how big it was (no

@@ -18,8 +18,11 @@ import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import
 import ofscraper.commands.scraper.actions.download.managers.alt_download as ad
 import ofscraper.commands.scraper.actions.download.managers.downloadmanager as dm
 import ofscraper.commands.scraper.actions.download.managers.fansly_stream_download as stream_mod
+import ofscraper.commands.scraper.actions.download.managers.main_download as md
 import ofscraper.commands.scraper.actions.download.run as run_mod
+import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.utils.events as events
+from ofscraper.commands.scraper.actions.download import stop
 import ofscraper.utils.logs.utils.sensitive as sensitive
 from ofscraper.classes.of.media import Media
 from ofscraper.classes.of.posts import Post
@@ -144,6 +147,43 @@ def test_failing_subscribers_dont_change_the_download(env, heard, monkeypatch, c
     failures = [r for r in caplog.records if r.filename == "events.py"]
     assert len(failures) == 4
     assert all(r.levelno == logging.DEBUG and r.exc_info for r in failures)
+
+
+@pytest.fixture
+def stoppable(env, monkeypatch):
+    """The env fixture stubs run.py's asyncio with only sleep; a stop needs
+    its CancelledError too. The stop request is cleared afterwards."""
+    monkeypatch.setattr(
+        run_mod, "asyncio",
+        SimpleNamespace(sleep=run_mod.asyncio.sleep, CancelledError=asyncio.CancelledError),
+    )
+    monkeypatch.setattr(common_globals, "stopped", 0, raising=False)
+    stop.clear()
+    yield env
+    stop.clear()
+
+
+async def _stop_and_wait(*a, **k):
+    stop.request()
+    # the stop cancels the download here
+    await asyncio.sleep(5)
+    raise AssertionError("not cancelled")
+
+
+def test_stop_during_after_download_script_still_reports_the_file(stoppable, heard,
+                                                                  monkeypatch):
+    monkeypatch.setattr(dm, "after_download_script", _stop_and_wait)
+    counted, _ = normal_item_run(stoppable)
+    (path,) = stoppable.out.iterdir()
+    assert path.read_bytes() == BODY
+    # saved and recorded before the script: counted and reported as downloaded
+    assert counted == counts(photo_count=1)
+    assert common_globals.stopped == 0
+    assert common_globals.total_bytes_downloaded == len(BODY)
+    assert heard == [
+        ("item_downloaded", 7, path),
+        ("item_finished", 7, USERNAME, "downloaded", None),
+    ]
 
 
 def test_no_subscribers_downloads_as_before(env, monkeypatch):
