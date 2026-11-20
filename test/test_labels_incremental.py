@@ -142,6 +142,35 @@ def test_check_mode_leaves_the_marks_alone(fake_cache):
     assert fake_cache.data[COMPLETE] is True
 
 
+@pytest.fixture
+def warnings_logged(monkeypatch):
+    logged = []
+    monkeypatch.setattr(
+        labels,
+        "log",
+        SimpleNamespace(debug=lambda *a, **k: None, warning=logged.append),
+    )
+    return logged
+
+
+def test_scan_cut_short_after_page_one_warns_once(warnings_logged):
+    collect(FakeClient(range(1, 21), fail_at=5))
+    assert len(warnings_logged) == 1
+    assert "favourites" in warnings_logged[0]
+    assert "stopped early" in warnings_logged[0]
+
+
+def test_complete_scan_of_an_empty_label_does_not_warn(warnings_logged):
+    assert collect(FakeClient([])) == []
+    assert warnings_logged == []
+
+
+def test_complete_scan_does_not_warn(warnings_logged):
+    collect(FakeClient(range(1, 21)))
+    collect(FakeClient(range(1, 21)), known={str(i) for i in range(1, 21)})
+    assert warnings_logged == []
+
+
 def run_known(monkeypatch, prechecks, db_ids, username="creator", missing=()):
     monkeypatch.setattr(labels, "get_after_pre_checks", lambda *a, **k: prechecks)
 
