@@ -4,15 +4,8 @@ import re
 from bs4 import BeautifulSoup
 
 import ofscraper.utils.settings as settings
-from ofscraper.sites.fansly.normalize import strip_fansly_markup
 
 html_parser = "lxml" if importlib.util.find_spec("lxml") else "html.parser"
-
-
-def _is_fansly():
-    import ofscraper.sites as sites
-
-    return sites.is_fansly()
 
 
 class base:
@@ -47,9 +40,8 @@ class base:
     def file_cleanup(self, text):
         text = str(text)
         text = re.sub("<[^>]*>", "", text)
-        # before ":" and "/" are dropped, which would leave "[slg]" and "[s]"
-        if _is_fansly():
-            text = strip_fansly_markup(text)
+        # Fansly text is plain already (normalize._item_dict); removing the
+        # codes again would drop an escaped "\[s:lg\]", shown as "[s:lg]"
         text = re.sub(r'[\n<>:"/\|?*:;]+', "", text)
         text = re.sub("-+", "_", text)
         text = re.sub(" +", " ", text)
