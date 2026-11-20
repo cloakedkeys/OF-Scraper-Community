@@ -2,6 +2,11 @@ import re
 import ofscraper.utils.paths.common as paths
 from typing import Any
 
+# The other cookies the app sends, hidden by name like the auth cookies: the
+# CloudFront cookies of a signed stream (OnlyFans and Fansly), and the ones
+# OnlyFans sets, which the session's cookie jar keeps and sends back.
+_OTHER_COOKIES = r"fp|st|csrf|auth_hash|CloudFront-(?:Policy|Signature|Key-Pair-Id)"
+
 # --- Default Patterns (Regex or Plain Text) ---
 _DEFAULT_PATTERNS = {
     # Redacts API keys and session tokens (Fixed to stop at whitespace)
@@ -23,6 +28,9 @@ _DEFAULT_PATTERNS = {
     r"""(?i)(['"])(sess)\1(\s*:\s*)(['"])[^'"]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{sess}\g<4>",
     r"""(?i)(['"])(x-bc)\1(\s*:\s*)(['"])[^'"]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{x-bc}\g<4>",
     r"""(?i)(['"])(user-id|auth_id|auth_uid|auth_uniq)\w*\1(\s*:\s*)(['"]?)[^'",}\s]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{hidden}\g<4>",
+    # The other cookies, in both forms: fp=...; 'st': '...'
+    rf"(?i)\b({_OTHER_COOKIES})=[^;\s'\",]+": r"\g<1>={hidden}",
+    rf"""(?i)(['"])({_OTHER_COOKIES})\1(\s*:\s*)(['"])[^'"]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{hidden}\g<4>",
     # Header line or query form: x-bc: ..., x-bc=..., user-id: 123. A user ID
     # is a number, so prose such as "the user-id: header" is left alone.
     r"(?i)\b(x-bc)(\s*[:=]\s*)(?!['\"])[^\s'\",;&]+": r"\g<1>\g<2>{x-bc}",
@@ -75,8 +83,12 @@ def getSenstiveDict() -> dict:
         # Only as a whole name: a home folder called "dan" must not turn
         # "danger" into "{home_directory}ger". "_" isn't counted as part of
         # the name, so it is still hidden in a file name like "dan_log.txt".
+        # In a path (after / or \) it is hidden whatever its case: the home
+        # folder can be "Dan" or "DAN" when the account is "dan". Elsewhere
+        # only the exact name is, so "Dan" in a sentence is left alone.
+        name = re.escape(str(profile_dir))
         combined_patterns.setdefault(
-            rf"(?<![^\W_]){re.escape(str(profile_dir))}(?![^\W_])",
+            rf"(?:(?<=[\\/])(?i:{name})|(?<![^\W_]){name})(?![^\W_])",
             "{home_directory}",
         )
 
