@@ -2,6 +2,7 @@ import logging
 import pathlib
 import traceback
 
+import ofscraper.sites as sites
 import ofscraper.utils.paths.db as paths_db
 from ofscraper.db.operations import create_tables
 from ofscraper.db.operations_.empty import empty
@@ -21,8 +22,10 @@ from ofscraper.db.operations_.messages import (
 from ofscraper.db.operations_.others import (
     get_all_others_transition,
     get_all_products_transition,
+    get_site_flag,
     write_others_table_transition,
     write_products_table_transition,
+    write_site_flag,
 )
 from ofscraper.db.operations_.posts import (
     get_all_posts_transition,
@@ -80,6 +83,13 @@ class MergeDatabase:
             new_db = not self._new_db.exists()
             await create_tables(db_path=self._new_db)
             await modify_tables(db_path=self._new_db, new_db=new_db)
+            # the site the merged database is for. One with nothing in it,
+            # and no site recorded, takes the site of the first one merged
+            self._site = self._site_of(self._new_db)
+            self._site_open = (
+                get_site_flag(db_path=self._new_db) is None
+                and await empty(db_path=self._new_db)
+            )
             self._curr_labels = set(
                 list(
                     map(
@@ -176,6 +186,7 @@ class MergeDatabase:
                 elif not str(model_id).isnumeric():
                     raise Exception("Found model_id was not numeric")
                 await modify_tables(model_id=model_id, db_path=ele)
+                await self._keep_site(ele)
                 await self.merge_individual(ele)
                 success.update(
                     {
@@ -203,6 +214,27 @@ class MergeDatabase:
             )
         )
         return list(failures.items()), list(success.items()), empty_list
+
+    def _site_of(self, db_path):
+        """The site a database is for. Only a site other than OnlyFans is
+        recorded in one."""
+        return str(get_site_flag(db_path=db_path) or sites.DEFAULT_SITE).lower()
+
+    async def _keep_site(self, db_path):
+        """Record the site of the first database merged into a new one, and
+        refuse a database for another site: the rows don't say which site
+        they are from, and the two sites' ids would be taken for each
+        other's."""
+        site = self._site_of(db_path)
+        if self._site_open:
+            if site != sites.DEFAULT_SITE:
+                await write_site_flag(site, db_path=self._new_db)
+            self._site, self._site_open = site, False
+        elif site != self._site:
+            raise Exception(
+                f"It is for {sites.SITE_NAMES.get(site, site)}, and the"
+                f" merged database is for {sites.SITE_NAMES.get(self._site, self._site)}"
+            )
 
     async def merge_individual(self, db_path):
         await self.merge_media_helper(db_path)
