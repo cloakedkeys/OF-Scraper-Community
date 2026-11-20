@@ -62,3 +62,16 @@ def test_a_cookie_the_server_sets_is_not_sent_next_to_the_requests_own(attribute
     assert sorted(seen[1].split("; ")) == ["auth_id=1", "csrf=c", "sess=MINE"]
     # the jar is left alone: a request without its own cookies gets the server's
     assert sorted(seen[2].split("; ")) == ["csrf=c", "sess=SERVER"]
+
+
+def test_a_cookie_header_the_caller_wrote_is_sent_as_written():
+    # httpx sends a caller's own Cookie header unchanged, even with cookies=
+    seen = []
+    m = _manager(seen)
+    m._httpx_funct(
+        "get",
+        url="https://onlyfans.com/x",
+        headers={"Cookie": "x=1"},
+        cookies={"sess": "MINE"},
+    )
+    assert seen == ["x=1"]
