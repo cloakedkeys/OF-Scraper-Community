@@ -6,9 +6,9 @@ FOLDER is searched for user_data.db files (for example <profile>/.data). The
 PostgreSQL database is the one OFSC_DATABASE_URL names, as for the scraper
 itself (see POSTGRESQL.md).
 
-The files themselves are never opened. Each is copied to a staging folder,
-the copy is brought up to date the way a scan would, and the rows are read
-from the copy. Without --apply nothing is written to PostgreSQL: the report
+The files themselves are never opened. Each is copied to a staging folder
+(with what SQLite keeps beside it: its -wal or -journal file), the copy is
+brought up to date the way a scan would, and the rows are read from the copy. Without --apply nothing is written to PostgreSQL: the report
 says what would be brought in, and what stands in the way. With --apply every
 file goes in in one transaction, so it is all of them or nothing.
 """
@@ -31,8 +31,11 @@ import ofscraper.db.postgres as postgres
 DATA_TABLES = ("medias", "posts", "messages", "stories", "others", "products", "labels")
 # small, and shared between creators: a row that is already there is left
 SHARED_TABLES = ("profiles", "models")
-# made by PostgreSQL (id) or by this build (the flags), not copied
-NOT_COPIED = {"schema_flags", "sqlite_sequence"}
+# made by this build, not copied. Nor are SQLite's own tables (sqlite_...)
+NOT_COPIED = {"schema_flags"}
+# a database, and what SQLite hasn't yet written into it (-wal) or needs to
+# undo a write that was cut short (-journal)
+SIDE_FILES = ("", "-wal", "-journal")
 # bad values listed for one file
 SHOWN = 20
 BIGINT = 2**63
@@ -43,8 +46,33 @@ class Refused(Exception):
     """The import can't go ahead: one sentence for the user."""
 
 
+class Unconfirmed(Exception):
+    """The connection went while the rows were being saved."""
+
+
+class Changed(Exception):
+    """A file was written to while it was being copied."""
+
+
 class Bad(Exception):
     """A value PostgreSQL's column can't hold: why, in a few words."""
+
+
+class Listed:
+    """What can't be stored: how many, and the first few in words."""
+
+    def __init__(self):
+        self.count = 0
+        self.shown = []
+
+    def add(self, text):
+        self.count += 1
+        if len(self.shown) < SHOWN:
+            self.shown.append(text)
+
+
+def _many(number, word):
+    return f"{number:,} {word}{'' if number == 1 else 's'}"
 
 
 @dataclass
@@ -149,15 +177,35 @@ def find(folder):
     )
 
 
+def _state(path):
+    """The size and time of a database and the files beside it."""
+    found = []
+    for suffix in SIDE_FILES:
+        try:
+            status = path.with_name(path.name + suffix).stat()
+        except FileNotFoundError:
+            found.append(None)
+        else:
+            found.append((status.st_size, status.st_mtime_ns))
+    return found
+
+
 def stage(path, folder, number):
-    """Copy a database (and what SQLite hasn't yet written into it, its -wal
-    file) to a folder of its own. The original is only read as a file."""
+    """Copy a database and the files SQLite keeps beside it to a folder of
+    its own. The original is only read as a file. Only what is in the files
+    is copied: a read-only original has a copy that can be brought up to
+    date."""
     target = Path(folder) / str(number)
     target.mkdir(parents=True)
-    for suffix in ("", "-wal"):
+    before = _state(path)
+    for suffix in SIDE_FILES:
         original = path.with_name(path.name + suffix)
         if original.is_file():
-            shutil.copy2(original, target / original.name)
+            shutil.copyfile(original, target / original.name)
+    # the files are copied one after the other: a write in between would
+    # give a copy that never was
+    if _state(path) != before:
+        raise Changed()
     return target / path.name
 
 
@@ -169,10 +217,10 @@ def _app():
     import ofscraper.db.backup as backup
     import ofscraper.db.difference as difference
     import ofscraper.db.operations as operations
-    import ofscraper.db.operations_.empty as empty
     import ofscraper.db.operations_.media as media
     import ofscraper.db.operations_.others as others
     import ofscraper.db.operations_.profile as profile
+    import ofscraper.db.operations_.wrapper as wrapper
     import ofscraper.db.transition as transition
     import ofscraper.sites as sites
 
@@ -180,11 +228,11 @@ def _app():
         backup=backup,
         difference=difference,
         operations=operations,
-        empty=empty,
         media=media,
         others=others,
         profile=profile,
         transition=transition,
+        wrapper=wrapper,
         sites=sites,
     )
 
@@ -198,7 +246,7 @@ def upgrade(source):
 
     async def go():
         await app.operations.create_tables(db_path=staged)
-        if await app.empty.empty(db_path=staged):
+        if _nothing_in(staged):
             source.empty = True
             return
         flags = app.others.get_schema_changes(db_path=staged)
@@ -246,8 +294,19 @@ def upgrade(source):
         source.problems.append(f"its copy couldn't be brought up to date ({E})")
 
 
+def _nothing_in(staged):
+    """Whether no creator has a row in the staged copy."""
+    with contextlib.closing(_open(staged)) as conn:
+        return not any(
+            conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+            for table in DATA_TABLES
+        )
+
+
 def _open(staged):
-    conn = sqlite3.connect(f"{Path(staged).resolve().as_uri()}?mode=ro", uri=True)
+    # the app's own way to a read-only file, which a network path needs
+    uri = _app().wrapper._read_only_uri(Path(staged).resolve())
+    conn = sqlite3.connect(uri, uri=True)
     # text as it is stored, so that text that isn't UTF-8 is a listed value
     # and not an error that stops the read
     conn.text_factory = bytes
@@ -270,7 +329,7 @@ def tables(source):
             )
         ]
         for table in names:
-            if table in NOT_COPIED:
+            if table in NOT_COPIED or table.startswith("sqlite_"):
                 continue
             if table not in postgres.TABLE_COLUMNS:
                 count = conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
@@ -296,10 +355,19 @@ def tables(source):
 def rows(source, table, columns, bad):
     """One table's rows from the staged copy, oldest first, converted for
     PostgreSQL. A value that can't be converted is added to `bad` (as text)
-    and its row left out; so is a row that names no creator."""
+    and its row left out; so is a row that names no creator, and a row
+    PostgreSQL would take for one it already has."""
     kinds = postgres.COLUMN_TYPES[table]
     required = postgres.REQUIRED[table]
     converted = []
+    # SQLite keeps two rows apart when one of them names no creator. Once
+    # the creator is filled in they are one row to PostgreSQL, which would
+    # refuse the whole import. Shared tables leave out a row already there
+    keys = [
+        (key, [columns.index(column) for column in key], {})
+        for key in postgres.UNIQUE_KEYS[table]
+        if table in DATA_TABLES and set(key) <= set(columns)
+    ]
     with contextlib.closing(_open(source.staged)) as conn:
         cursor = conn.execute(
             f"SELECT rowid, {', '.join(columns)} FROM {table} ORDER BY rowid"
@@ -320,8 +388,20 @@ def rows(source, table, columns, bad):
                         )
                 except Bad as E:
                     fine = False
-                    bad.append(f"{table} row {number}, {column}: {E}")
+                    bad.add(f"{table} row {number}, {column}: {E}")
                 row.append(value)
+            for key, positions, first in keys if fine else ():
+                named = tuple(row[position] for position in positions)
+                if None in named:
+                    continue
+                if named in first:
+                    fine = False
+                    bad.add(
+                        f"{table} row {number}: has the same"
+                        f" {' and '.join(key)} as row {first[named]}"
+                    )
+                    break
+                first[named] = number
             if fine:
                 converted.append(tuple(row))
     return converted
@@ -331,24 +411,24 @@ def read(source, write=None):
     """Read everything the staged copy holds. With `write`, each table's rows
     are handed to write(table, columns, rows); without, they are only checked
     and counted. Problems are added to source.problems."""
-    bad = []
+    bad = Listed()
     for table, columns in tables(source).items():
         converted = rows(source, table, columns, bad)
         source.counts[table] = len(converted)
         if table in DATA_TABLES:
             position = columns.index("model_id")
             source.creators.update(row[position] for row in converted)
-        if write and not bad:
+        if write and not bad.count:
             write(table, columns, converted)
     # a scan adds its creator to models when it starts: a file from before
     # that table, or one a scan never finished, hasn't the row
-    if write and not bad:
+    if write and not bad.count:
         write("models", ["model_id"], [(c,) for c in sorted(source.creators)])
-    if bad:
-        more = f" (and {len(bad) - SHOWN} more)" if len(bad) > SHOWN else ""
+    if bad.count:
+        more = f" (and {bad.count - SHOWN:,} more)" if bad.count > SHOWN else ""
         source.problems.append(
-            f"{len(bad)} values can't be stored{more}:\n      "
-            + "\n      ".join(bad[:SHOWN])
+            f"{_many(bad.count, 'value')} can't be stored{more}:\n      "
+            + "\n      ".join(bad.shown)
         )
 
 
@@ -362,6 +442,12 @@ def examine(paths, staging):
             source.staged = stage(path, staging, number)
         except OSError as E:
             source.problems.append(f"it couldn't be copied ({E})")
+            continue
+        except Changed:
+            source.problems.append(
+                "it changed while it was being copied: close the scraper and"
+                " run this again"
+            )
             continue
         upgrade(source)
         if source.empty or source.problems:
@@ -379,11 +465,16 @@ def examine(paths, staging):
             seen.setdefault((source.site, creator), []).append(source)
     for (_site, creator), holders in sorted(seen.items(), key=str):
         if len(holders) > 1:
+            # Merge Databases takes files of one creator each
+            advice = (
+                "put the two together with Merge Databases first"
+                if all(len(s.creators) == 1 for s in holders)
+                else "a creator can be brought in from one file only"
+            )
             for source in holders:
                 others = ", ".join(str(s.path) for s in holders if s is not source)
                 source.problems.append(
-                    f"creator {creator} is also in {others}: put the two"
-                    " together with Merge Databases first"
+                    f"creator {creator} is also in {others}: {advice}"
                 )
     return sources
 
@@ -520,7 +611,11 @@ def bring_in(sources, target, flags):
                 f"{site}.{table} holds {now} rows where"
                 f" {count + added[site][table]} were expected"
             )
-    target.commit()
+    try:
+        target.commit()
+    except tuple(target.errors) as E:
+        # the server may have kept the rows before the connection went
+        raise Unconfirmed() from E
     return added
 
 
@@ -532,20 +627,27 @@ def report(sources, out):
     for site in sorted({s.site for s in good}):
         of_site = [s for s in good if s.site == site]
         creators = set().union(*(s.creators for s in of_site))
-        out(f"{site}: {len(of_site)} files, {len(creators)} creators")
+        out(
+            f"{site}: {_many(len(of_site), 'file')},"
+            f" {_many(len(creators), 'creator')}"
+        )
         for table in (*DATA_TABLES, *SHARED_TABLES):
             count = sum(s.counts.get(table, 0) for s in of_site)
             if count:
                 out(f"  {table:<9} {count:>10,} rows")
     empty = [s for s in sources if s.empty]
     if empty:
-        out(f"{len(empty)} files have nothing in them and are left out.")
+        out(
+            "1 file has nothing in it and is left out."
+            if len(empty) == 1
+            else f"{len(empty):,} files have nothing in them and are left out."
+        )
     for source in sources:
         for note in source.notes:
             out(f"Note: {source.path}: {note}.")
     bad = [s for s in sources if s.problems]
     if bad:
-        out(f"\n{len(bad)} files can't be brought in:")
+        out(f"\n{_many(len(bad), 'file')} can't be brought in:")
         for source in bad:
             out(f"  {source.path}")
             for problem in source.problems:
@@ -570,9 +672,12 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
             " to bring the files into. See POSTGRESQL.md."
         )
         return 2
-    out(f"Found {len(paths)} user_data.db files under {folder}.")
-    own_staging = staging is None
-    staging = Path(staging or tempfile.mkdtemp(prefix="ofscraper-import-"))
+    out(f"Found {_many(len(paths), 'user_data.db file')} under {folder}.")
+    # a new folder of this run's own, so that nothing already in the staging
+    # folder is touched, and nothing of this run is left
+    if staging is not None:
+        Path(staging).mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix="ofscraper-import-", dir=staging))
     if target is None and postgres.enabled():
         target = Target()
     refusals = (Refused, postgres.PostgresUnavailable)
@@ -582,7 +687,7 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
             # the driver's own errors, now that it is known to be installed
             refusals += tuple(target.errors)
         out("Copying each file and checking the copy (the files aren't opened)...")
-        sources = examine(paths, staging / "copies")
+        sources = examine(paths, staging)
         if target:
             target.open(read_only=True)
             try:
@@ -601,7 +706,7 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
         if not apply:
             out(
                 "\nNothing was written. Run again with --apply to bring"
-                f" {len(good)} files in."
+                f" {_many(len(good), 'file')} in."
                 + (
                     " The files listed above stop that: fix them or move them"
                     " out of the folder, or add --skip-bad-files to leave"
@@ -618,7 +723,7 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
                 " add --skip-bad-files to bring in the rest."
             )
             return 1
-        out(f"\nBringing {len(good)} files in...")
+        out(f"\nBringing {_many(len(good), 'file')} in...")
         try:
             added = bring_in(sources, target, _app().difference.ALL_FLAGS)
         finally:
@@ -626,17 +731,28 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
         for site, counts in sorted(added.items()):
             total = sum(counts.get(table, 0) for table in DATA_TABLES)
             out(f"{site}: {total:,} rows added.")
-        out("Done. The user_data.db files are unchanged and are no longer used.")
+        if bad:
+            out(
+                "Done. The files brought in are unchanged and are no longer"
+                f" used. The {_many(len(bad), 'file')} left out"
+                f" {'is' if len(bad) == 1 else 'are'} still only in SQLite."
+            )
+        else:
+            out("Done. The user_data.db files are unchanged and are no longer used.")
         return 1 if bad else 0
+    except Unconfirmed:
+        out(
+            "\nThe connection was lost while the rows were being saved, so"
+            " PostgreSQL may or may not have kept them. Run this again without"
+            " --apply: it says which creators PostgreSQL already has."
+        )
+        return 1
     except refusals as E:
         # closing the connection rolled the transaction back
         out(f"\nNothing was written. {postgres.masked(' '.join(str(E).split()))}")
         return 1
     finally:
-        if own_staging:
-            shutil.rmtree(staging, ignore_errors=True)
-        else:
-            shutil.rmtree(staging / "copies", ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
 
 
 def main(argv=None):

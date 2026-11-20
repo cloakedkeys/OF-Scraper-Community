@@ -41,7 +41,7 @@ Turning PostgreSQL on doesn't move what your `user_data.db` files hold. A separa
 python -m ofscraper.commands.postgres_import <folder>
 ```
 
-`<folder>` is searched for `user_data.db` files; your profile's `.data` folder is the usual one. `OFSC_DATABASE_URL` says where they go, as above. Don't run the scraper while this runs.
+`<folder>` is searched for `user_data.db` files; your profile's `.data` folder is the usual one. `OFSC_DATABASE_URL` says where they go, as above. Don't run the scraper while this runs: a file that is written to while it is being copied is refused.
 
 Run like that, it only reports: how many files, creators and rows it found for each site, and anything that stands in the way. Nothing is written to PostgreSQL. Add `--apply` to bring the files in.
 
@@ -50,7 +50,7 @@ Run like that, it only reports: how many files, creators and rows it found for e
 - **Each file goes to its site's tables**, OnlyFans or Fansly.
 - **A creator comes from one file.** If two files hold rows for the same creator (after a rename, or a changed `metadata` setting), put them together with Merge Databases first.
 - **A creator PostgreSQL already has rows for is refused**, so a file can't be brought in twice. Creators it doesn't have yet can be brought in later.
-- **A value PostgreSQL's column can't hold stops the file**, and is listed with its table, row and column: an id that isn't a number, a yes/no column holding something else, a date that can't be read. Empty dates become empty.
+- **A value PostgreSQL's column can't hold stops the file**, and is listed with its table, row and column: an id that isn't a number, a yes/no column holding something else, a date that can't be read. Empty dates become empty. Two rows that would be the same row once a missing creator is filled in stop it too.
 - **`--skip-bad-files`** brings in the files that can be, and leaves out (and lists) the ones that can't.
 
 Afterwards the `user_data.db` files are no longer used. Keep them: there is no command yet for going back.

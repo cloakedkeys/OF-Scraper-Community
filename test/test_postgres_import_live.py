@@ -211,9 +211,14 @@ def test_a_failure_part_way_keeps_nothing_and_a_rerun_works(tmp_path, pg, monkey
     folder = library(tmp_path)
     write = importer.Target.write
 
+    stories = []
+
     def fails_late(self, site, table, columns, rows):
+        # in the second file: the first is fully written by then
         if table == "stories":
-            raise importer.Refused("stopped for the test")
+            stories.append(site)
+            if len(stories) == 2:
+                raise importer.Refused("stopped for the test")
         return write(self, site, table, columns, rows)
 
     with monkeypatch.context() as patch:

@@ -6,7 +6,12 @@ are kept only once committed.
 """
 
 import hashlib
+import os
+import shutil
 import sqlite3
+import stat
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +21,7 @@ import ofscraper.commands.postgres_import as importer
 import ofscraper.db.postgres as postgres
 import ofscraper.utils.settings as settings
 from ofscraper.db.difference import ALL_FLAGS
+from ofscraper.db.operations_.media import SIZE_SKIP_LABEL, SIZE_SKIP_REPAIR_FLAG
 from test.import_files import (
     current_file,
     file_2023,
@@ -38,6 +44,7 @@ class Target:
         self.prepared = []
         self.opened = []
         self.fail_at = None
+        self.closed = 0
 
     def check(self):
         return "18.0"
@@ -69,6 +76,7 @@ class Target:
         self.kept = {key: list(rows) for key, rows in self.pending.items()}
 
     def close(self):
+        self.closed += 1
         self.pending = {}
 
     def rows(self, site, table):
@@ -174,7 +182,7 @@ def test_a_current_file_is_brought_in(tmp_path):
     code, said = run(folder, target, apply=True)
 
     assert code == 0, said
-    assert "onlyfans: 1 files, 1 creators" in said
+    assert "onlyfans: 1 file, 1 creator" in said
     assert target.prepared == [(["onlyfans"], set(ALL_FLAGS))]
     # read first, then written
     assert target.opened == [True, False]
@@ -375,7 +383,7 @@ def test_the_files_can_be_checked_without_a_server(tmp_path):
     code, said = run(folder)
 
     assert code == 0
-    assert "onlyfans: 1 files, 1 creators" in said
+    assert "onlyfans: 1 file, 1 creator" in said
     assert "OFSC_DATABASE_URL isn't set: the files were checked" in said
 
 
@@ -408,7 +416,7 @@ def test_an_empty_file_is_left_out(tmp_path):
     code, said = run(folder, target, apply=True)
 
     assert code == 0, said
-    assert "1 files have nothing in them" in said
+    assert "1 file has nothing in it and is left out" in said
     assert target.rows("onlyfans", "profiles") == [
         {"user_id": 111, "username": "a_creator"}
     ]
@@ -444,7 +452,7 @@ def refused(tmp_path, spoil, why, **kwargs):
 
     assert code == 1
     assert why in said
-    assert "1 files can't be brought in" in said
+    assert "1 file can't be brought in" in said
     assert str(bad) in said
     assert "Nothing was written" in said
     assert target.kept == {}
@@ -635,6 +643,337 @@ def test_rows_that_dont_all_arrive_are_not_kept(tmp_path, monkeypatch):
     assert code == 1
     assert "onlyfans.medias holds 2 rows where 3 were expected" in said
     assert target.kept == {}
+
+
+def test_one_failure_undoes_the_files_written_before_it(tmp_path, monkeypatch):
+    # every file is in the one transaction: the first file is fully written
+    # when the second fails
+    folder = tmp_path / "data"
+    current_file(folder / "111" / "user_data.db", 111)
+    current_file(folder / "222" / "user_data.db", 222)
+    target = Target()
+    write = target.write
+    written = []
+
+    def fails_in_the_second_file(site, table, columns, rows):
+        rows = list(rows)
+        creators = set()
+        if "model_id" in columns:
+            creators = {row[columns.index("model_id")] for row in rows}
+        if table == "stories" and creators == {222}:
+            raise ServerError("the server went away")
+        written.extend((table, creator) for creator in creators)
+        return write(site, table, columns, rows)
+
+    monkeypatch.setattr(target, "write", fails_in_the_second_file)
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 1
+    assert "Nothing was written. the server went away" in said
+    assert ("stories", 111) in written
+    assert target.kept == {}
+
+
+def test_a_save_the_server_didnt_confirm_is_not_called_unwritten(tmp_path, monkeypatch):
+    folder = tmp_path / "data"
+    current_file(folder / "user_data.db", 111)
+    target = Target()
+
+    def lost():
+        raise ServerError("the connection is lost")
+
+    monkeypatch.setattr(target, "commit", lost)
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 1
+    assert "Nothing was written" not in said
+    assert "may or may not have kept them" in said
+
+
+def test_the_connection_is_given_back_when_the_files_are_in(tmp_path):
+    folder = tmp_path / "data"
+    current_file(folder / "user_data.db", 111)
+    target = Target()
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 0, said
+    assert target.closed == 2  # after the preview's look, and after the write
+
+
+# --- files in an unusual state ---
+
+
+def killed_mid_write(path, tmp_path):
+    """Leave `path` as a scraper killed part way through a write leaves it:
+    part of the change in the file, and beside it the journal that undoes it."""
+    sql(
+        path,
+        "INSERT INTO posts (post_id, text, paid, model_id) VALUES (?,?,?,?)",
+        [(number, "words " * 40, 0, 111) for number in range(1000, 4000)],
+    )
+    as_killed = tmp_path / "as_killed"
+    as_killed.mkdir()
+    conn = sqlite3.connect(path, isolation_level=None)
+    try:
+        conn.execute("PRAGMA journal_mode=DELETE")
+        # so little memory that the change is written to the file as it goes
+        conn.execute("PRAGMA cache_size=5")
+        conn.execute("BEGIN")
+        conn.execute("UPDATE posts SET paid = 1 WHERE post_id >= 1000")
+        for suffix in ("", "-journal"):
+            shutil.copyfile(f"{path}{suffix}", as_killed / f"{path.name}{suffix}")
+        conn.execute("ROLLBACK")
+    finally:
+        conn.close()
+    for suffix in ("", "-journal"):
+        shutil.copyfile(as_killed / f"{path.name}{suffix}", f"{path}{suffix}")
+
+
+def test_a_write_that_was_cut_short_is_undone_in_the_copy(tmp_path):
+    folder = tmp_path / "data"
+    path = current_file(folder / "user_data.db", 111)
+    killed_mid_write(path, tmp_path)
+    before = snapshot(folder)
+    assert "user_data.db-journal" in before
+    target = Target()
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 0, said
+    posts = target.rows("onlyfans", "posts")
+    assert len(posts) == 3002
+    # what SQLite itself would read from the file: the half-made change undone
+    assert [row for row in posts if row["post_id"] >= 1000 and row["paid"]] == []
+    assert snapshot(folder) == before
+
+
+def test_a_file_written_to_while_it_is_copied_is_refused(tmp_path, monkeypatch):
+    folder = tmp_path / "data"
+    path = current_file(folder / "111" / "user_data.db", 111)
+    current_file(folder / "222" / "user_data.db", 222)
+    copyfile = shutil.copyfile
+
+    def written_to_meanwhile(source, destination):
+        done = copyfile(source, destination)
+        if Path(source) == path:
+            sql(
+                path,
+                "INSERT INTO stories (post_id, text, model_id) VALUES (?,?,?)",
+                [(number, "words " * 40, 111) for number in range(500, 1500)],
+            )
+        return done
+
+    monkeypatch.setattr(shutil, "copyfile", written_to_meanwhile)
+    target = Target()
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 1
+    assert "it changed while it was being copied" in said
+    assert "1 file can't be brought in" in said
+    assert target.kept == {}
+
+
+def test_a_read_only_file_from_an_old_version_is_brought_in(tmp_path):
+    folder = tmp_path / "data"
+    path = file_2023(folder / "user_data.db", 222)
+    staging = tmp_path / "staging"
+    path.chmod(stat.S_IREAD)
+    try:
+        code, said = run(folder, Target(), apply=True, staging=staging)
+    finally:
+        path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+    assert code == 0, said
+    assert list(staging.iterdir()) == []
+
+
+def test_what_is_already_in_the_staging_folder_is_left_alone(tmp_path):
+    folder = tmp_path / "data"
+    current_file(folder / "user_data.db", 111)
+    staging = tmp_path / "staging"
+    (staging / "copies" / "0").mkdir(parents=True)
+    (staging / "copies" / "keep.txt").write_text("mine")
+
+    code, said = run(folder, Target(), apply=True, staging=staging)
+
+    assert code == 0, said
+    assert [path.name for path in staging.iterdir()] == ["copies"]
+    assert (staging / "copies" / "keep.txt").read_text() == "mine"
+    assert (staging / "copies" / "0").is_dir()
+
+
+def test_a_staging_folder_that_isnt_there_yet_is_made(tmp_path):
+    folder = tmp_path / "data"
+    current_file(folder / "user_data.db", 111)
+
+    code, said = run(folder, Target(), apply=True, staging=tmp_path / "new" / "one")
+
+    assert code == 0, said
+    assert list((tmp_path / "new" / "one").iterdir()) == []
+
+
+def test_the_default_working_folder_is_removed(tmp_path, monkeypatch):
+    folder = tmp_path / "data"
+    current_file(folder / "user_data.db", 111)
+    temporary = tmp_path / "temporary"
+    temporary.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temporary))
+
+    code, said = run(folder, Target(), apply=True)
+
+    assert code == 0, said
+    assert list(temporary.iterdir()) == []
+
+
+def test_the_working_copies_can_be_on_a_network_path(tmp_path):
+    if os.name != "nt" or not tmp_path.drive.endswith(":"):
+        pytest.skip("UNC paths are Windows paths")
+    shared = Path(rf"\\localhost\{tmp_path.drive[0]}$" + str(tmp_path)[2:])
+    try:
+        reachable = shared.is_dir()
+    except OSError:
+        reachable = False
+    if not reachable:
+        pytest.skip("the localhost admin share isn't reachable")
+    folder = tmp_path / "data"
+    current_file(folder / "user_data.db", 111)
+    (tmp_path / "staging").mkdir()
+    target = Target()
+
+    code, said = run(folder, target, apply=True, staging=shared / "staging")
+
+    assert code == 0, said
+    assert len(target.rows("onlyfans", "medias")) == 3
+
+
+# --- what a file holds ---
+
+
+def test_two_rows_that_become_one_when_the_creator_is_filled_in_stop_the_file(tmp_path):
+    # SQLite keeps a post once with its creator and once without; PostgreSQL
+    # can't once both name the creator
+    def spoil(path):
+        sql(path, "INSERT INTO posts (post_id, text, model_id) VALUES (20, 'again', NULL)")
+
+    refused(
+        tmp_path, spoil, "posts row 3: has the same post_id and model_id as row 1"
+    )
+
+
+def test_a_row_keeps_the_creator_it_names(tmp_path):
+    folder = tmp_path / "data"
+    path = current_file(folder / "user_data.db", 111)
+    sql(path, "INSERT INTO posts (post_id, text, model_id) VALUES (50, 'another', 999)")
+    target = Target()
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 0, said
+    posts = {row["post_id"]: row["model_id"] for row in target.rows("onlyfans", "posts")}
+    assert posts == {20: 111, 10: 111, 50: 999}
+    assert {row["model_id"] for row in target.rows("onlyfans", "models")} == {111, 999}
+
+
+def test_a_file_with_only_labels_is_not_taken_for_empty(tmp_path):
+    folder = tmp_path / "data"
+    path = current_file(folder / "user_data.db", 111)
+    for table in ("posts", "medias", "messages", "stories"):
+        sql(path, f"DELETE FROM {table}")
+    target = Target()
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 0, said
+    assert "nothing in" not in said
+    assert len(target.rows("onlyfans", "labels")) == 1
+
+
+def test_sqlites_own_tables_are_passed_over_in_silence(tmp_path):
+    folder = tmp_path / "data"
+    path = current_file(folder / "user_data.db", 111)
+    sql(path, "ANALYZE")
+    assert sql(path, "SELECT COUNT(*) FROM sqlite_stat1")[0][0] > 0
+
+    code, said = run(folder, Target(), apply=True)
+
+    assert code == 0, said
+    assert "sqlite_stat1" not in said
+
+
+def test_the_creator_is_looked_for_on_the_files_own_site(tmp_path):
+    folder = tmp_path / "data"
+    current_file(folder / "user_data.db", 111, site="fansly")
+
+    # the same number on the other site is another creator
+    target = Target(held={"onlyfans": {111}})
+    code, said = run(folder, target, apply=True)
+    assert code == 0, said
+    assert len(target.rows("fansly", "medias")) == 3
+
+    target = Target(held={"fansly": {111}})
+    code, said = run(folder, target, apply=True)
+    assert code == 1
+    assert "PostgreSQL already has rows for creator 111" in said
+
+
+def test_the_backups_beside_the_file_are_read_for_the_size_skip_repair(tmp_path):
+    # the repair (#352) un-marks media a backup shows as skipped for its size.
+    # The copy has no backups beside it: the original's are read
+    folder = tmp_path / "data"
+    path = current_file(folder / "user_data.db", 111)
+    sql(path, "UPDATE medias SET downloaded = 1, skip_permanent = NULL WHERE media_id = 2")
+    sql(path, f"DELETE FROM schema_flags WHERE flag_name = '{SIZE_SKIP_REPAIR_FLAG}'")
+    backup = current_file(folder / "backup" / "user_data_copy_1.db", 111)
+    sql(
+        backup,
+        "UPDATE medias SET downloaded = 1, media_type = ? WHERE media_id = 2",
+        [(SIZE_SKIP_LABEL,)],
+    )
+    before = snapshot(folder)
+    target = Target()
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 0, said
+    assert "Found 1 user_data.db file under" in said
+    downloaded = {
+        (row["media_id"], row["post_id"]): row["downloaded"]
+        for row in target.rows("onlyfans", "medias")
+    }
+    # un-marked: neither downloaded nor not
+    assert downloaded == {("1", "10"): True, ("2", "10"): None, ("1", "20"): True}
+    assert snapshot(folder) == before
+
+
+def test_a_creator_in_a_file_with_others_isnt_sent_to_merge(tmp_path):
+    # Merge Databases takes files of one creator each
+    folder = tmp_path / "data"
+    current_file(folder / "111" / "user_data.db", 111)
+    both = current_file(folder / "222" / "user_data.db", 222)
+    sql(both, "INSERT INTO posts (post_id, text, model_id) VALUES (50, 'another', 111)")
+
+    code, said = run(folder, Target())
+
+    assert code == 1
+    assert "creator 111 is also in" in said
+    assert "Merge Databases" not in said
+
+
+def test_files_left_out_are_said_when_the_rest_is_done(tmp_path):
+    folder = tmp_path / "data"
+    current_file(folder / "111" / "user_data.db", 111)
+    bad = current_file(folder / "222" / "user_data.db", 222)
+    sql(bad, "UPDATE posts SET paid = 2")
+
+    code, said = run(folder, Target(), apply=True, skip_bad=True)
+
+    assert code == 1
+    assert "The 1 file left out is still only in SQLite" in said
+    assert "The user_data.db files are unchanged and are no longer used" not in said
 
 
 # --- the command line ---

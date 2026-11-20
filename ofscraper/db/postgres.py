@@ -204,6 +204,15 @@ REQUIRED = {
     }
     for table, lines in _COLUMN_LINES.items()
 }
+# the columns that together name one row of a table
+UNIQUE_KEYS = {
+    table: [
+        tuple(part.strip() for part in line.split("(")[1].rstrip("),").split(","))
+        for line in create.splitlines()
+        if line.strip().startswith("UNIQUE")
+    ]
+    for table, create in TABLES.items()
+}
 # The unique keys start with the row's own id; nearly every read asks for one
 # creator's rows
 CREATOR_INDEXES = ("medias", "posts", "messages", "stories", "others", "products", "labels")
