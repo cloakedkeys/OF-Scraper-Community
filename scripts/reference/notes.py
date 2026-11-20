@@ -142,7 +142,7 @@ ENV = {
     "FANSLY_STREAM_SEGMENTS":"How many files of one Fansly stream (HLS segments, AES-128 keys, DASH segments) are fetched at once before ffmpeg joins them locally; fetched files are kept so a stopped download resumes (`fansly_stream_download.py`). 0 leaves the whole stream to ffmpeg, one segment after another, with no resume. Streams the local path can't handle still go to ffmpeg: HLS that is live (no `#EXT-X-ENDLIST`) or uses encryption other than AES-128, and DASH that is protected, live, has more than one period or uses unsupported addressing. The number of files downloaded at once is still set by `download_sems`.",
     "FANSLY_FULL_SCAN_DAYS": "How often, in days, a Fansly download run scans the timeline and messages of a creator in full. Between full scans a run stops an area where the last finished scan began (see `advanced_options.incremental_downloads`). A post that appears later with an older date is found by the next full scan, so this is the longest it can be missed. 0 scans fully every time (`ofscraper/sites/fansly/incremental.py`).",
     "DYNAMIC_GENERIC_URL": "The URL of the dynamic rule that `advanced_options.dynamic-mode-default` `generic` fetches. Unset, `generic` can't be used and the fallback sources are tried instead.",
-    "DISK_SPACE_CHECK_PATH":"The path whose disk free space is compared with `download_options.system_free_min` (`ofscraper/utils/system/free.py`). It is not the save location unless you set it to be.",
+    "DISK_SPACE_CHECK_PATH": "The path whose disk free space is compared with `download_options.system_free_min` (`ofscraper/utils/system/free.py`). It is not the save location unless you set it to be.",
 }
 
 # the four SUPRESS_*_DISPLAY switches have no default to take a type from
