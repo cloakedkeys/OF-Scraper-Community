@@ -477,6 +477,8 @@ class AltDownloadManager(DownloadManager):
                 temp_path,
                 sharedPlaceholderObj.trunicated_filepath,
                 ele,
+                username=username,
+                model_id=model_id,
             ),
         )
 

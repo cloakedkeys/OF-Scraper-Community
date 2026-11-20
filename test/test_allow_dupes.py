@@ -3,12 +3,13 @@
 Off (the default, ALLOW_DUPE_MEDIA unset) a media is downloaded once, by
 media id. On, each post gets its own copy: "already downloaded" goes by
 (media id, post id), on OnlyFans and Fansly, each copy gets its own file and
-database row, and media in both Messages and Purchased is still downloaded
-once, from Messages, unless --keep-message-purchased-dupes.
+database row, Purchased copies are downloaded too, and the metadata command
+reads and writes each post's own record.
 """
 
 import asyncio
 import contextlib
+import logging
 import sqlite3
 from types import SimpleNamespace
 
@@ -18,7 +19,10 @@ from click.testing import CliRunner
 
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.classes.placeholder as placeholder
+import ofscraper.commands.metadata.manager as metadata_manager
+import ofscraper.commands.scraper.actions.download.download as of_download
 import ofscraper.commands.scraper.actions.download.managers.alt_download as ad
+import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.commands.scraper.actions.utils.paths as action_paths
 import ofscraper.db.operations as operations
 import ofscraper.db.operations_.media as media_ops
@@ -29,10 +33,7 @@ import ofscraper.utils.settings as settings
 from ofscraper.classes.of.media import Media
 from ofscraper.classes.of.posts import Post
 from ofscraper.db.operations_.media import batch_mediainsert, mark_media_as_downloaded
-from ofscraper.utils.args.parse.arguments.download import (
-    allow_dupes_option,
-    keep_message_purchased_dupes_option,
-)
+from ofscraper.utils.args.parse.arguments.download import allow_dupes_option
 
 from test_fansly_pipeline import (  # noqa: F401  (harness and settings_stub are fixtures)
     MODEL_ID as FANSLY_ID,
@@ -53,9 +54,8 @@ USERNAME = "a-creator"
 def command():
     @click.command()
     @allow_dupes_option
-    @keep_message_purchased_dupes_option
-    def cmd(allow_dupe_downloads, keep_message_purchased_dupes):
-        click.echo(f"{allow_dupe_downloads} {keep_message_purchased_dupes}")
+    def cmd(allow_dupe_downloads):
+        click.echo(f"{allow_dupe_downloads}")
 
     return cmd
 
@@ -63,12 +63,11 @@ def command():
 @pytest.mark.parametrize(
     "argv, expected",
     [
-        ([], "None False"),
-        (["--allow-dupes"], "True False"),
-        (["--allow-dupe-downloads"], "True False"),
-        (["-ad"], "True False"),
-        (["--no-allow-dupes"], "False False"),
-        (["--allow-dupes", "--keep-message-purchased-dupes"], "True True"),
+        ([], "None"),
+        (["--allow-dupes"], "True"),
+        (["--allow-dupe-downloads"], "True"),
+        (["-ad"], "True"),
+        (["--no-allow-dupes"], "False"),
     ],
 )
 def test_the_options_parse(command, argv, expected):
@@ -111,7 +110,6 @@ def env(monkeypatch, tmp_path):
     stub = SimpleNamespace(**{
         **dict(real), "force_all": False, "force_model_unique": False,
         "skip_download_script": None, "allow_dupe_downloads": False,
-        "keep_message_purchased_dupes": False,
     })
     monkeypatch.setattr(settings, "get_settings", lambda *a, **k: stub)
     db = tmp_path / "user_data.db"
@@ -203,22 +201,97 @@ def test_on_force_model_unique_reads_pairs_of_this_creator(env):
     assert filters.downloaded_media_ids(username=USERNAME, model_id=MODEL_ID + 1) == set()
 
 
-@pytest.mark.parametrize("keep, expected", [(False, [(7, 1)]), (True, [(7, 1), (7, 2)])])
-def test_on_messages_and_purchased_collapse_to_messages(env, keep, expected):
-    env.stub.allow_dupe_downloads = True
-    env.stub.keep_message_purchased_dupes = keep
-    assert todo([item(7, 2, "paid"), item(7, 1, "message")]) == expected
+def test_off_messages_and_purchased_download_once(env):
+    assert todo([item(7, 2, "paid"), item(7, 1, "message")]) == [(7, 1)]
 
 
-@pytest.mark.parametrize("keep, expected", [(False, []), (True, [(7, 2)])])
-def test_on_purchased_copy_of_a_downloaded_media_is_left_out(env, keep, expected):
+def test_on_the_purchased_copy_is_downloaded_too(env):
     env.stub.allow_dupe_downloads = True
-    env.stub.keep_message_purchased_dupes = keep
+    assert todo([item(7, 2, "paid"), item(7, 1, "message")]) == [(7, 1), (7, 2)]
+
+
+def test_on_purchased_copy_of_a_media_downloaded_earlier_is_downloaded(env):
+    env.stub.allow_dupe_downloads = True
     message = item(7, 1, "message")
     todo([message])
     mark(message, "a.jpg")
-    # a later run that sees the purchase without the message
-    assert todo([item(7, 2, "paid")]) == expected
+    # a later run that sees the purchase: its copy hasn't been saved yet
+    assert todo([item(7, 2, "paid")]) == [(7, 2)]
+
+
+# ------------------------------------------------------------------ records
+
+
+class FakePlaceholder:
+    def __init__(self, path):
+        self.trunicated_filepath = path
+        self.trunicated_filename = path.name
+        self.trunicated_filedir = path.parent
+        self.size = None
+
+    async def init(self, create=False):
+        return self
+
+
+def first_post_saved(env):
+    """Two posts share media 7; only post 1's copy is saved, as caption.jpg."""
+    env.stub.allow_dupe_downloads = True
+    items = [item(7, 1), item(7, 2)]
+    todo(items)
+    saved = env.out / "caption.jpg"
+    saved.write_bytes(b"post 1's copy")
+    asyncio.run(
+        mark_media_as_downloaded(
+            items[0], model_id=MODEL_ID, username=USERNAME, downloaded=True,
+            filename=saved.name, directory=str(env.out),
+        )
+    )
+    return items
+
+
+@pytest.mark.parametrize("mode, downloaded", [("check", None), ("update", 0)])
+def test_on_metadata_reads_this_posts_record(env, monkeypatch, mode, downloaded):
+    # post 2's copy isn't on disk: it must not take post 1's record or file
+    items = first_post_saved(env)
+    env.stub.metadata = mode
+    env.stub.hash = False
+    monkeypatch.setattr(common_globals, "log", logging.getLogger("shared"))
+
+    async def run():
+        await metadata_manager.MetaDataManager()._change_metadata(
+            None, items[1], USERNAME, MODEL_ID,
+            placeholderObj=FakePlaceholder(env.out / "caption_7.jpg"),
+        )
+
+    asyncio.run(run())
+    assert rows(env) == [(7, 1, 1, "caption.jpg"), (7, 2, downloaded, "caption_7.jpg")]
+
+
+def test_on_the_silent_recheck_finds_this_posts_file(env):
+    items = first_post_saved(env)
+
+    async def saved(ele):
+        return await of_download._saved_path(ele, model_id=MODEL_ID, username=USERNAME)
+
+    assert asyncio.run(saved(items[0])) == env.out / "caption.jpg"
+    assert asyncio.run(saved(items[1])) is None
+
+
+def test_on_own_file_reads_the_callers_database_without_writing(env, monkeypatch, tmp_path):
+    items = first_post_saved(env)
+    other = tmp_path / "elsewhere" / "user_data.db"
+    # the database path goes by the run's username, which keeps its case;
+    # a media's username is lowercased
+    monkeypatch.setattr(
+        placeholder.databasePlaceholder,
+        "databasePathHelper",
+        lambda self, model_id, model_username: env.db if model_username == "A-Creator" else other,
+    )
+    assert items[0].username == "a-creator"
+    assert action_paths._own_file(items[0], "A-Creator", MODEL_ID) == env.out / "caption.jpg"
+    # no database for that creator: none is made
+    assert action_paths._own_file(items[0], "another", MODEL_ID) is None
+    assert not other.exists() and not other.parent.exists()
 
 
 # ------------------------------------------------------------------ files
@@ -241,7 +314,9 @@ def files(monkeypatch, tmp_path):
 def move(tmp_path, ele, data=b"the same media"):
     temp = tmp_path / f"dl_{ele.post_id}.part"
     temp.write_bytes(data)
-    return action_paths.moveHelper(temp, tmp_path / "caption.jpg", ele)
+    return action_paths.moveHelper(
+        temp, tmp_path / "caption.jpg", ele, username=USERNAME, model_id=MODEL_ID
+    )
 
 
 def copy_of(post_id):
@@ -345,17 +420,31 @@ def test_fansly_on_a_later_run_fetches_the_missing_copy(harness, settings_stub):
     assert got == [(101, 2)]
 
 
-@pytest.mark.parametrize(
-    "keep, expected", [(False, [(101, 1)]), (True, [(101, 1), (101, 2)])]
-)
-def test_fansly_on_messages_and_purchased_collapse_to_messages(
-    harness, settings_stub, keep, expected
-):
-    settings_stub.allow_dupe_downloads = True
-    settings_stub.keep_message_purchased_dupes = keep
+def messages_and_purchased(harness):
     harness.areas = ["Messages", "Purchased"]
     harness.pages["Messages"] = [page(message(1, [101]))]
     harness.pages["Purchased"] = [page(post_dict(2, [101]))]
-    got = downloads(harness)
+    return downloads(harness)
+
+
+def test_fansly_off_messages_and_purchased_download_once(harness):
+    got = messages_and_purchased(harness)
     harness.run()
-    assert got == expected
+    assert got == [(101, 1)]
+
+
+def test_fansly_on_the_purchased_copy_is_downloaded_too(harness, settings_stub):
+    settings_stub.allow_dupe_downloads = True
+    got = messages_and_purchased(harness)
+    harness.run()
+    assert got == [(101, 1), (101, 2)]
+
+
+def test_fansly_on_purchased_copy_of_a_media_downloaded_earlier_is_downloaded(
+    harness, settings_stub
+):
+    settings_stub.allow_dupe_downloads = True
+    harness.downloaded = {(101, 1)}
+    got = messages_and_purchased(harness)
+    harness.run()
+    assert got == [(101, 2)]

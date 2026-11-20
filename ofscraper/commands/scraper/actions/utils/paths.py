@@ -29,7 +29,7 @@ MAX_CANDIDATES = 1000
 STALE_STAGING_SECONDS = 24 * 60 * 60
 
 
-def moveHelper(temp, path_to_file, ele, log_=None):
+def moveHelper(temp, path_to_file, ele, log_=None, username=None, model_id=None):
     """
     Move a finished download into place and return the path it ended up at.
 
@@ -47,11 +47,12 @@ def moveHelper(temp, path_to_file, ele, log_=None):
     With allow-dupes, each post's copy of a media gets its own file: an
     identical file is this download only if the database records it for
     this media and post. Otherwise it's another post's copy, left alone.
+    username and model_id are the run's creator, whose database that is.
     """
     log_ = log_ or logging.getLogger("shared")
     path_to_file = pathlib.Path(path_to_file)
     per_post = settings.allow_dupes()
-    own = _own_file(ele) if per_post else None
+    own = _own_file(ele, username, model_id) if per_post else None
     if str(config_data.get_filename_collision()).lower() == "overwrite" and (
         not per_post or not path_to_file.exists() or path_to_file == own
     ):
@@ -72,13 +73,14 @@ def moveHelper(temp, path_to_file, ele, log_=None):
     return candidate
 
 
-def _own_file(ele):
-    """The file the database records for this media and post, or None."""
+def _own_file(ele, username, model_id):
+    """The file the creator's database records for this media and post, or
+    None. Only reads: a missing database isn't created."""
     from ofscraper.db.operations_.media import get_media_post_files_downloaded
 
     try:
         files = get_media_post_files_downloaded(
-            model_id=ele.model_id, username=ele.username, media_id=ele.id
+            model_id=model_id, username=username, media_id=ele.id, read_only=True
         )
     except (OSError, sqlite3.Error):
         return None

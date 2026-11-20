@@ -149,6 +149,8 @@ directory,filename,size,
 downloaded,hash,skip_permanent
 FROM medias where media_id=(?) and model_id=(?)
 """
+# the same for one post's copy, with allow-dupes
+mediaDownloadSelectPost = mediaDownloadSelect + " and post_id=(?)"
 allIDCheck = """
 SELECT media_id FROM medias
 """
@@ -897,8 +899,15 @@ def update_media_table_download_helper(
 @run
 @wrapper.operation_wrapper_async
 def prev_download_media_data(media, model_id=None, username=None, conn=None, **kwargs):
+    """The download record of ``media``. With allow-dupes each post's copy
+    has its own record, so this post's row is read, not another post's."""
     with contextlib.closing(conn.cursor()) as curr:
-        prevData = curr.execute(mediaDownloadSelect, (media.id, model_id)).fetchone()
+        if settings.allow_dupes():
+            prevData = curr.execute(
+                mediaDownloadSelectPost, (media.id, model_id, media.post_id)
+            ).fetchone()
+        else:
+            prevData = curr.execute(mediaDownloadSelect, (media.id, model_id)).fetchone()
         prevData = dict(prevData) if prevData else None
         return prevData
 

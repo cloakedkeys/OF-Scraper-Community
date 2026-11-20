@@ -35,34 +35,6 @@ def media_key(item):
     return (item.id, item.post_id) if settings.allow_dupes() else item.id
 
 
-def response_area(item):
-    area = str(item.responsetype or "").lower()
-    if area in {"messages", "message"}:
-        return "messages"
-    if area in {"paid", "purchased"}:
-        return "purchased"
-    return area
-
-
-def message_purchased_filter(media, kept=()):
-    """With allow-dupes, media that is in both Messages and Purchased is
-    downloaded once, from Messages: its Purchased copies are left out.
-    ``kept``: more media ids to treat the same way (already downloaded, or
-    seen in Messages earlier in the run). --keep-message-purchased-dupes
-    keeps the Purchased copies."""
-    if not settings.allow_dupes() or getattr(
-        settings.get_settings(), "keep_message_purchased_dupes", False
-    ):
-        return media
-    kept = set(kept) | {m.id for m in media if response_area(m) == "messages"}
-    out = [m for m in media if not (response_area(m) == "purchased" and m.id in kept)]
-    if len(out) != len(media):
-        log.debug(
-            f"Left out {len(media) - len(out)} Purchased media also in Messages"
-        )
-    return out
-
-
 # dupe filters that prioritize viewable
 def dupefiltermedia(media):
     output = defaultdict(lambda: None)
@@ -70,7 +42,7 @@ def dupefiltermedia(media):
         media, key=lambda item: (undated_first(item.post.date), item.id, item.count)
     )
     if settings.allow_dupes():
-        for item in message_purchased_filter(media):
+        for item in media:
             if not output[(item.id, item.post_id)]:
                 output[(item.id, item.post_id)] = item
     else:
@@ -212,10 +184,6 @@ def previous_download_filter(medialist, username=None, model_id=None):
 
     # Apply the filters to whichever pool we selected above
     medialist = [m for m in medialist if media_key(m) not in media_ids]
-    if settings.allow_dupes():
-        medialist = message_purchased_filter(
-            medialist, kept={media_id for media_id, _ in media_ids}
-        )
     log.debug(
         f"Number of new media_ids after dupe/previously downloaded ids removed: {len(medialist)}"
     )

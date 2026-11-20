@@ -157,17 +157,10 @@ class Selector:
         self.downloaded = filters.downloaded_media_ids(
             username=username, model_id=model_id
         )
-        # allow-dupes: media ids whose Purchased copies are left out
-        # (message_purchased_filter); Messages is scanned before Purchased
-        self.kept = set()
-        if settings.allow_dupes() and self.downloaded is not None:
-            self.kept = {media_id for media_id, _ in self.downloaded}
 
     def select(self, posts):
         media = [m for post in posts for m in post.prepare_media_for_download()]
         media = filters.seperate_self(media)
-        media = filters.message_purchased_filter(media, kept=self.kept)
-        self.kept.update(m.id for m in media if filters.response_area(m) == "messages")
         out = []
         for item in media:
             key = filters.media_key(item)
