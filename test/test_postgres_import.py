@@ -24,7 +24,13 @@ from test.import_files import (
 )
 
 
+class ServerError(Exception):
+    """What the stand-in's driver raises."""
+
+
 class Target:
+    errors = (ServerError,)
+
     def __init__(self, held=None):
         self.held = held or {}
         self.kept = {}
@@ -589,6 +595,25 @@ def test_a_failure_part_way_leaves_nothing_and_a_rerun_works(tmp_path):
 
     assert code == 0, said
     assert len(target.rows("onlyfans", "medias")) == 6
+
+
+def test_a_refusal_by_the_server_is_said_without_the_password(tmp_path, monkeypatch):
+    folder = tmp_path / "data"
+    current_file(folder / "user_data.db", 111)
+    monkeypatch.setenv(postgres.URL_KEY, "postgresql://me:s3cret-word@localhost/db")
+    target = Target()
+
+    def refuses(site, table, columns, rows):
+        raise ServerError("duplicate key\nDETAIL: for s3cret-word")
+
+    monkeypatch.setattr(target, "write", refuses)
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 1
+    assert "Nothing was written. duplicate key DETAIL: for {hidden}" in said
+    assert "s3cret-word" not in said
+    assert target.kept == {}
 
 
 def test_rows_that_dont_all_arrive_are_not_kept(tmp_path, monkeypatch):

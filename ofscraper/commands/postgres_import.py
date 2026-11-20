@@ -401,6 +401,11 @@ class Target:
         self.timeout = of_env.getattr("DATABASE_TIMEOUT")
         self.conn = None
 
+    @property
+    def errors(self):
+        """What the server's refusals are raised as."""
+        return self.engine.errors
+
     def check(self):
         return self.engine.check()
 
@@ -570,9 +575,12 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
     staging = Path(staging or tempfile.mkdtemp(prefix="ofscraper-import-"))
     if target is None and postgres.enabled():
         target = Target()
+    refusals = (Refused, postgres.PostgresUnavailable)
     try:
         if target:
             target.check()
+            # the driver's own errors, now that it is known to be installed
+            refusals += tuple(target.errors)
         out("Copying each file and checking the copy (the files aren't opened)...")
         sources = examine(paths, staging / "copies")
         if target:
@@ -620,8 +628,9 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
             out(f"{site}: {total:,} rows added.")
         out("Done. The user_data.db files are unchanged and are no longer used.")
         return 1 if bad else 0
-    except (Refused, postgres.PostgresUnavailable) as E:
-        out(f"\nNothing was written. {E}")
+    except refusals as E:
+        # closing the connection rolled the transaction back
+        out(f"\nNothing was written. {postgres.masked(' '.join(str(E).split()))}")
         return 1
     finally:
         if own_staging:
