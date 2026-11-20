@@ -15,6 +15,7 @@ import asyncio
 import pathlib
 import re
 import traceback
+import urllib.parse
 from contextlib import nullcontext
 
 from ofscraper.commands.scraper.actions.download import stop
@@ -187,14 +188,42 @@ def _saved_size(path):
         return 0
 
 
-_URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
+# a link with a scheme or starting with //; it ends at a quote, a space or a
+# backslash (JSON's \" or a Windows path after it)
+_URL = re.compile(r"(?:\b[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^\s'\"<>\\]+")
+# a query string, with or without the link before it: a ? and then text with
+# an = in it
+_QUERY = re.compile(r"\?(?=[^\s'\"<>\\]*=)[^\s'\"<>\\]*")
+
+
+def _error_text(error):
+    """str(error), but an OSError's path as it is, not repr'd: str() shows a
+    Windows path with doubled backslashes."""
+    if isinstance(error, OSError) and error.filename is not None:
+        code = (
+            f"WinError {error.winerror}" if getattr(error, "winerror", None)
+            else f"Errno {error.errno}"
+        )
+        text = f"[{code}] {error.strerror}: {error.filename}"
+        if error.filename2 is not None:
+            text += f" -> {error.filename2}"
+        return text
+    return str(error)
 
 
 def _failure_reason(error):
     """An error's text for item_finished: on one line, with no link (a signed
     link is a key to the file), and hidden as the logs hide cookies, IDs and
-    the home folder's name."""
-    text = " ".join(_URL.sub("{url}", str(error)).split())
+    the home folder's name. A link is found in its JSON-escaped (https:\\/\\/)
+    and percent-encoded forms too; a link without a scheme keeps its address
+    but loses everything after the ?."""
+    text = _error_text(error).replace("\\/", "/")
+    # percent-encoded, perhaps more than once; each pass that changes the
+    # text shortens it, so this ends
+    while (decoded := urllib.parse.unquote(text)) != text:
+        text = decoded
+    text = _QUERY.sub("", _URL.sub("{url}", text))
+    text = " ".join(text.split())
     return SensitiveFormatter()._filter(text) or type(error).__name__
 
 

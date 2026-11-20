@@ -101,7 +101,7 @@ Code running in the same process, such as a GUI, can follow downloads without ch
 - **`item_downloaded(ele, path)`:** a media file has been saved at `path` and recorded in the database. It's sent before `after_download_script` runs, and a stop during the script still counts the item as downloaded. Sent for normal files, DRM videos and Fansly HLS/DASH streams.
 - **`item_finished(ele, username, result, reason)`:** the download loop has counted one item. `result` is `downloaded`, `failed`, `skipped` or `stopped`. `reason` is None unless the item failed or was skipped:
   - skipped: `size limit`, `skip_download_script`, `CDM keys not found`, `protected stream`, or `skipped`.
-  - failed: `no link` (locked or removed media), or the error's text with links removed and cookies and the home folder's name hidden as in the logs. `download failed` when there's no error.
+  - failed: `no link` (locked or removed media), or the error's text with links removed (also JSON-escaped and percent-encoded ones; a link without a scheme keeps its address but loses everything after the `?`) and cookies and the home folder's name hidden as in the logs. `download failed` when there's no error.
 
 A subscriber can be a plain function or an `async def` one. It runs in the download's thread and holds up that download until it returns. An error in a subscriber is logged at debug level and doesn't affect the download. To stop downloads from another thread, call `ofscraper.commands.scraper.actions.download.stop.request()`.
 

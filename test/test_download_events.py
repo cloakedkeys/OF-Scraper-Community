@@ -320,3 +320,52 @@ def test_failure_reason_has_no_link_or_home_folder_name(monkeypatch):
         "Media:1 got 403 from {url} /data/{home_directory}/b.part was not created"
     )
     assert run_mod._failure_reason(KeyError()) == "KeyError"
+
+
+# signed-link parts that must never reach a subscriber
+SECRETS = ("PPP", "SSS", "KKK", "Policy", "Signature", "Key-Pair-Id")
+
+
+@pytest.mark.parametrize("text, expected", [
+    # aiohttp's and httpx's messages: the closing quote stays
+    ("404, message='Not Found', url='https://cdn.example/a.mp4?Policy=PPP&Signature=SSS"
+     "&Key-Pair-Id=KKK'", "404, message='Not Found', url='{url}'"),
+    ("Client error '403' for url 'https://cdn.example/a.mp4?Signature=SSS'",
+     "Client error '403' for url '{url}'"),
+    # JSON-escaped
+    ('{"url":"https:\\/\\/cdn.example\\/a.mp4?Policy=PPP&Signature=SSS&Key-Pair-Id=KKK"}',
+     '{"url":"{url}"}'),
+    # no scheme: the address stays, the query goes
+    ("cdn.example/a.mp4?Policy=PPP&Signature=SSS&Key-Pair-Id=KKK failed",
+     "cdn.example/a.mp4 failed"),
+    ("//cdn.example/a.mp4?Expires=1&Signature=SSS&Key-Pair-Id=KKK", "{url}"),
+    # percent-encoded, once and twice
+    ("bad link https%3A%2F%2Fcdn.example%2Fa.mp4%3FPolicy%3DPPP%26Signature%3DSSS",
+     "bad link {url}"),
+    ("bad link https%253A%252F%252Fcdn.example%252Fa.mp4%253FSignature%253DSSS",
+     "bad link {url}"),
+    # a question in the text is left alone
+    ("is it there? no", "is it there? no"),
+], ids=["aiohttp", "httpx", "json", "no scheme", "no scheme //", "percent",
+        "percent twice", "question"])
+def test_failure_reason_lets_no_signed_link_through(monkeypatch, text, expected):
+    monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
+    reason = run_mod._failure_reason(Exception(text))
+    assert reason == expected
+    assert not any(s in reason for s in SECRETS)
+
+
+def test_failure_reason_shows_an_os_error_path_as_it_is(monkeypatch):
+    monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
+    monkeypatch.setattr(sensitive.paths, "get_username", lambda: "someone")
+    error = OSError(28, "No space left on device", r"D:\data\someone\Downloads\x.part")
+    assert run_mod._failure_reason(error) == (
+        r"[Errno 28] No space left on device: D:\data\{home_directory}\Downloads\x.part"
+    )
+    # the fourth argument is Windows' error code
+    error = PermissionError(13, "Access is denied", "/data/someone/a", None, "/data/someone/b")
+    assert run_mod._failure_reason(error) == (
+        "[Errno 13] Access is denied: /data/{home_directory}/a -> /data/{home_directory}/b"
+    )
+    # no path: as str() gives it
+    assert run_mod._failure_reason(OSError("disk gone")) == "disk gone"
