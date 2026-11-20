@@ -43,20 +43,19 @@ CREATE TABLE IF NOT EXISTS models (
 	UNIQUE (model_id)
 )
 """
+# the first row is the one used: say which, as only SQLite has an order of
+# its own (the unique key's)
 userNameList = """
-SELECT username FROM profiles where user_id=(?)
+SELECT username FROM profiles where user_id=(?) ORDER BY username
 """
 
 profileTableCheck = """
 SELECT name FROM sqlite_master WHERE type='table' AND name='profiles';
 """
-# a row is added once: the check and the insert are two statements, as an
-# INSERT ... SELECT ?, ? gives the values no type outside SQLite
-profileCheck = """
-SELECT 1 FROM profiles WHERE user_id = ? AND username = ?
-"""
+# a row is added once (INSERT ... SELECT ?, ? WHERE NOT EXISTS gives the
+# values no type outside SQLite)
 profileInsert = """
-INSERT INTO profiles (user_id, username) VALUES (?, ?);
+INSERT INTO profiles (user_id, username) VALUES (?, ?) ON CONFLICT DO NOTHING;
 """
 
 
@@ -64,11 +63,8 @@ profileInsertTransition = """INSERT INTO profiles(
 user_id,username)
             VALUES (?, ?);
 """
-modelCheck = """
-SELECT 1 FROM models WHERE model_id = ?
-"""
 modelInsert = """
-INSERT INTO models (model_id) VALUES (?);
+INSERT INTO models (model_id) VALUES (?) ON CONFLICT DO NOTHING;
 """
 profilesALL = """
 select user_id,username from profiles
@@ -113,8 +109,7 @@ def create_profile_table(
 @wrapper.operation_wrapper_async
 def write_profile_table(model_id=None, username=None, conn=None, **kwargs) -> list:
     with contextlib.closing(conn.cursor()) as cur:
-        if not cur.execute(profileCheck, [model_id, username]).fetchone():
-            cur.execute(profileInsert, [model_id, username])
+        cur.execute(profileInsert, [model_id, username])
         conn.commit()
 
 
@@ -188,8 +183,7 @@ def create_models_table(
 @wrapper.operation_wrapper_async
 def write_models_table(model_id=None, username=None, conn=None, **kwargs) -> list:
     with contextlib.closing(conn.cursor()) as cur:
-        if not cur.execute(modelCheck, [model_id]).fetchone():
-            cur.execute(modelInsert, [model_id])
+        cur.execute(modelInsert, [model_id])
         conn.commit()
 
 

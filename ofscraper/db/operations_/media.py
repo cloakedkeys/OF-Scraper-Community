@@ -133,14 +133,17 @@ SET
 unlocked=FALSE
 WHERE media_id=(?) and model_id=(?);
 """
-mediaDownloadSelect = """
+_mediaDownloadSelect = """
 SELECT  
 directory,filename,size,
 downloaded,hash,skip_permanent
 FROM medias where media_id=(?) and model_id=(?)
 """
+# the first row is the one used: say which, as only SQLite has an order of
+# its own (the unique key's)
+mediaDownloadSelect = _mediaDownloadSelect + " ORDER BY post_id"
 # the same for one post's copy, with allow-dupes
-mediaDownloadSelectPost = mediaDownloadSelect + " and post_id=(?)"
+mediaDownloadSelectPost = _mediaDownloadSelect + " and post_id=(?)"
 allIDCheck = """
 SELECT media_id FROM medias
 """
@@ -153,10 +156,10 @@ SELECT media_id FROM medias where downloaded=TRUE and model_id=(?)
 # the same, leaving out permanent skip_download_script skips, which
 # --retry-permanent-skips offers to the script again (#354)
 allDLIDCheckNoPermanentSkips = """
-SELECT media_id FROM medias where downloaded=TRUE and skip_permanent IS NOT TRUE
+SELECT media_id FROM medias where downloaded=TRUE and (skip_permanent IS NULL OR skip_permanent <> TRUE)
 """
 allDLModelIDCheckNoPermanentSkips = """
-SELECT media_id FROM medias where downloaded=TRUE and model_id=(?) and skip_permanent IS NOT TRUE
+SELECT media_id FROM medias where downloaded=TRUE and model_id=(?) and (skip_permanent IS NULL OR skip_permanent <> TRUE)
 """
 allPostIDCheck = """
 SELECT media_id, post_id FROM medias
@@ -453,7 +456,7 @@ def get_media_post_ids_downloaded(
     if model_only:
         query, params = query + " and model_id=(?)", [model_id]
     if without_permanent_skips:
-        query += " and skip_permanent IS NOT TRUE"
+        query += " and (skip_permanent IS NULL OR skip_permanent <> TRUE)"
     with contextlib.closing(conn.cursor()) as cur:
         cur.execute(query, params)
         return [(dict(row)["media_id"], dict(row)["post_id"]) for row in cur.fetchall()]
