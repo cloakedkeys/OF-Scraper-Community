@@ -148,13 +148,41 @@ def warnings_logged(monkeypatch):
     monkeypatch.setattr(
         labels,
         "log",
-        SimpleNamespace(debug=lambda *a, **k: None, warning=logged.append),
+        SimpleNamespace(
+            debug=lambda *a, **k: None,
+            traceback_=lambda *a, **k: None,
+            warning=logged.append,
+        ),
     )
     return logged
 
 
+class RaisingClient(FakeClient):
+    """Raises instead of answering at offset ``raise_at``."""
+
+    def __init__(self, ids, raise_at, **kwargs):
+        super().__init__(ids, **kwargs)
+        self.raise_at = raise_at
+
+    def requests_async(self, url, **kwargs):
+        response = super().requests_async(url, **kwargs)
+        if self.offsets[-1] == self.raise_at:
+            raise ConnectionError("connection reset")
+        return response
+
+
 def test_scan_cut_short_after_page_one_warns_once(warnings_logged):
     collect(FakeClient(range(1, 21), fail_at=5))
+    assert len(warnings_logged) == 1
+    assert "favourites" in warnings_logged[0]
+    assert "stopped early" in warnings_logged[0]
+
+
+def test_scan_cut_short_by_an_error_on_page_two_warns_once(warnings_logged):
+    # the request raises rather than returning an error status
+    client = RaisingClient(range(1, 21), raise_at=5)
+    assert collect(client) == list(range(20, 15, -1))
+    assert client.offsets == [0, 5]
     assert len(warnings_logged) == 1
     assert "favourites" in warnings_logged[0]
     assert "stopped early" in warnings_logged[0]
