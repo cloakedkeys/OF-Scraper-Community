@@ -68,13 +68,40 @@ def _cert_error(e: BaseException) -> ssl.SSLCertVerificationError | None:
     return None
 
 
+def _aiohttp_total_timeout(e: BaseException) -> bool:
+    """
+    aiohttp raises a bare TimeoutError when a request's total timeout runs
+    out. Other code (asyncio.wait_for, subprocesses) raises the same type,
+    so only one raised inside aiohttp counts.
+    """
+    if type(e) is not TimeoutError:
+        return False
+    tb = e.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    return tb is not None and tb.tb_frame.f_globals.get("__name__", "").startswith(
+        "aiohttp."
+    )
+
+
 def unavailable_message(e: Exception) -> str | None:
     """
     Returns a message for a failure that says nothing about the auth
     (network errors, server errors, a reply that isn't JSON), else None.
     Covers httpx (the auth check) and aiohttp (the async session) errors.
     """
-    if isinstance(e, (httpx.TransportError, aiohttp.ClientConnectionError)):
+    if isinstance(e, aiohttp.ClientHttpProxyError):
+        # the proxy refused the tunnel (407 = it wants a login): the status is
+        # the proxy's, not the server's
+        return (
+            f"Couldn't reach {_host(e)} through the proxy (connection failed). "
+            f"Check your proxy settings. Error: the proxy answered {e.status} "
+            f"{e.message}".rstrip()
+        )
+    if isinstance(
+        e,
+        (httpx.TransportError, aiohttp.ClientConnectionError, aiohttp.ClientPayloadError),
+    ) or _aiohttp_total_timeout(e):
         cert_error = _cert_error(e)
         if cert_error:
             # the server was reached: the connection isn't the problem
@@ -85,7 +112,7 @@ def unavailable_message(e: Exception) -> str | None:
             )
         timed_out = isinstance(
             e, (httpx.TimeoutException, aiohttp.ServerTimeoutError)
-        )
+        ) or _aiohttp_total_timeout(e)
         reason = "timed out" if timed_out else "connection failed"
         message = f"Couldn't reach {_host(e)} ({reason}). Check your connection or VPN."
         # the cause (DNS, refused, reset, proxy, TLS) is otherwise only in the
@@ -109,7 +136,11 @@ def unavailable_message(e: Exception) -> str | None:
         )
     if isinstance(e, UnusableDynamicRule):
         return str(e)
-    if isinstance(e, json.JSONDecodeError):
+    # aiohttp's json() refuses a reply that isn't labelled JSON. A 4xx one
+    # is left to the auth check, like any other 4xx
+    if isinstance(e, json.JSONDecodeError) or (
+        isinstance(e, aiohttp.ContentTypeError) and e.status < 400
+    ):
         # the parse error doesn't say which request it came from
         return (
             "Got a reply that isn't JSON from OnlyFans or the dynamic rule host. "
