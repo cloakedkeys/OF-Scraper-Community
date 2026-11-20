@@ -853,6 +853,36 @@ def test_refused_audio_track_saves_the_video_and_logs_why(env, tmp_path, caplog,
     assert len(env.ffmpeg_runs) == 1
 
 
+@needs_ffmpeg
+@pytest.mark.parametrize("direct", [True, False])
+def test_a_refused_video_segment_falls_back_to_the_direct_file(env, tmp_path, monkeypatch, direct):
+    segments = make_segments(tmp_path, "v", "-bsf:v", "dump_extra=freq=keyframe")
+    raw = raw_media()
+    calls = []
+
+    async def main_download(self, c, ele, username, model_id):
+        calls.append(ele.url)
+        return "Videos", 10
+
+    monkeypatch.setattr(run_mod.MainDownloadManager, "main_download", main_download)
+    with Server({}) as srv:
+        root = serve_hls(srv, raw, VIDEO_ONLY_MASTER, {"r2160": segments})
+        srv.refuse.add(f"{root}/r2160/{list(segments)[1]}")
+        ele = make_ele(raw, direct=direct)
+        result = download_locally(ele)
+    if direct:
+        assert result == ("Videos", 10)
+        assert calls == [ele.url] and ele.url
+        # the stream's segments are no use to the direct file
+        assert files_in(env.out, env.temp) == []
+    else:
+        # nothing to fall back to: the item fails as before, and the
+        # fetched segments stay for the next run to resume from
+        assert result == ("skipped", 0) and calls == []
+        assert files_in(env.out) == [] and not list(env.temp.glob("*.part"))
+    assert env.ffmpeg_runs == [] and env.marks == []
+
+
 # ------------------------------------------------------------------ sound from the direct file
 
 def serve_direct(srv, raw, tmp_path, *args, path=None):

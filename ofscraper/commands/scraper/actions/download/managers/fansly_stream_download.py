@@ -139,6 +139,17 @@ def _refused(e) -> bool:
     return False
 
 
+def _direct_fallback(ele) -> bool:
+    """True when run.py can download the direct file instead of the stream
+    (``ele.url`` is the stream itself when there is no direct file)."""
+    return bool(
+        ele.url
+        and fansly_video.has_direct(fansly_video.raw_media(ele))
+        # replacing a silent copy: the smaller direct file is no better
+        and not getattr(ele, "replace_silent", None)
+    )
+
+
 def _prepare_segments(folder, playlists):
     # Keep playlist boundaries, local names and timing as well as unsigned URLs.
     manifest = [
@@ -354,14 +365,8 @@ class FanslyStreamDownloadManager(DownloadManager):
                     raise
                 url, audio_url = await self._stream_urls(c, best)
         except fansly_video.StreamError as e:
-            if (
-                ele.url
-                and fansly_video.has_direct(fansly_video.raw_media(ele))
-                # replacing a silent copy: the smaller direct file is no better
-                and not getattr(ele, "replace_silent", None)
-            ):
-                # None: run.py downloads the direct file instead (ele.url
-                # is the stream itself when there is no direct file)
+            if _direct_fallback(ele):
+                # None: run.py downloads the direct file instead
                 self.ctx.log.info(f"{medialog} {e}; downloading the direct file instead")
                 shutil.rmtree(segment_folder(temp), ignore_errors=True)
                 return None
@@ -412,6 +417,15 @@ class FanslyStreamDownloadManager(DownloadManager):
             await self._integrity_check(temp, ele)
             await self._replace_silent(temp, ele)
             return await self._finish(temp, placeholderObj, ele, username, model_id, total)
+        except SegmentError as e:
+            temp.unlink(missing_ok=True)
+            # a refused audio track is handled in _parallel_copy; a refused
+            # video file leaves no stream to save
+            if not (_refused(e) and _direct_fallback(ele)):
+                raise
+            self.ctx.log.info(f"{medialog} {e}; downloading the direct file instead")
+            shutil.rmtree(segment_folder(temp), ignore_errors=True)
+            return None
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
