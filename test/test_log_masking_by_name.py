@@ -2,6 +2,7 @@
 and the home folder name is masked only as a whole name."""
 
 import logging
+from http.cookies import SimpleCookie
 
 import pytest
 
@@ -21,6 +22,20 @@ HASH = "authHash0123456789"
 CF_POLICY = "eyJTdGF0ZW1lbnQiOiJtYWRlLXVwIn0_"
 CF_SIG = "MadeUpSignature0123~abc"
 CF_KEY = "KMADEUPKEYPAIR0"
+DEVICE_ID = "987654321012345678"
+SESSION_ID = "876543210123456789"
+
+
+def _simple_cookie():
+    jar = SimpleCookie()
+    for name, value in [
+        ("sess", NEW_SESS), ("auth_id", AUTH_ID), (f"auth_uid_{AUTH_ID}", AUTH_UID),
+        ("fp", FP), ("st", ST), ("csrf", CSRF), ("auth_hash", HASH),
+        ("CloudFront-Policy", CF_POLICY), ("CloudFront-Signature", CF_SIG),
+        ("CloudFront-Key-Pair-Id", CF_KEY),
+    ]:
+        jar[name] = value
+    return jar
 
 
 @pytest.fixture(autouse=True)
@@ -93,6 +108,30 @@ LEAKS = [
         [CF_POLICY, CF_SIG, CF_KEY],
         ["'CloudFront-Policy': '{hidden}'", "'CloudFront-Key-Pair-Id': '{hidden}'"],
     ),
+    # a SimpleCookie repr (aiohttp's response.cookies): name='value'
+    (
+        "response cookies " + repr(_simple_cookie()),
+        [NEW_SESS, AUTH_ID, AUTH_UID, FP, ST, CSRF, HASH, CF_POLICY, CF_SIG, CF_KEY],
+        ["sess='{sess}'", "auth_id='{hidden}'", "auth_uid='{hidden}'", "fp='{hidden}'",
+         "st='{hidden}'", "csrf='{hidden}'", "auth_hash='{hidden}'", "CloudFront-Signature='{hidden}'"],
+    ),
+    # Fansly's device and session IDs: header dict, JSON, header line, query
+    (
+        "requests headers " + str({"fansly-client-id": DEVICE_ID, "fansly-session-id": SESSION_ID}),
+        [DEVICE_ID, SESSION_ID],
+        ["'fansly-client-id': '{hidden}'", "'fansly-session-id': '{hidden}'"],
+    ),
+    (
+        '{"fansly-client-id":"' + DEVICE_ID + '","fansly-session-id":' + SESSION_ID + "}",
+        [DEVICE_ID, SESSION_ID],
+        ['"fansly-client-id":"{hidden}"', '"fansly-session-id":{hidden}'],
+    ),
+    (
+        f"Fansly-Client-Id: {DEVICE_ID}\nfansly-session-id: {SESSION_ID} "
+        f"?fansly-client-id={DEVICE_ID}&x=1",
+        [DEVICE_ID, SESSION_ID],
+        ["Fansly-Client-Id: {hidden}", "fansly-session-id: {hidden}", "fansly-client-id={hidden}&x=1"],
+    ),
 ]
 
 
@@ -115,6 +154,7 @@ def test_auth_values_are_masked_by_name(formatter, line, secrets, labels):
         "the user-id: header is missing",
         "posted by a creator: 'subscribers': 12",
         "first=1, test=2, fps=30, list='st'",
+        "no fansly-client-id header yet, the fansly-session-id is unknown",
     ],
 )
 def test_ordinary_text_is_left_alone(line):

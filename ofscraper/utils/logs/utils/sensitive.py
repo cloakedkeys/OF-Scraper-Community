@@ -6,6 +6,8 @@ from typing import Any
 # CloudFront cookies of a signed stream (OnlyFans and Fansly), and the ones
 # OnlyFans sets, which the session's cookie jar keeps and sends back.
 _OTHER_COOKIES = r"fp|st|csrf|auth_hash|CloudFront-(?:Policy|Signature|Key-Pair-Id)"
+# Fansly's ID headers. Only the token is registered by value.
+_FANSLY_IDS = r"fansly-client-id|fansly-session-id"
 
 # --- Default Patterns (Regex or Plain Text) ---
 _DEFAULT_PATTERNS = {
@@ -20,21 +22,26 @@ _DEFAULT_PATTERNS = {
     # set-cookie, and a failed request logs its headers, IDs included. The
     # auth_uid_<user id> and auth_uniq_<user id> cookies have the ID in their
     # name, so that goes too.
-    # Cookie form: sess=...; auth_id=...; auth_uid_123=...
-    r"(?i)\b(sess)=[^;\s'\",]+": r"\g<1>={sess}",
-    r"(?i)\b(auth_id)=[^;\s'\",]+": r"\g<1>={hidden}",
-    r"(?i)\b(auth_uid|auth_uniq)\w*=[^;\s'\",]+": r"\g<1>={hidden}",
+    # Cookie form: sess=...; auth_id=...; auth_uid_123=... The value may be
+    # quoted, as a SimpleCookie repr shows it: <SimpleCookie: sess='...'>
+    r"""(?i)\b(sess)=(['"]?)[^;\s'",]+\2""": r"\g<1>=\g<2>{sess}\g<2>",
+    r"""(?i)\b(auth_id)=(['"]?)[^;\s'",]+\2""": r"\g<1>=\g<2>{hidden}\g<2>",
+    r"""(?i)\b(auth_uid|auth_uniq)\w*=(['"]?)[^;\s'",]+\2""": r"\g<1>=\g<2>{hidden}\g<2>",
     # Header, dict or JSON form: 'sess': '...', "x-bc": "...", 'auth_id': 123
     r"""(?i)(['"])(sess)\1(\s*:\s*)(['"])[^'"]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{sess}\g<4>",
     r"""(?i)(['"])(x-bc)\1(\s*:\s*)(['"])[^'"]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{x-bc}\g<4>",
     r"""(?i)(['"])(user-id|auth_id|auth_uid|auth_uniq)\w*\1(\s*:\s*)(['"]?)[^'",}\s]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{hidden}\g<4>",
     # The other cookies, in both forms: fp=...; 'st': '...'
-    rf"(?i)\b({_OTHER_COOKIES})=[^;\s'\",]+": r"\g<1>={hidden}",
+    rf"""(?i)\b({_OTHER_COOKIES})=(['"]?)[^;\s'",]+\2""": r"\g<1>=\g<2>{hidden}\g<2>",
     rf"""(?i)(['"])({_OTHER_COOKIES})\1(\s*:\s*)(['"])[^'"]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{hidden}\g<4>",
     # Header line or query form: x-bc: ..., x-bc=..., user-id: 123. A user ID
     # is a number, so prose such as "the user-id: header" is left alone.
     r"(?i)\b(x-bc)(\s*[:=]\s*)(?!['\"])[^\s'\",;&]+": r"\g<1>\g<2>{x-bc}",
     r"(?i)\b(user-id)(\s*[:=]\s*)\d+": r"\g<1>\g<2>{hidden}",
+    # Fansly's device and session IDs, in the same forms as x-bc:
+    # 'fansly-client-id': '...', "fansly-session-id": 123, fansly-client-id: ...
+    rf"""(?i)(['"])({_FANSLY_IDS})\1(\s*:\s*)(['"]?)[^'",}}\s]+\4""": r"\g<1>\g<2>\g<1>\g<3>\g<4>{hidden}\g<4>",
+    rf"(?i)\b({_FANSLY_IDS})(\s*[:=]\s*)(?!['\"])[^\s'\",;&]+": r"\g<1>\g<2>{hidden}",
     # The request-signing header, as a header dict or JSON shows it
     # ('sign': '...'). It changes on every request, so it can't be
     # registered by value the way the session cookie is.
