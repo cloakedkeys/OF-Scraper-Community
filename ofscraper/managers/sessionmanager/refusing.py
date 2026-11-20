@@ -11,8 +11,10 @@ when the site still gives the link it refused (the downloader asks, see
 ``refresh_media_link``). Such an address isn't used again while the host has
 another: the connection the refusal came over is closed (a later request
 could reuse it), and the address is left out of the host's addresses, which
-is what new connections are made from. When every address of a host has
-refused, all are used again.
+is what new connections are made from. Every session then looks hosts up
+again before its next request (``times_left``): the addresses it saved may
+hold the one that was left. When every address of a host has refused, all
+are used again.
 
 Nothing here logs an address.
 """
@@ -22,38 +24,55 @@ from aiohttp.abc import AbstractResolver
 
 # host -> its addresses that refused a link the site still gave
 _refusing = {}
+# how many times an address was left
+_left = 0
 
 
 def reset():
+    global _left
     _refusing.clear()
+    _left = 0
+
+
+def times_left() -> int:
+    """Goes up each time an address is left. A session that saved a host's
+    addresses before then may still hold that address."""
+    return _left
 
 
 class Response(aiohttp.ClientResponse):
-    """Remembers the connection it came over. A refusal's body is short: by
-    the time it is seen, the connection is already back in the pool."""
+    """Remembers the connection it came over and the address at its other
+    end. A refusal's body is short: by the time it is seen, the connection
+    is back in the pool, and when its session has closed (a protected
+    video's manifest is read through a session of its own), the connection
+    no longer tells its address."""
 
     came_over = None
+    came_from = None
 
     async def start(self, connection):
         self.came_over = connection.transport
+        peer = self.came_over and self.came_over.get_extra_info("peername")
+        self.came_from = peer[0] if peer else None
         return await super().start(connection)
 
 
 def leave(response) -> bool:
     """Close the connection ``response`` came over and leave its address out
     of the host's addresses. True when that changed the host's addresses."""
+    global _left
     transport = getattr(response, "came_over", None)
-    if transport is None:
-        return False
-    peer = transport.get_extra_info("peername")
-    transport.close()
+    if transport is not None:
+        transport.close()
+    address = getattr(response, "came_from", None)
     host = response.url.host
-    if not peer or not host:
+    if not address or not host:
         return False
     refusing = _refusing.setdefault(host, set())
-    if peer[0] in refusing:
+    if address in refusing:
         return False
-    refusing.add(peer[0])
+    refusing.add(address)
+    _left += 1
     return True
 
 

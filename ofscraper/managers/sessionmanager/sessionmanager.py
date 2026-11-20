@@ -393,6 +393,8 @@ class sessionManager:
             else of_env.getattr("KEEP_ALIVE_EXP")
         )
         self._proxy = proxy if proxy is not None else of_env.getattr("PROXY")
+        # refusing.times_left() when hosts were last looked up from nothing
+        self._addresses_left = refusing.times_left()
         self._sem = sem or asyncio.BoundedSemaphore(
             sem_count
             if sem_count is not None
@@ -595,11 +597,19 @@ class sessionManager:
 
     def _leave_refusing_address(self, r):
         if refusing.leave(r):
-            self.clear_dns_cache()
             self._log.debug(
                 "an address of the file host refused a link that is still"
                 " good: not using that address again"
             )
+
+    def _drop_left_addresses(self):
+        """Look hosts up again when an address was left since this session
+        last did: its saved addresses may still hold it (#620). Another
+        session can have left it."""
+        left = refusing.times_left()
+        if left != self._addresses_left:
+            self._addresses_left = left
+            self.clear_dns_cache()
 
     def clear_dns_cache(self):
         """Resolve hosts again on the next request (async sessions)."""
@@ -858,6 +868,7 @@ class sessionManager:
                 sent_at = None
                 try:
                     await self._async_wait_before_request()
+                    self._drop_left_addresses()
                     sent_at = arrow.now()
                     if SIGN in actions or FORCED_NEW in actions or HEADERS in actions:
                         headers = self._create_headers(

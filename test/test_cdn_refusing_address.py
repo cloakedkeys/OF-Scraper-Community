@@ -46,22 +46,27 @@ def _hosts(answers):
 
 
 class _Transport:
+    """A connection that, like one over TLS, no longer tells its other end
+    once it is closed."""
+
     def __init__(self, peer=("192.0.2.1", 443)):
         self.peer = peer
         self.closed = False
 
     def get_extra_info(self, name):
         assert name == "peername"
-        return self.peer
+        return None if self.closed else self.peer
 
     def close(self):
         self.closed = True
 
 
 def _refusal(peer=("192.0.2.1", 443), host=HOST):
-    transport = _Transport(peer)
+    """What the session's response remembers of a refusal."""
     return SimpleNamespace(
-        came_over=transport, url=URL(f"https://{host}/files/a.jpg?{SIGNING}")
+        came_over=_Transport(peer),
+        came_from=peer[0] if peer else None,
+        url=URL(f"https://{host}/files/a.jpg?{SIGNING}"),
     )
 
 
@@ -81,9 +86,22 @@ def test_the_address_that_refused_is_left_out_and_its_connection_closed():
 
 def test_an_address_already_left_changes_nothing_more():
     assert refusing.leave(_refusal()) is True
+    assert refusing.times_left() == 1
     again = _refusal()
     assert refusing.leave(again) is False
     assert again.came_over.closed is True
+    assert refusing.times_left() == 1
+
+
+def test_a_refusal_whose_connection_is_closed_still_leaves_the_address():
+    # a protected video's manifest is read through a session of its own,
+    # closed by the time the site is asked whether the link is still good
+    r = _refusal()
+    r.came_over.close()
+    assert refusing.leave(r) is True
+    assert _hosts(refusing.without(HOST, _answers("192.0.2.1", "192.0.2.2"))) == [
+        "192.0.2.2"
+    ]
 
 
 def test_another_host_keeps_the_address():
@@ -118,7 +136,7 @@ def test_addresses_the_host_no_longer_has_change_nothing():
     "response",
     [
         SimpleNamespace(url=URL(f"https://{HOST}/a")),  # not from this session
-        SimpleNamespace(came_over=None, url=URL(f"https://{HOST}/a")),
+        SimpleNamespace(came_over=None, came_from=None, url=URL(f"https://{HOST}/a")),
     ],
     ids=["no-attribute", "no-connection"],
 )
@@ -126,6 +144,7 @@ def test_an_unknown_connection_leaves_nothing_out(response):
     assert refusing.leave(response) is False
     answers = _answers("192.0.2.1")
     assert refusing.without(HOST, answers) is answers
+    assert refusing.times_left() == 0
 
 
 def test_a_connection_without_a_peer_is_closed_and_leaves_nothing_out():
@@ -225,7 +244,7 @@ def two_addresses(monkeypatch, unused_port):
     refusal came with a way to leave the address."""
     monkeypatch.setattr(sm.sessionManager, "print_auth_warning", lambda *a: None)
 
-    def run(paths, leave=True, connections=POOLED):
+    def run(paths, leave=True, connections=POOLED, own_session_first=False):
         if connections == POOLED:
             # one SSL setting: a kept-alive connection is used again
             setting = lambda self: False  # noqa: E731
@@ -258,22 +277,41 @@ def two_addresses(monkeypatch, unused_port):
                     sleep=0, min_sleep=0, difmin=0, max_sleep=0,
                     decay_threshold=1000, decay_factor=2, increase_factor=2,
                 )
-                async with sm.sessionManager(
-                    retries=1, wait_min=0, wait_max=0, log=QUIET,
-                    rate_limit_sleeper=rate, forbidden_sleeper=forbidden,
-                ) as c:
-                    for path in paths:
-                        try:
-                            async with c.requests_async(
-                                f"http://{HOST}:{unused_port}{path}",
-                                exceptions=[sm.FORBIDDEN],
-                            ) as r:
-                                outcomes.append(await r.text_())
-                        except aiohttp.ClientResponseError as E:
-                            outcomes.append(E.status)
-                            offered.append(hasattr(E, "leave_address"))
-                            if leave and offered[-1]:
-                                E.leave_address()
+                def session():
+                    return sm.sessionManager(
+                        retries=1, wait_min=0, wait_max=0, log=QUIET,
+                        rate_limit_sleeper=rate, forbidden_sleeper=forbidden,
+                    )
+
+                async def get(c, path):
+                    try:
+                        async with c.requests_async(
+                            f"http://{HOST}:{unused_port}{path}",
+                            exceptions=[sm.FORBIDDEN],
+                        ) as r:
+                            outcomes.append(await r.text_())
+                    except aiohttp.ClientResponseError as E:
+                        outcomes.append(E.status)
+                        offered.append(hasattr(E, "leave_address"))
+                        return E
+
+                rest = list(paths)
+                async with session() as c:
+                    if own_session_first:
+                        # the first request through a session of its own,
+                        # closed before the downloader acts on the refusal;
+                        # the other session has the host's addresses saved
+                        await get(c, "/saved")
+                        async with session() as short_lived:
+                            refusal = await get(short_lived, rest.pop(0))
+                        if leave and offered[-1]:
+                            # over TLS a closed connection tells no address
+                            refusal.leave_address.args[0].came_over = _Transport(None)
+                            refusal.leave_address()
+                    for path in rest:
+                        refusal = await get(c, path)
+                        if refusal and leave and offered[-1]:
+                            refusal.leave_address()
             finally:
                 for runner in runners:
                     await runner.cleanup()
@@ -295,6 +333,19 @@ def test_after_the_address_is_left_the_other_gets_every_file(two_addresses, conn
     assert outcomes == [403, "file", "file", "file", "file"]
     assert got == {REFUSES: 1, TAKES: 4}
     assert offered == [True]
+
+
+def test_a_refusal_through_a_closed_session_frees_the_other_session_too(two_addresses):
+    # a protected video's manifest: read through a session of its own, while
+    # the download session has the refusing address saved (#623)
+    outcomes, got, offered = two_addresses(
+        ["/files/manifest.mpd?" + SIGNING] + FILES, connections=NEW_EACH,
+        own_session_first=True,
+    )
+    # "/saved" isn't signed; it went to the first address, the refusing one
+    assert outcomes == [403, 403] + ["file"] * 5
+    assert got == {REFUSES: 2, TAKES: 5}
+    assert offered == [False, True]
 
 
 def test_a_refusal_alone_changes_nothing(two_addresses):
@@ -344,15 +395,28 @@ def test_another_status_gets_no_way_to_leave():
     assert not hasattr(error, "leave_address")
 
 
-def test_leaving_looks_the_host_up_again_once_per_address(monkeypatch):
-    m = sm.sessionManager(log=QUIET)
+def test_every_session_looks_hosts_up_again_once_after_an_address_is_left(monkeypatch):
+    # the session that got the refusal and any other: each may have saved
+    # the address that was left
+    got_it, other = sm.sessionManager(log=QUIET), sm.sessionManager(log=QUIET)
     cleared = []
-    monkeypatch.setattr(m, "clear_dns_cache", lambda: cleared.append(1))
+    for name, m in (("got it", got_it), ("other", other)):
+        monkeypatch.setattr(m, "clear_dns_cache", lambda name=name: cleared.append(name))
+        m._drop_left_addresses()
+    assert cleared == []
     first, again = RuntimeError(), RuntimeError()
-    m._offer_to_leave_address(first, _answer())
-    m._offer_to_leave_address(again, _answer())
+    got_it._offer_to_leave_address(first, _answer())
+    got_it._offer_to_leave_address(again, _answer())
     first.leave_address()
-    assert cleared == [1]
+    for m in (got_it, other, got_it, other):
+        m._drop_left_addresses()
+    assert cleared == ["got it", "other"]
     # the same address again: already left, nothing to look up
     again.leave_address()
-    assert cleared == [1]
+    got_it._drop_left_addresses()
+    assert cleared == ["got it", "other"]
+    # a session made after that starts with nothing saved
+    late = sm.sessionManager(log=QUIET)
+    monkeypatch.setattr(late, "clear_dns_cache", lambda: cleared.append("late"))
+    late._drop_left_addresses()
+    assert cleared == ["got it", "other"]
