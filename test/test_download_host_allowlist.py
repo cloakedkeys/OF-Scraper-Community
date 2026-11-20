@@ -259,6 +259,96 @@ def test_metadata_request_to_a_user_added_host_gets_the_login(monkeypatch):
     assert SESSION in _cookies(seen[0])
 
 
+def _metadata_drm(monkeypatch):
+    """The metadata command on a DRM video, through the real Media item: the
+    file name's quality comes from its manifest (Media.parse_mpd)."""
+    import ofscraper.classes.of.posts as posts_
+    import ofscraper.commands.metadata.manager as mm
+    import ofscraper.managers.manager as manager
+    from ofscraper.classes.of.media import Media
+    from ofscraper.managers.sessionHandler import SessionHandler
+
+    monkeypatch.setattr(mm, "get_medialog", lambda ele: "")
+    monkeypatch.setattr(mm, "get_alt_params", lambda ele: {})
+    monkeypatch.setattr(mm.cache, "get", lambda *a, **k: None)
+    monkeypatch.setattr(common_globals, "thread", None, raising=False)
+    monkeypatch.setattr(manager, "Manager", SimpleNamespace(session=SessionHandler()))
+    saved = []
+
+    async def _mark(*a, **k):
+        saved.append(k)
+
+    async def _prev(*a, **k):
+        return {}
+
+    monkeypatch.setattr(mm, "mark_media_as_downloaded", _mark)
+    monkeypatch.setattr(mm, "prev_download_media_data", _prev)
+
+    class _Placeholder:
+        def __init__(self, ele, ext=None):
+            self.ele = ele
+
+        async def init(self, create=True):
+            # as Placeholders.init does, for the {quality} placeholder
+            await self.ele.selected_quality_placeholder
+            return self
+
+    monkeypatch.setattr(mm.placeholder, "Placeholders", _Placeholder)
+
+    async def fetch(c, base):
+        post = posts_.Post({"id": 5, "responseType": "post"}, 1, "model")
+        ele = Media(
+            {
+                "id": 7,
+                "type": "video",
+                "canView": True,
+                "files": {
+                    "drm": {
+                        "manifest": {"dash": f"{base}/x.mpd"},
+                        "signature": {
+                            "dash": {
+                                "CloudFront-Policy": "made-up",
+                                "CloudFront-Key-Pair-Id": "made-up",
+                                "CloudFront-Signature": "made-up",
+                            }
+                        },
+                    }
+                },
+            },
+            0,
+            post,
+        )
+        return await mm.MetaDataManager().metadata(c, ele, 1, "model")
+
+    result, seen = _run(fetch)
+    return result, seen, saved
+
+
+def test_metadata_on_a_drm_video_on_an_unlisted_host_sends_no_login(monkeypatch, caplog):
+    with caplog.at_level(logging.WARNING, logger="shared"):
+        result, seen, saved = _metadata_drm(monkeypatch)
+    # the item is skipped, as the download command refuses it, and nothing
+    # about it is saved
+    assert result == "skipped"
+    assert saved == []
+    # only the request for the file's headers, which goes without the login;
+    # the manifest isn't fetched with it
+    assert len(seen) == 1
+    for headers in seen:
+        assert SESSION not in _cookies(headers)
+        assert not {"x-bc", "sign"} & {k.lower() for k in headers}
+    assert "127.0.0.1" in caplog.text and "x.mpd" not in caplog.text
+
+
+def test_metadata_on_a_drm_video_on_a_user_added_host_reads_the_manifest(monkeypatch):
+    _extra_hosts(monkeypatch, ["127.0.0.1"])
+    result, seen, saved = _metadata_drm(monkeypatch)
+    # the headers request, then the manifest with the login. The test
+    # server's reply isn't a manifest, so the item still ends skipped
+    assert len(seen) == 2
+    assert SESSION in _cookies(seen[1]) and seen[1].get("x-bc") == "made-up"
+
+
 def test_plain_file_on_a_user_added_host_gets_the_login(tmp_path, monkeypatch):
     _extra_hosts(monkeypatch, ["127.0.0.1"])
     result, seen = _main(tmp_path, monkeypatch)
