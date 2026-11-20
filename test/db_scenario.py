@@ -299,9 +299,15 @@ async def scenario():
     out["skips unmarked"] = await media.unmark_permanent_skips([1, 4, 8], model_id=ONE)
     out["permanent skips after"] = await media.get_permanent_skip_media_ids(model_id=ONE)
     out["status after"] = await media.get_model_media_status(**one)
-    # every row of every table, read back whole
+    # every row of every table, read back whole. A row's id is given as its
+    # place in line: PostgreSQL skips a number for an insert that found its
+    # row already there, so only the order is the same on both
     for table in TABLES:
-        out[f"table {table}"] = table_rows(table, read_only=True, **one)
+        rows = table_rows(table, read_only=True, **one)
+        if rows and "id" in rows[0]:
+            rows.sort(key=lambda row: row["id"])
+            rows = [dict(row, id=place) for place, row in enumerate(rows, start=1)]
+        out[f"table {table}"] = rows
     return {name: plain(value) for name, value in out.items()}
 
 
