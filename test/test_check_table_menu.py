@@ -292,6 +292,32 @@ def test_run_again_loop_opens_the_table(session, monkeypatch):
     assert session.runs[2] == ("download", NORMAL, "OF-Scraper")
 
 
+@pytest.mark.parametrize("command", list(TABLES.values()))
+def test_gather_rows_returns_the_tables_rows_without_opening_it(session, command):
+    # what a GUI calls to show the rows itself
+    session.args = check_menu.check_args(session.args, command, CREATORS)
+
+    rows = check.gather_rows(command)
+
+    assert session.tables == []
+    assert check._download_worker is None
+    # the check command's settings, as for the table
+    assert (session.args.after, session.args.force_all) == (0, True)
+    # the check command still opens the table, on the same rows
+    check.reset_table_data()
+    check.checker(menu=True)
+    assert session.tables == [rows]
+    assert rows == [{"username": name, "command": command} for name in CREATORS]
+
+
+def test_gather_rows_refuses_fansly_stories_and_unknown_commands(session):
+    session.args.site = "fansly"
+    assert check.gather_rows("story_check") == []
+    assert session.runs == []
+    with pytest.raises(ValueError):
+        check.gather_rows("download")
+
+
 def test_tables_share_one_download_thread(session, monkeypatch):
     stop = threading.Event()
     started = []
