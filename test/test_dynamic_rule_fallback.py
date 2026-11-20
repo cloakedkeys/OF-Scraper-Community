@@ -11,8 +11,12 @@ Given/When/Then:
    then a fallback source's rule is used.
 5. Given every source fails, when the auth is checked, then it's reported as
    couldn't check, not as bad auth.
+6. Given every source fails, when a session sends a signed request, then the
+   sources are asked once, not again for each retry of the request, nothing is
+   sent, and the caller gets DynamicRuleUnavailable.
 """
 
+import asyncio
 import json
 import logging
 import ssl
@@ -23,6 +27,7 @@ import httpx
 import pytest
 
 import ofscraper.data.api.init as init
+import ofscraper.managers.sessionmanager.sessionmanager as sessionmanager
 import ofscraper.utils.auth.request as request
 
 URLS = {
@@ -264,3 +269,73 @@ def test_auth_check_reports_no_rule_as_unavailable(hosts, monkeypatch, caplog):
     with caplog.at_level(logging.INFO, logger="shared"):
         assert init.getstatus() == "UNAVAILABLE"
     assert "This isn't a problem with your auth" in caplog.text
+
+
+# 6. a signed request through a session
+
+
+QUIET = SimpleNamespace(traceback_=lambda *a, **k: None, debug=lambda *a, **k: None)
+
+
+@pytest.fixture
+def all_sources_down(hosts, monkeypatch):
+    monkeypatch.setattr(
+        request.settings,
+        "get_settings",
+        lambda: SimpleNamespace(
+            anon=True,
+            dynamic_rules="xagler",
+            ssl_verify="false",
+            cached_disabled=True,
+        ),
+    )
+    monkeypatch.setattr(sessionmanager.sites, "is_fansly", lambda: False)
+    for source in ["xagler", *request.FALLBACK_SOURCES]:
+        hosts.replies[source] = timeout(f"https://{source}.rules.example/rule.json")
+    return hosts
+
+
+def session(**kwargs):
+    return sessionmanager.sessionManager(
+        retries=3, wait_min=0, wait_max=0, log=QUIET, **kwargs
+    )
+
+
+def test_signed_request_asks_the_sources_once(all_sources_down, monkeypatch):
+    sent = []
+    monkeypatch.setattr(
+        sessionmanager.sessionManager,
+        "_httpx_funct",
+        lambda self, *a, **k: sent.append(1),
+    )
+    with session() as c:
+        with pytest.raises(request.DynamicRuleUnavailable):
+            with c.requests(
+                url="https://api.example/x", actions=[sessionmanager.SIGN]
+            ):
+                pass
+
+    assert all_sources_down.asked == ["xagler", *request.FALLBACK_SOURCES]
+    assert not sent
+
+
+def test_signed_async_request_asks_the_sources_once(all_sources_down, monkeypatch):
+    sent = []
+
+    async def aio_funct(self, *a, **k):
+        sent.append(1)
+
+    monkeypatch.setattr(sessionmanager.sessionManager, "_aio_funct", aio_funct)
+
+    async def run():
+        async with session() as c:
+            async with c.requests_async(
+                url="https://api.example/x", actions=[sessionmanager.SIGN]
+            ):
+                pass
+
+    with pytest.raises(request.DynamicRuleUnavailable):
+        asyncio.run(run())
+
+    assert all_sources_down.asked == ["xagler", *request.FALLBACK_SOURCES]
+    assert not sent
