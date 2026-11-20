@@ -3,6 +3,20 @@ def table_columns(cur, table):
     return {row[1] for row in cur.execute(f"PRAGMA table_info('{table}')")}
 
 
+def creator_filter(cur, table, model_id, joiner="AND"):
+    """(sql, params) that limit a read of `table` to one creator's rows, to
+    add after the query: `joiner` is "WHERE" for a query without a condition.
+
+    A database can hold several creators (a merged one, or a `metadata`
+    folder that doesn't name the creator), and a read that decides what a
+    creator already has must not count another creator's rows. Nothing is
+    added when no creator is given (a tool that reads a whole database), or
+    for a table from before model_id, which holds one creator's rows."""
+    if model_id is None or "model_id" not in table_columns(cur, table):
+        return "", []
+    return f" {joiner} model_id=(?)", [model_id]
+
+
 def select_list(present, columns):
     """The select list for `columns`, given the table's columns (`present`).
 
