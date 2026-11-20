@@ -197,7 +197,7 @@ PLACEHOLDERS = {
     "save_location": "The configured save location. On Fansly runs it is `<save location>/Fansly`, even when `{site_name}` in `dir_format` or `file_format` drops that folder from the media path. It has the same value as `{root}`, but as the configured string.",
     "my_id": "The numeric id of the logged-in account. It is `anon` in anonymous mode.",
     "my_username": "The username of the logged-in account. It is `anon` in anonymous mode.",
-    "root": "A `pathlib.Path` of `{save_location}`: the media root, with the Fansly subfolder included.",
+    "root": "A `pathlib.Path` of `{save_location}`: the save location with the Fansly subfolder on Fansly runs. It is the media root unless `dir_format` or `file_format` uses `{site_name}`.",
     "username": "The creator's username. In `dir_format`, `file_format` and text files it is also the underscore-free alias of `{user_name}`, with the same value.",
     "model_username": "The creator's username. The media and post objects lower-case it for dir and file names.",
     "model_id": "The creator's numeric account id. OnlyFans ids are short, and Fansly ids are 18-digit snowflakes. The default `metadata` path is `{configpath}/{profile}/.data/{model_id}`.",

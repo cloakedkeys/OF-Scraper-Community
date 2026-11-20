@@ -109,8 +109,10 @@ class basePlaceholder:
     def create_variables_base(self):
         _, my_username = me.parse_user()
         my_id = "anon" if settings.get_settings().anon else me.get_id()
-        # {save_location} and {root} share the media folder's site root, so a
-        # metadata path built from them can't reach an OnlyFans user_data.db
+        # {save_location} and {root} keep the site root (<save location>/Fansly
+        # on Fansly runs) even when {site_name} drops it from the media
+        # folder, so a metadata path built from them can't reach an OnlyFans
+        # user_data.db
         save_location = site_save_location()
         self._variables = {
             "config_path": common_paths.get_config_home(),
