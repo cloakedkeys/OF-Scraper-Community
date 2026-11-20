@@ -38,12 +38,18 @@ CONNECT_TIMEOUT = 15
 # run here. test_db_postgres compares these with SQLite's tables, column by
 # column. Ids are 64-bit, yes/no columns are booleans and dates are
 # timestamps, so that other tools can query the database sensibly.
+#
+# Three ids are text, because they aren't always numbers: a profile picture
+# is saved as media whose media_id and post_id are hashes, and a label's id
+# can be a word ("archived"). SQLite's INTEGER columns take those as they
+# come; here the columns are TEXT, and a whole number in one is read back as
+# a number (see LOOSE_IDS), as SQLite gives it.
 TABLES = {
     "medias": """
 CREATE TABLE IF NOT EXISTS medias (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    media_id BIGINT,
-    post_id BIGINT NOT NULL,
+    media_id TEXT,
+    post_id TEXT NOT NULL,
     link TEXT,
     directory TEXT,
     filename TEXT,
@@ -135,7 +141,7 @@ CREATE TABLE IF NOT EXISTS products (
     "labels": """
 CREATE TABLE IF NOT EXISTS labels (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    label_id BIGINT,
+    label_id TEXT,
     name TEXT,
     type TEXT,
     post_id BIGINT,
@@ -316,9 +322,33 @@ def _row_class(names):
     )
 
 
+# the id columns that are TEXT in some table (see TABLES)
+LOOSE_IDS = frozenset({"media_id", "post_id", "label_id"})
+_TEXT_OID = 25
+# as str(int) writes one, so that the number read is the text that was saved
+_WHOLE_NUMBER = re.compile(r"-?(0|[1-9][0-9]*)")
+
+
 def row_factory(cursor):
     description = cursor.description or ()
-    return _row_class(tuple(column.name for column in description))
+    make = _row_class(tuple(column.name for column in description))
+    loose = [
+        place
+        for place, column in enumerate(description)
+        if column.type_code == _TEXT_OID and column.name.lower() in LOOSE_IDS
+    ]
+    if not loose:
+        return make
+
+    def row(values):
+        values = list(values)
+        for place in loose:
+            value = values[place]
+            if isinstance(value, str) and _WHOLE_NUMBER.fullmatch(value):
+                values[place] = int(value)
+        return make(values)
+
+    return row
 
 
 def _driver():

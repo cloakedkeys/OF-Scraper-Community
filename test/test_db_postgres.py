@@ -9,6 +9,7 @@ import builtins
 import contextlib
 import logging
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -169,6 +170,53 @@ def test_a_row_reads_like_an_sqlite_row():
     assert row == (1, 2)
     with pytest.raises(IndexError):
         row["nothing"]
+
+
+def test_an_id_kept_as_text_is_read_as_sqlite_gives_it():
+    # medias.media_id and post_id, and labels.label_id, are TEXT: a profile
+    # picture's ids are hashes. A whole number in one is read as a number
+    def column(name, type_code):
+        return SimpleNamespace(name=name, type_code=type_code)
+
+    text, bigint = 25, 20
+    cursor = SimpleNamespace(
+        description=[
+            column("media_id", text),
+            column("POST_ID", text),
+            column("label_id", text),
+            column("filename", text),
+            column("model_id", bigint),
+        ]
+    )
+    make = postgres.row_factory(cursor)
+
+    row = make(["12", "0123456789abcdef0123456789abcdef", None, "34", 5])
+    assert tuple(row) == (12, "0123456789abcdef0123456789abcdef", None, "34", 5)
+    assert row["post_id"] == "0123456789abcdef0123456789abcdef"
+    assert dict(row)["media_id"] == 12
+    # only what str() writes for a number: anything else is the text saved
+    assert tuple(make(["007", "+5", "-3", " 4", 5])) == ("007", "+5", -3, " 4", 5)
+    assert tuple(make([str(2**70), "0", "1.0", "", 5]))[:3] == (2**70, 0, "1.0")
+    # a query without such a column gets the plain row class
+    plain = postgres.row_factory(
+        SimpleNamespace(description=[column("post_id", bigint), column("text", text)])
+    )
+    assert issubclass(plain, postgres.Row)
+
+
+def test_the_ids_that_are_not_always_numbers_are_text():
+    kinds = {
+        (table, line.split()[0]): line.split()[1].rstrip(",")
+        for table, create in postgres.TABLES.items()
+        for line in create.splitlines()
+        if line.startswith("    ") and line.split()[0] in postgres.LOOSE_IDS
+    }
+    assert {key for key, kind in kinds.items() if kind == "TEXT"} == {
+        ("medias", "media_id"),
+        ("medias", "post_id"),
+        ("labels", "label_id"),
+    }
+    assert {kind for key, kind in kinds.items()} == {"TEXT", "BIGINT"}
 
 
 @pytest.mark.parametrize(

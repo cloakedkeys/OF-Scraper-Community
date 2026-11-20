@@ -26,6 +26,9 @@ ONE, TWO = 111, 222
 NAMES = {ONE: "creator_one", TWO: "creator_two"}
 # a Fansly-sized id: more than 32 bits, and more than a float holds exactly
 BIG = 712345678901234567
+# a profile picture's ids
+AVATAR = "0123456789abcdef0123456789abcdef"
+AVATAR_POST = "fedcba9876543210fedcba9876543210"
 DAY1 = "2024-01-03T03:04:05+00:00"
 DAY2 = "2024-02-04T10:00:00+00:00"
 # the same moment as 2024-03-05T06:30:00+00:00
@@ -199,6 +202,15 @@ async def scenario():
     await stories.make_stories_table_changes([story(40), story(43)], **one)
     out["story ids one"] = await stories.get_all_stories_ids(**one)
     out["story ids two"] = await stories.get_all_stories_ids(**two)
+    # a label's id can be a word
+    await labels.write_labels_table(
+        SimpleNamespace(label_id="archived", name="Archived", type="archived"),
+        [post(11)],
+        **one,
+    )
+    out["label posts, a word for an id"] = await labels.get_all_labels_posts(
+        SimpleNamespace(label_id="archived"), **one
+    )
     label = SimpleNamespace(label_id=7, name="favourites", type="custom")
     await labels.write_labels_table(label, [post(10), post(11)], **one)
     await labels.update_labels_table(
@@ -226,6 +238,15 @@ async def scenario():
         **one,
     )
     await media.batch_mediainsert([item(1, 10), item(8, 22)], **two)
+    # a profile picture: its ids are hashes, not numbers
+    await media.batch_mediainsert([item(AVATAR, AVATAR_POST, area="Profile")], **one)
+    await media.mark_media_as_downloaded(
+        item(AVATAR, AVATAR_POST, area="Profile"), filename="avatar.jpg",
+        directory="/files", downloaded=True, hashdata="face", size=9, **one,
+    )
+    out["previous download, a profile picture"] = await media.prev_download_media_data(
+        item(AVATAR, AVATAR_POST, area="Profile"), **one
+    )
     # seen again: updated in place
     await media.batch_mediainsert([item(1, 10, link="https://example.com/new")], **one)
     await media.mark_media_as_downloaded(
@@ -328,11 +349,11 @@ def check(result):
     assert result["label posts one"] == [10, 11]
     assert result["label posts two"] == [10]
     assert result["label posts none"] == []
-    assert result["media ids one"] == [1, 2, 3, 4, 5, 6, 7, BIG + 1]
+    assert result["media ids one"] == [AVATAR, 1, 2, 3, 4, 5, 6, 7, BIG + 1]
     assert result["media ids two"] == [1, 8]
-    assert result["downloaded, every creator"] == [1, 2, 4, 7, 8]
-    assert result["downloaded, every creator, no skips"] == [1, 2, 7, 8]
-    assert result["downloaded one"] == [1, 2, 4, 7]
+    assert result["downloaded, every creator"] == [AVATAR, 1, 2, 4, 7, 8]
+    assert result["downloaded, every creator, no skips"] == [AVATAR, 1, 2, 7, 8]
+    assert result["downloaded one"] == [AVATAR, 1, 2, 4, 7]
     assert result["downloaded two"] == [8]
     assert result["duplicate hashes one"] == ["same"]
     assert result["duplicate hashes two"] == []
@@ -359,7 +380,12 @@ def check(result):
     texts = {(row["model_id"], row["post_id"]): row for row in result["table messages"]}
     assert texts[ONE, 30]["group_id"] == "group-7" and texts[TWO, 30]["group_id"] is None
     assert texts[ONE, 31]["price"] == 12.5
-    assert sorted(row["name"] for row in result["table labels"]) == ["favourites"] * 2 + ["renamed"]
+    assert sorted(row["name"] for row in result["table labels"]) == ["Archived"] + ["favourites"] * 2 + ["renamed"]
+    assert result["label posts, a word for an id"] == [11]
     assert result["table models"] and len(result["table profiles"]) == 3
-    assert len(result["table medias"]) == 10
+    assert len(result["table medias"]) == 11
+    # ids come back as they went in: numbers as numbers, a hash as text
+    assert [AVATAR, AVATAR_POST] in result["media pairs one"]
+    assert [1, 10] in result["media pairs one"]
+    assert result["previous download, a profile picture"]["filename"] == "avatar.jpg"
     assert result["table others"] == [] and result["table products"] == []

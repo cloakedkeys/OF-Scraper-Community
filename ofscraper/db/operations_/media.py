@@ -139,7 +139,8 @@ downloaded,hash,skip_permanent
 FROM medias where media_id=(?) and model_id=(?)
 """
 # the first row is the one used: say which, as only SQLite has an order of
-# its own (the unique key's)
+# its own (the unique key's). PostgreSQL keeps post_id as text here, so its
+# first is the first in text order
 mediaDownloadSelect = _mediaDownloadSelect + " ORDER BY post_id"
 # the same for one post's copy, with allow-dupes
 mediaDownloadSelectPost = _mediaDownloadSelect + " and post_id=(?)"
