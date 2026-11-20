@@ -521,7 +521,7 @@ Defined in `ofscraper/utils/of_env/values/general.py`.
 | <a id="continue_bool"></a>`CONTINUE_BOOL` | `OFSC_CONTINUE_BOOL` | `True` | General boolean flag for continuing operations. |
 | <a id="file_count_placeholder"></a>`FILE_COUNT_PLACEHOLDER` | `OFSC_FILE_COUNT_PLACEHOLDER` | `True` | Flag related to file count display or logic. |
 | <a id="filter_self_media"></a>`FILTER_SELF_MEDIA` | `OFSC_FILTER_SELF_MEDIA` | `True` | Whether to filter media belonging to self-profile. |
-| <a id="allow_dupe_media"></a>`ALLOW_DUPE_MEDIA` | `OFSC_ALLOW_DUPE_MEDIA` | `False` | Whether to allow duplicate media downloads. |
+| <a id="allow_dupe_media"></a>`ALLOW_DUPE_MEDIA` | `OFSC_ALLOW_DUPE_MEDIA` | `False` | The default for --allow-dupes: download media that is in several posts once for each post. The option overrides it for one run. |
 
 ### Data Processing and File Handling
 
@@ -869,4 +869,10 @@ Defined in `ofscraper/utils/of_env/values/url/other_url.py`.
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
 | <a id="bad_url_host"></a>`BAD_URL_HOST` | `OFSC_BAD_URL_HOSTS` | a list of 3 items (see the source) | A set of regular expression patterns for "bad" URL hosts. |
+
+### Media Host
+
+| Key | Environment variable | Default | Description |
+|---|---|---|---|
+| <a id="media_host_suffixes"></a>`MEDIA_HOST_SUFFIXES` | `OFSC_MEDIA_HOST_SUFFIXES` | `[]` | Domains added to the built-in `onlyfans.com`: the hosts that may be sent the OnlyFans login (session cookies, login headers) with a download (`ofscraper/utils/host_allowlist.py`). A host matches a domain or any subdomain of it, so `cdn.example.com` allows `media.cdn.example.com` but not `evil-cdn.example.com`; only http and https links match. A normal file on a host outside the list is downloaded without the login, with one warning per host. A DRM video whose manifest or licence URL is on such a host isn't downloaded: the item fails with a warning naming the host. Adding a domain never removes the built-in ones. Fansly isn't checked: its token goes only to its API host. |
 
