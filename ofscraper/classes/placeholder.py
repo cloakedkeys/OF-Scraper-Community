@@ -80,8 +80,25 @@ def _is_site_specific(fmt):
     return bool(fields & _SITE_SPECIFIC_FIELDS)
 
 
+def _names_site(fmt):
+    """True when ``fmt`` uses {site_name} (or {sitename})."""
+    return any(
+        name and name.split(".")[0].split("[")[0] in {"site_name", "sitename"}
+        for _, name, _, _ in string.Formatter().parse(fmt or "")
+    )
+
+
 def default_media_root():
-    """Save location; Fansly profiles save under ``<save location>/Fansly``."""
+    """Save location; Fansly profiles save under ``<save location>/Fansly``,
+    unless ``dir_format`` or ``file_format`` already names the site with
+    {site_name}: then each site's folder comes from the template, and Fansly
+    files don't get a second ``Fansly`` folder. Only the media folder: the
+    database path and the {save_location} and {root} values keep the
+    ``Fansly`` folder either way."""
+    if sites.is_fansly() and (
+        _names_site(data.get_dirformat()) or _names_site(data.get_fileformat())
+    ):
+        return pathlib.Path(common_paths.get_save_location())
     return pathlib.Path(site_save_location())
 
 
