@@ -50,26 +50,25 @@ SELECT username FROM profiles where user_id=(?)
 profileTableCheck = """
 SELECT name FROM sqlite_master WHERE type='table' AND name='profiles';
 """
+# a row is added once: the check and the insert are two statements, as an
+# INSERT ... SELECT ?, ? gives the values no type outside SQLite
+profileCheck = """
+SELECT 1 FROM profiles WHERE user_id = ? AND username = ?
+"""
 profileInsert = """
-INSERT INTO 'profiles' (user_id, username)
-SELECT ?, ?
-WHERE NOT EXISTS (
-  SELECT 1 FROM 'profiles'
-  WHERE user_id = ? AND username = ?
-);
+INSERT INTO profiles (user_id, username) VALUES (?, ?);
 """
 
 
-profileInsertTransition = """INSERT INTO 'profiles'(
+profileInsertTransition = """INSERT INTO profiles(
 user_id,username)
             VALUES (?, ?);
 """
+modelCheck = """
+SELECT 1 FROM models WHERE model_id = ?
+"""
 modelInsert = """
-INSERT INTO models (model_id)
-SELECT ?
-WHERE NOT EXISTS (
-  SELECT 1 FROM models WHERE model_id = ?
-);
+INSERT INTO models (model_id) VALUES (?);
 """
 profilesALL = """
 select user_id,username from profiles
@@ -114,8 +113,8 @@ def create_profile_table(
 @wrapper.operation_wrapper_async
 def write_profile_table(model_id=None, username=None, conn=None, **kwargs) -> list:
     with contextlib.closing(conn.cursor()) as cur:
-        insertData = [model_id, username, model_id, username]
-        cur.execute(profileInsert, insertData)
+        if not cur.execute(profileCheck, [model_id, username]).fetchone():
+            cur.execute(profileInsert, [model_id, username])
         conn.commit()
 
 
@@ -189,7 +188,8 @@ def create_models_table(
 @wrapper.operation_wrapper_async
 def write_models_table(model_id=None, username=None, conn=None, **kwargs) -> list:
     with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(modelInsert, [model_id, model_id])
+        if not cur.execute(modelCheck, [model_id]).fetchone():
+            cur.execute(modelInsert, [model_id])
         conn.commit()
 
 
