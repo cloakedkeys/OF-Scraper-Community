@@ -23,10 +23,14 @@ from ofscraper.db.operations_.profile import write_models_table, write_profile_t
 from ofscraper.db.transition import modify_tables
 
 MODEL_ID = 12345
+# as long as a Fansly creator's id
+FANSLY_ID = 285000000000000001
 USERNAME = "dbmodel"
+# a Fansly database merged by a version that didn't keep the site record
+UNRECORDED_FANSLY = "fansly, not recorded"
 
 
-def media(media_id):
+def media(media_id, model_id=MODEL_ID):
     return {
         "media_id": media_id,
         "post_id": 1001,
@@ -42,22 +46,25 @@ def media(media_id):
         "created_at": "2024-01-03T03:04:05+00:00",
         "posted_at": "2024-01-03T03:04:06+00:00",
         "hash": None,
-        "model_id": MODEL_ID,
+        "model_id": model_id,
         "duration": None,
         "unlocked": 1,
     }
 
 
 async def make_db(db, site, media_ids):
+    model_id = MODEL_ID if site == sites.ONLYFANS else FANSLY_ID
     db.parent.mkdir(parents=True, exist_ok=True)
     await operations.create_tables(db_path=db)
-    await write_profile_table(model_id=MODEL_ID, username=USERNAME, db_path=db)
-    await write_models_table(model_id=MODEL_ID, db_path=db)
+    await write_profile_table(model_id=model_id, username=USERNAME, db_path=db)
+    await write_models_table(model_id=model_id, db_path=db)
     await modify_tables(db_path=db)
-    if site != sites.ONLYFANS:
+    if site == sites.FANSLY:
         # as a scan of a creator on that site records it
         await write_site_flag(site, db_path=db)
-    await write_media_table_transition([media(i) for i in media_ids], db_path=db)
+    await write_media_table_transition(
+        [media(i, model_id) for i in media_ids], db_path=db
+    )
 
 
 def media_ids(db):
@@ -149,3 +156,77 @@ def test_an_empty_fansly_database_stays_fansly(merged):
     assert list(refused) == [0]
     assert get_site_flag(db_path=new_db) == sites.FANSLY
     assert media_ids(new_db) == [2]
+
+
+def test_a_fansly_database_merged_by_an_older_version_takes_fansly_databases(merged):
+    # it has rows and no site record; its creators' ids say whose it is
+    new_db, refused = merged(
+        [sites.FANSLY, sites.ONLYFANS], target=(UNRECORDED_FANSLY, [50])
+    )
+
+    assert refused == {
+        1: "It is for Onlyfans, and the merged database is for Fansly"
+    }
+    assert media_ids(new_db) == [1, 50]
+    # and it has the record from now on
+    assert get_site_flag(db_path=new_db) == sites.FANSLY
+
+
+def test_a_fansly_database_merged_by_an_older_version_is_merged_as_fansly(merged):
+    new_db, refused = merged([UNRECORDED_FANSLY], target=(sites.ONLYFANS, [50]))
+
+    assert list(refused) == [0]
+    assert media_ids(new_db) == [50]
+
+
+def test_a_new_database_takes_the_site_of_an_unrecorded_fansly_one(merged):
+    new_db, refused = merged([UNRECORDED_FANSLY, sites.FANSLY, sites.ONLYFANS])
+
+    assert list(refused) == [2]
+    assert get_site_flag(db_path=new_db) == sites.FANSLY
+
+
+def test_a_merge_that_fails_before_it_adds_anything_leaves_the_database_open(
+    merged, monkeypatch
+):
+    real = merge.MergeDatabase.merge_individual
+
+    async def first_fails(self, db_path):
+        if db_path.parent.name == "db0":
+            raise OSError("the first database can't be read")
+        await real(self, db_path)
+
+    monkeypatch.setattr(merge.MergeDatabase, "merge_individual", first_fails)
+
+    new_db, refused = merged([sites.FANSLY, sites.ONLYFANS, sites.ONLYFANS])
+
+    assert list(refused) == [0]
+    assert get_site_flag(db_path=new_db) is None
+    assert media_ids(new_db) == [2, 3]
+
+
+def test_a_merge_that_fails_part_way_still_decides_the_site(merged, monkeypatch):
+    real = merge.MergeDatabase.merge_individual
+
+    async def first_fails_late(self, db_path):
+        await real(self, db_path)
+        if db_path.parent.name == "db0":
+            raise OSError("the first database can't be read to its end")
+
+    monkeypatch.setattr(merge.MergeDatabase, "merge_individual", first_fails_late)
+
+    new_db, refused = merged([sites.FANSLY, sites.ONLYFANS, sites.FANSLY])
+
+    assert list(refused) == [0, 1]
+    assert get_site_flag(db_path=new_db) == sites.FANSLY
+    assert media_ids(new_db) == [1, 3]
+
+
+def test_a_database_with_only_a_creator_in_it_is_not_open_to_the_other_site(merged):
+    new_db, refused = merged([sites.FANSLY], target=(sites.ONLYFANS, []))
+
+    assert refused == {
+        0: "It is for Fansly, and the merged database is for Onlyfans"
+    }
+    assert get_site_flag(db_path=new_db) is None
+    assert media_ids(new_db) == []

@@ -46,6 +46,9 @@ from ofscraper.db.transition import modify_tables
 
 log = logging.getLogger("shared")
 
+# Fansly ids are 18-digit numbers; OnlyFans ids are far shorter
+FANSLY_IDS_FROM = 10**15
+
 
 class MergeDatabase:
     def __init__(self):
@@ -85,10 +88,10 @@ class MergeDatabase:
             await modify_tables(db_path=self._new_db, new_db=new_db)
             # the site the merged database is for. One with nothing in it,
             # and no site recorded, takes the site of the first one merged
-            self._site = self._site_of(self._new_db)
-            self._site_open = (
-                get_site_flag(db_path=self._new_db) is None
-                and await empty(db_path=self._new_db)
+            self._site = await self._site_of(self._new_db)
+            self._site_recorded = get_site_flag(db_path=self._new_db) is not None
+            self._site_open = not self._site_recorded and await self._nothing_in(
+                self._new_db
             )
             self._curr_labels = set(
                 list(
@@ -186,8 +189,11 @@ class MergeDatabase:
                 elif not str(model_id).isnumeric():
                     raise Exception("Found model_id was not numeric")
                 await modify_tables(model_id=model_id, db_path=ele)
-                await self._keep_site(ele)
-                await self.merge_individual(ele)
+                site = await self._check_site(ele)
+                try:
+                    await self.merge_individual(ele)
+                finally:
+                    await self._keep_site(site)
                 success.update(
                     {
                         model_id: {
@@ -215,26 +221,54 @@ class MergeDatabase:
         )
         return list(failures.items()), list(success.items()), empty_list
 
-    def _site_of(self, db_path):
+    async def _site_of(self, db_path):
         """The site a database is for. Only a site other than OnlyFans is
-        recorded in one."""
-        return str(get_site_flag(db_path=db_path) or sites.DEFAULT_SITE).lower()
+        recorded in one, and a Fansly database merged by a version before
+        this record was kept has none: that one is told by its creators'
+        ids, which are far longer than any OnlyFans id."""
+        recorded = get_site_flag(db_path=db_path)
+        if recorded:
+            return str(recorded).lower()
+        ids = [
+            str(profile["user_id"])
+            for profile in await get_all_profiles(db_path=db_path) or []
+        ]
+        if ids and all(
+            id.isdecimal() and int(id) >= FANSLY_IDS_FROM for id in ids
+        ):
+            return sites.FANSLY
+        return sites.DEFAULT_SITE
 
-    async def _keep_site(self, db_path):
-        """Record the site of the first database merged into a new one, and
-        refuse a database for another site: the rows don't say which site
+    async def _nothing_in(self, db_path):
+        """True for a database with no rows and no creator."""
+        return await empty(db_path=db_path) and not await get_all_profiles(
+            db_path=db_path
+        )
+
+    async def _check_site(self, db_path):
+        """The site of a database about to be merged. One for another site
+        than the merged database's is refused: the rows don't say which site
         they are from, and the two sites' ids would be taken for each
         other's."""
-        site = self._site_of(db_path)
-        if self._site_open:
-            if site != sites.DEFAULT_SITE:
-                await write_site_flag(site, db_path=self._new_db)
-            self._site, self._site_open = site, False
-        elif site != self._site:
+        site = await self._site_of(db_path)
+        if not self._site_open and site != self._site:
             raise Exception(
                 f"It is for {sites.SITE_NAMES.get(site, site)}, and the"
                 f" merged database is for {sites.SITE_NAMES.get(self._site, self._site)}"
             )
+        return site
+
+    async def _keep_site(self, site):
+        """After a database for `site` was merged, or its merge failed part
+        way: the merged database is for that site from now on, and says so.
+        One that still has nothing in it stays open to either site."""
+        if self._site_open:
+            if await self._nothing_in(self._new_db):
+                return
+            self._site, self._site_open = site, False
+        if self._site != sites.DEFAULT_SITE and not self._site_recorded:
+            await write_site_flag(self._site, db_path=self._new_db)
+            self._site_recorded = True
 
     async def merge_individual(self, db_path):
         await self.merge_media_helper(db_path)
