@@ -18,6 +18,10 @@ import ofscraper.classes.placeholder as placeholder
 import ofscraper.db.operations as operations
 import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.postgres as postgres
+import ofscraper.filters.media.filters as filters
+import ofscraper.utils.config.data as config_data
+import ofscraper.utils.config.schema as config_schema
+import ofscraper.utils.settings as settings
 import ofscraper.main.open.run as run
 import ofscraper.utils.logs.classes.classes as log_classes
 from ofscraper.db.difference import ALL_FLAGS
@@ -106,6 +110,109 @@ def test_the_startup_check_asks_the_server_when_a_url_is_set(monkeypatch, caplog
     assert "16.4" in caplog.text
     assert "s3cr" not in caplog.text
     assert "scraper" not in caplog.text
+
+
+# --- where people look for the setting ---
+
+
+def test_config_json_says_where_the_database_setting_is():
+    # the file can't hold a comment: a key of its own holds the note
+    written = config_schema.get_current_config_schema(config=False)
+    note = written["advanced_options"]["database_url"]
+    assert postgres.URL_KEY in note
+    assert "POSTGRESQL.md" in note
+    assert "env_files" in note
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        URL,
+        "",
+        None,
+        {"url": URL},
+    ],
+)
+def test_an_address_written_in_config_json_is_not_used_or_kept(monkeypatch, written):
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
+    config = {"advanced_options": {"database_url": written}, "database_url": written}
+
+    rebuilt = config_schema.get_current_config_schema(config=config)
+
+    # the file is rewritten from this: the password doesn't stay in it
+    assert rebuilt["advanced_options"]["database_url"] == config_data.DATABASE_URL_NOTE
+    assert "s3cr" not in str(rebuilt)
+    assert postgres.enabled() is False
+
+
+# --- what counts as already downloaded ---
+
+
+@pytest.fixture
+def asked(monkeypatch):
+    """Which list of downloaded media a run asks the database for."""
+    stub = SimpleNamespace(
+        force_all=False,
+        force_model_unique=False,
+        allow_dupe_downloads=False,
+        retry_permanent_skips=False,
+    )
+    calls = Calls()
+    calls.stub = stub
+    monkeypatch.setattr(settings, "get_settings", lambda: stub)
+    monkeypatch.setattr(
+        filters,
+        "get_media_ids_downloaded",
+        lambda **kwargs: calls.append("the database's") or {1, 2},
+    )
+    monkeypatch.setattr(
+        filters,
+        "get_media_ids_downloaded_model_sync",
+        lambda **kwargs: calls.append("the creator's") or {1},
+    )
+    monkeypatch.setattr(
+        filters,
+        "get_media_post_ids_downloaded",
+        lambda **kwargs: calls.append(("pairs", kwargs["model_only"])) or [],
+    )
+    return calls
+
+
+class Calls(list):
+    """A list that also carries the settings the test may change."""
+
+    stub = None
+
+
+def test_a_sqlite_file_is_asked_for_everything_it_holds(monkeypatch, asked):
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
+
+    assert filters.downloaded_media_ids(username="a_creator", model_id=5) == {1, 2}
+    asked.stub.allow_dupe_downloads = True
+    filters.downloaded_media_ids(username="a_creator", model_id=5)
+
+    assert asked == ["the database's", ("pairs", False)]
+
+
+def test_postgresql_is_asked_for_the_creators_own_media(monkeypatch, asked):
+    # it holds every creator: media another creator downloaded isn't left out,
+    # as it never was with a file per creator
+    pytest.importorskip("psycopg")
+    monkeypatch.setenv(postgres.URL_KEY, URL)
+
+    assert filters.downloaded_media_ids(username="a_creator", model_id=5) == {1}
+    asked.stub.allow_dupe_downloads = True
+    filters.downloaded_media_ids(username="a_creator", model_id=5)
+
+    assert asked == ["the creator's", ("pairs", True)]
+
+
+def test_force_model_unique_asks_for_the_creators_own_media_on_either(monkeypatch, asked):
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
+    asked.stub.force_model_unique = True
+
+    assert filters.downloaded_media_ids(username="a_creator", model_id=5) == {1}
+    assert asked == ["the creator's"]
 
 
 # --- the password ---

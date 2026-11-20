@@ -27,6 +27,8 @@ Any of these works:
 
 Leave it unset, or empty, to keep using SQLite files.
 
+It is not a `config.json` setting, because it holds a password. `config.json` has a line, `advanced_options.database_url`, that only says so and points here; anything written there is ignored and replaced.
+
 The password is never written to the log. If a special character in it breaks the address, percent-encode it (`@` is `%40`).
 
 At startup the scraper connects once and says which server it is using. If it can't (no server, a refused login, no such database, a server older than 15), it stops there with one sentence saying which.
@@ -35,7 +37,7 @@ At startup the scraper connects once and says which server it is using. If it ca
 
 - **One database for every creator.** Each site gets its own schema (`onlyfans`, `fansly`), holding the same tables a `user_data.db` has. Every row carries its creator's `model_id`.
 - **Real column types.** Ids are 64-bit numbers (media, post and label ids are text: a few of them are words or hashes), yes/no columns are booleans and dates are timestamps, so other tools can query the database directly.
-- **"Unique media across all models" means all of them.** By default the scraper skips media it has already downloaded, going by everything in the database. A SQLite file usually holds one creator, so that was one creator's media. In PostgreSQL it is every creator's on the site: media downloaded for one creator is skipped when another creator has the same media. Turn on `force_model_unique` to go by each creator's own downloads.
+- **Already-downloaded media is still judged per creator.** A run skips media the database says is downloaded. A SQLite file is one creator's, so media was never skipped because another creator had it, and it isn't with PostgreSQL either: only the creator's own rows count. (`--force-model-unique` therefore changes nothing here.)
 - **No automatic backup copies.** The scraper copies a SQLite file before it upgrades it. For PostgreSQL, back up with `pg_dump`.
 - **Your SQLite files are left alone.** They are not read, changed or deleted while PostgreSQL is on.
 

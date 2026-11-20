@@ -180,6 +180,8 @@ class SQLiteBackend:
     operational_errors = (sqlite3.OperationalError,)
     # a file is made at the first layout and upgraded step by step
     born_current = False
+    # a file is its creator's own, unless `metadata` was changed to share one
+    holds_every_creator = False
 
     def where(self, kwargs, read_only):
         """The operation's database: what connect opens and messages name."""

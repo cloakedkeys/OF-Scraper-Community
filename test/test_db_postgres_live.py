@@ -12,6 +12,7 @@ import os
 import sqlite3
 import urllib.parse
 import uuid
+from types import SimpleNamespace
 
 import pytest
 import tenacity
@@ -23,9 +24,11 @@ import ofscraper.db.operations_.others as others
 import ofscraper.db.operations_.posts as posts
 import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.postgres as postgres
+import ofscraper.filters.media.filters as filters
+import ofscraper.utils.settings as settings
 import ofscraper.sites as sites
 from ofscraper.db.difference import ALL_FLAGS
-from test.db_scenario import ONE, NAMES, check, post, scenario, table_rows
+from test.db_scenario import ONE, TWO, NAMES, check, post, scenario, table_rows
 from test.test_db_postgres import sqlite_columns
 
 URL = os.environ.get("OFSC_TEST_POSTGRES_URL", "")
@@ -290,6 +293,34 @@ def test_dates_are_read_the_same_whatever_the_servers_date_style(pg, no_wait):
         with psycopg.connect(URL, autocommit=True) as conn:
             conn.execute(f'ALTER DATABASE "{database}" RESET DateStyle')
     assert saved[0]["created_at"] == "2024-01-03T03:04:05+00:00"
+
+
+def test_media_another_creator_downloaded_is_not_left_out(pg, no_wait, monkeypatch):
+    # by default a run leaves out what the database says is downloaded. One
+    # database holds every creator here, and only the creator's own count
+    stub = SimpleNamespace(
+        force_all=False,
+        force_model_unique=False,
+        allow_dupe_downloads=False,
+        retry_permanent_skips=False,
+    )
+    monkeypatch.setattr(settings, "get_settings", lambda: stub)
+    other = dict(model_id=TWO, username=NAMES[TWO])
+    start()
+    start(**other)
+    run_sql(
+        "INSERT INTO medias (media_id, post_id, model_id, downloaded)"
+        " VALUES (?, ?, ?, ?)",
+        [77, 1, ONE, True],
+        **CREATOR,
+    )
+
+    assert filters.downloaded_media_ids(**CREATOR) == {77}
+    assert filters.downloaded_media_ids(**other) == set()
+
+    stub.allow_dupe_downloads = True
+    assert filters.downloaded_media_ids(**CREATOR) == {(77, 1)}
+    assert filters.downloaded_media_ids(**other) == set()
 
 
 def test_what_is_not_committed_is_rolled_back(pg, no_wait):

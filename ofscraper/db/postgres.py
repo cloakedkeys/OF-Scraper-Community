@@ -470,6 +470,9 @@ class PostgresBackend:
     # the tables are made at the current layout, so no upgrade steps and no
     # file to back up first
     born_current = True
+    # one database for a whole site: "everything in the database" is no
+    # longer one creator's
+    holds_every_creator = True
 
     def __init__(self):
         self._pools = {}
