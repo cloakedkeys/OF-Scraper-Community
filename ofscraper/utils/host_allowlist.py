@@ -19,7 +19,7 @@ import ofscraper.utils.of_env.of_env as of_env
 
 log = logging.getLogger("shared")
 
-DEFAULT_SUFFIXES = ("onlyfans.com", "cloudfront.net")
+DEFAULT_SUFFIXES = ("onlyfans.com",)
 
 # download_session fills an empty action list with its defaults (cookies,
 # login headers and signing); a list naming none of them sends none

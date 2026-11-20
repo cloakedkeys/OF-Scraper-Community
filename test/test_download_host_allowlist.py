@@ -228,6 +228,37 @@ def test_plain_file_on_an_unlisted_host_downloads_without_the_login(tmp_path, mo
     assert "127.0.0.1" in caplog.text and "/f" not in caplog.text
 
 
+def _metadata(monkeypatch):
+    """The metadata command's request for a file's headers."""
+    import ofscraper.commands.metadata.manager as mm
+
+    monkeypatch.setattr(mm, "get_medialog", lambda ele: "")
+    monkeypatch.setattr(mm.placeholder, "Placeholders", lambda ele, ext=None: ext)
+
+    async def fetch(c, base):
+        ele = SimpleNamespace(url=f"{base}/f", mpd=None, id=1, content_type="video", responsetype="timeline")
+        return await mm.MetaDataManager()._metadata_helper(c, ele)
+
+    return _run(fetch)
+
+
+def test_metadata_request_to_an_unlisted_host_has_no_login(monkeypatch, caplog):
+    with caplog.at_level(logging.WARNING, logger="shared"):
+        result, seen = _metadata(monkeypatch)
+    assert not isinstance(result, Exception), result
+    assert len(seen) == 1
+    assert SESSION not in _cookies(seen[0])
+    assert "x-bc" not in {k.lower() for k in seen[0]}
+    assert "127.0.0.1" in caplog.text
+
+
+def test_metadata_request_to_a_user_added_host_gets_the_login(monkeypatch):
+    _extra_hosts(monkeypatch, ["127.0.0.1"])
+    result, seen = _metadata(monkeypatch)
+    assert not isinstance(result, Exception), result
+    assert SESSION in _cookies(seen[0])
+
+
 def test_plain_file_on_a_user_added_host_gets_the_login(tmp_path, monkeypatch):
     _extra_hosts(monkeypatch, ["127.0.0.1"])
     result, seen = _main(tmp_path, monkeypatch)
@@ -265,7 +296,6 @@ def test_fansly_files_are_not_checked(tmp_path, monkeypatch):
         "https://cdn3.onlyfans.com/dash/files/x.mpd",
         "https://public.onlyfans.com/files/a.jpg",
         "https://CDN2.OnlyFans.com./files/a.jpg",
-        "http://d1234.cloudfront.net/a.mp4",
     ],
 )
 def test_listed_hosts_and_subdomains_are_allowed(url):
@@ -278,6 +308,8 @@ def test_listed_hosts_and_subdomains_are_allowed(url):
     "url",
     [
         "https://evil-onlyfans.com/a.mpd",
+        # a shared domain anyone can get a host under
+        "http://d1234.cloudfront.net/a.mp4",
         "https://onlyfans.com.evil.example/a.mpd",
         "https://notonlyfans.com/a.mpd",
         "https://onlyfans.com@evil.example/a.mpd",

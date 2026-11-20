@@ -31,7 +31,7 @@ def load_other_urls_config():
         }
 
     # --- Media Host Configuration ---
-    # MEDIA_HOST_SUFFIXES: Domains added to onlyfans.com and cloudfront.net, the hosts that may be sent the OnlyFans login with a download.
+    # MEDIA_HOST_SUFFIXES: Domains added to onlyfans.com, the hosts that may be sent the OnlyFans login with a download.
     # Default: []
     # Expects a comma-separated string if provided via environment variable (e.g., "cdn.example.com,example.net")
     media_host_env = os.getenv("OFSC_MEDIA_HOST_SUFFIXES")
