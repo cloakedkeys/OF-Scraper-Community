@@ -137,6 +137,122 @@ def test_a_table_from_before_model_id_is_not_filtered(tmp_path):
     ) == [10]
 
 
+def test_a_creator_given_as_text_reads_the_same_rows(db):
+    # the check commands and manual mode pass the id as text
+    assert sorted(asyncio.run(posts.get_all_post_ids(model_id=str(TWO), db_path=db))) == [
+        10,
+        22,
+    ]
+    assert sorted(media.get_media_post_ids(model_id=str(TWO), db_path=db)) == [
+        (1, 10),
+        (3, 22),
+    ]
+
+
+def test_media_reads_of_a_table_from_before_model_id_are_not_filtered(tmp_path):
+    path = tmp_path / "user_data.db"
+    with contextlib.closing(sqlite3.connect(path)) as conn:
+        conn.execute(
+            "CREATE TABLE medias (id INTEGER PRIMARY KEY, media_id INTEGER,"
+            " post_id INTEGER, downloaded INTEGER, directory VARCHAR,"
+            " filename VARCHAR, hash VARCHAR, size INTEGER, media_type VARCHAR)"
+        )
+        conn.executemany(
+            "INSERT INTO medias (media_id, post_id, downloaded, directory,"
+            " filename, hash, size) VALUES (?,?,1,'/d',?,'same',5)",
+            [(1, 10, "/d/a.jpg"), (2, 10, "/d/b.jpg")],
+        )
+        conn.commit()
+    read = dict(model_id=ONE, db_path=path, read_only=True)
+
+    assert sorted(asyncio.run(media.get_media_ids(**read))) == [1, 2]
+    assert sorted(media.get_media_post_ids(**read)) == [(1, 10), (2, 10)]
+    assert len(media.get_media_post_files_downloaded(**read)) == 2
+    assert media.get_dupe_media_hashes(**read) == ["same"]
+    assert len(media.get_dupe_media_files(hash="same", **read)) == 2
+
+
+@pytest.fixture
+def no_creator_rows(db):
+    """Rows an upgrade left without a creator: it fills model_id in from the
+    database's one profile, and leaves it empty when there is none or more
+    than one."""
+    for table in ("posts", "messages", "stories"):
+        execute(db, f"INSERT INTO {table} (post_id, model_id) VALUES (?, ?)", [(33, None)])
+    execute(
+        db,
+        "INSERT INTO medias (media_id, post_id, model_id, downloaded, directory,"
+        " filename) VALUES (?,?,?,?,?,?)",
+        [(7, 33, None, 1, "/old", "/old/c.jpg")],
+    )
+    return db
+
+
+def test_rows_without_a_creator_still_count_as_the_creators(no_creator_rows):
+    db = no_creator_rows
+    for read in (
+        posts.get_all_post_ids,
+        messages.get_all_messages_ids,
+        stories.get_all_stories_ids,
+    ):
+        assert 33 in asyncio.run(read(model_id=TWO, db_path=db))
+    assert (7, 33) in media.get_media_post_ids(model_id=TWO, db_path=db)
+    assert media.get_media_post_files_downloaded(
+        model_id=TWO, db_path=db, media_id=7
+    ) == {(7, 33): ("/old", "/old/c.jpg")}
+
+
+def test_media_without_a_creator_is_not_saved_a_second_time(no_creator_rows):
+    db = no_creator_rows
+    before = media_rows(db)
+
+    async def save():
+        await media.batch_mediainsert([_media(7, 33)], model_id=TWO, db_path=db)
+
+    asyncio.run(save())
+
+    assert media_rows(db) == before
+
+
+def _post(post_id):
+    return SimpleNamespace(
+        id=post_id,
+        db_text="text",
+        price=0,
+        paid=False,
+        archived=False,
+        pinned=False,
+        stream=False,
+        opened=True,
+        date=DATE,
+        purchase_type=None,
+        db_mentions=None,
+    )
+
+
+def test_a_post_another_creator_has_is_still_saved_for_this_one(db, monkeypatch):
+    # post 11 is creator ONE's: it counted as creator TWO's too, so it was
+    # never written for TWO
+    import ofscraper.classes.placeholder as placeholder
+
+    monkeypatch.setattr(
+        placeholder.databasePlaceholder,
+        "databasePathHelper",
+        lambda self, model_id, model_username: db,
+    )
+
+    async def save():
+        await posts.make_post_table_changes(
+            [_post(11), _post(22)], model_id=TWO, username="creator_two"
+        )
+
+    asyncio.run(save())
+
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        saved = sorted(conn.execute("SELECT post_id, model_id FROM posts").fetchall())
+    assert saved == [(10, ONE), (10, TWO), (11, ONE), (11, TWO), (22, TWO)]
+
+
 def _media(media_id, post_id):
     return SimpleNamespace(
         id=media_id,

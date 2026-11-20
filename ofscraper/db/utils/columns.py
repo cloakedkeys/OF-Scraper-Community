@@ -9,12 +9,16 @@ def creator_filter(cur, table, model_id, joiner="AND"):
 
     A database can hold several creators (a merged one, or a `metadata`
     folder that doesn't name the creator), and a read that decides what a
-    creator already has must not count another creator's rows. Nothing is
-    added when no creator is given (a tool that reads a whole database), or
-    for a table from before model_id, which holds one creator's rows."""
+    creator already has must not count another creator's rows.
+
+    A row with no model_id still counts: an upgrade leaves it empty when it
+    can't tell whose the old rows are (no profile, or several), and those
+    rows were always read as the creator's. Nothing is added when no creator
+    is given (a tool that reads a whole database), or for a table from
+    before model_id, which holds one creator's rows."""
     if model_id is None or "model_id" not in table_columns(cur, table):
         return "", []
-    return f" {joiner} model_id=(?)", [model_id]
+    return f" {joiner} (model_id=(?) OR model_id IS NULL)", [model_id]
 
 
 def select_list(present, columns):
