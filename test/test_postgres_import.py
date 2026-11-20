@@ -246,6 +246,8 @@ def test_a_file_from_2023_is_brought_in(tmp_path):
     assert target.rows("onlyfans", "profiles") == [
         {"user_id": 111, "username": "a_creator"}
     ]
+    # the 2023 release had no models table: the creator is added, as a scan would
+    assert target.rows("onlyfans", "models") == [{"model_id": 111}]
     # the old file still has its old layout
     assert snapshot(folder) == before
     assert "model_id" not in [

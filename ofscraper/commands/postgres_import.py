@@ -340,6 +340,10 @@ def read(source, write=None):
             source.creators.update(row[position] for row in converted)
         if write and not bad:
             write(table, columns, converted)
+    # a scan adds its creator to models when it starts: a file from before
+    # that table, or one a scan never finished, hasn't the row
+    if write and not bad:
+        write("models", ["model_id"], [(c,) for c in sorted(source.creators)])
     if bad:
         more = f" (and {len(bad) - SHOWN} more)" if len(bad) > SHOWN else ""
         source.problems.append(

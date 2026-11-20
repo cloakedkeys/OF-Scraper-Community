@@ -140,7 +140,6 @@ def test_the_scraper_reads_what_was_brought_in(tmp_path, pg, monkeypatch):
                 skips=await media.get_permanent_skip_media_ids(**creator),
                 posts=await posts.get_all_post_ids(**creator),
                 deleted=await posts.get_deleted_post_ids(**creator),
-                youngest=await posts.get_youngest_timeline_date(**creator),
                 messages=await messages.get_all_messages_ids(**creator),
                 flags=others.get_schema_changes(**creator),
             )
