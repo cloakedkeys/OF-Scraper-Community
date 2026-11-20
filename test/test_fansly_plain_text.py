@@ -97,5 +97,15 @@ def test_onlyfans_text_is_unchanged(site, monkeypatch, tmp_path):
     assert written_text(monkeypatch, tmp_path, post) == raw
 
 
-def test_stash_sync_removes_codes_from_rows_saved_before():
-    assert stash_sync.plain_text(" [c:blue]Old row[/c]\n**kept** ") == "Old row\nkept"
+def test_stash_sync_keeps_escaped_characters(site):
+    # the saved row is plain already; Stash gets it as Fansly shows it
+    site("fansly")
+    response = {
+        "posts": [{"id": "1", "createdAt": 1760000000, "content": r"\*sale\* today"}]
+    }
+    post = posts_.Post(normalize.posts(response)[0], 1, "a creator", "timeline")
+    meta = stash_sync.fansly_post_meta(
+        "1", "2025-10-09", {"1": ("posts", post.db_text)}, "a creator"
+    )
+    assert meta["details"] == "*sale* today"
+    assert meta["title"] == "*sale* today"
