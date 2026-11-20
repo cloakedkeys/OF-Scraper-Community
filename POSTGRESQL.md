@@ -35,6 +35,7 @@ At startup the scraper connects once and says which server it is using. If it ca
 
 - **One database for every creator.** Each site gets its own schema (`onlyfans`, `fansly`), holding the same tables a `user_data.db` has. Every row carries its creator's `model_id`.
 - **Real column types.** Ids are 64-bit numbers, yes/no columns are booleans and dates are timestamps, so other tools can query the database directly.
+- **"Unique media across all models" means all of them.** By default the scraper skips media it has already downloaded, going by everything in the database. A SQLite file usually holds one creator, so that was one creator's media. In PostgreSQL it is every creator's on the site: media downloaded for one creator is skipped when another creator has the same media. Turn on `force_model_unique` to go by each creator's own downloads.
 - **No automatic backup copies.** The scraper copies a SQLite file before it upgrades it. For PostgreSQL, back up with `pg_dump`.
 - **Your SQLite files are left alone.** They are not read, changed or deleted while PostgreSQL is on.
 

@@ -32,6 +32,13 @@ MIN_SERVER = 15
 INSTALL_HINT = 'pip install "{dist}[postgres]"'
 # async operations run one at a time; the rest are reads from other threads
 POOL_SIZE = 4
+# the longest wait for a connection from the pool, in seconds
+CHECKOUT_TIMEOUT = 30
+# the errors a retry can fix: two writers in each other's way (40001,
+# 40P01), a lock not freed in time (55P03), the server restarting (57P01 to
+# 57P03). Class 08, a lost connection, is one too. Not a full disk, a server
+# out of memory or connections, or a cancelled query
+RETRY_STATES = frozenset({"40001", "40P01", "55P03", "57P01", "57P02", "57P03"})
 CONNECT_TIMEOUT = 15
 
 # Made at the current layout: the steps that upgrade an old SQLite file never
@@ -195,25 +202,45 @@ def enabled():
 
 
 def masked(text, database_url=None):
-    """`text` with the URL's password hidden."""
-    password = _password(database_url if database_url is not None else url())
+    """`text` with the URL, and anything in it that may be its password,
+    hidden."""
     text = str(text)
-    if password:
-        text = text.replace(password, "{hidden}")
-        text = text.replace(urllib.parse.quote(password, safe=""), "{hidden}")
+    for secret in _secrets(database_url if database_url is not None else url()):
+        text = text.replace(secret, "{hidden}")
     return text
 
 
-def _password(database_url):
+def _secrets(database_url):
+    """What to keep out of messages and logs, longest first: the URL itself
+    and every reading of its password. The server's driver and Python don't
+    read a URL alike (a mistyped scheme, an @ inside the password), and the
+    driver's errors quote what it read, so each reading is hidden."""
+    database_url = str(database_url or "")
+    found = set()
     try:
-        password = urllib.parse.urlsplit(database_url).password
+        found.add(urllib.parse.urlsplit(database_url).password)
     except ValueError:
-        return None
-    if password is None:
-        # the other spelling: host=... password=...
-        found = re.search(r"\bpassword\s*=\s*('(?:[^'\\]|\\.)*'|\S+)", database_url)
-        return found.group(1).strip("'") if found else None
-    return urllib.parse.unquote(password)
+        pass
+    # the other spelling: host=... password=...
+    keyword = re.search(r"\bpassword\s*=\s*('(?:[^'\\]|\\.)*'|\S+)", database_url)
+    if keyword:
+        found.add(keyword.group(1).strip("'"))
+    # whatever sits between the user name's colon and the last @, however
+    # the rest is spelled, and its pieces if it has an @ of its own
+    loose = re.search(r"(?:^|/)[^/:@\s]*:([^/\s]+)@", database_url)
+    if loose:
+        found.add(loose.group(1))
+        found.update(loose.group(1).split("@"))
+    secrets = set()
+    for secret in found:
+        # too short to tell from ordinary text
+        if secret and len(secret) >= 3:
+            secrets.update(
+                {secret, urllib.parse.unquote(secret), urllib.parse.quote(secret, safe="")}
+            )
+    if secrets:
+        secrets.add(database_url)
+    return sorted(secrets, key=len, reverse=True)
 
 
 def describe(database_url=None):
@@ -489,6 +516,8 @@ class PostgresBackend:
 
         def configure(conn):
             conn.execute("SET TIME ZONE 'UTC'")
+            # dates are read back as ISO text, whatever the server's default
+            conn.execute("SET DateStyle TO 'ISO, YMD'")
             conn.execute(f"SET search_path TO {schema}")
             # a row another program has locked stops the wait in the end, as
             # a locked SQLite file does
@@ -519,25 +548,40 @@ class PostgresBackend:
         return pool
 
     def _hide_password(self, database_url):
-        password = _password(database_url)
-        if password:
-            import ofscraper.utils.logs.utils.sensitive as sensitive
+        import ofscraper.utils.logs.utils.sensitive as sensitive
 
-            for text in {password, urllib.parse.quote(password, safe="")}:
-                sensitive.add_sensitive_pattern(re.escape(text))
+        for text in _secrets(database_url):
+            sensitive.add_sensitive_pattern(re.escape(text))
 
     def _unavailable(self, error, database_url):
         """A connection that can't be made, as one sentence for the user.
         The server's own first line follows in brackets."""
-        psycopg = _driver()[0]
+        psycopg, psycopg_pool = _driver()
         text = str(error)
         state = getattr(error, "sqlstate", None) or ""
-        if state.startswith("28") or "authentication failed" in text:
+        # a connection that was never made has no error code, only the
+        # server's words
+        if isinstance(error, psycopg.ProgrammingError) and not state:
+            # the driver couldn't read the address, and quotes it: say so
+            # without the quote
+            return PostgresUnavailable(
+                f"{URL_KEY} isn't an address PostgreSQL can read. It should "
+                "look like postgresql://user:password@host:5432/database."
+            )
+        if (
+            state.startswith("28")
+            or "authentication failed" in text
+            or re.search(r'role "[^"]*" does not exist', text)
+        ):
             reason = "the user name or password was refused"
-        elif state == "3D000" or ("database" in text and "does not exist" in text):
+        elif state == "3D000" or re.search(r'database "[^"]*" does not exist', text):
             reason = "there is no database with that name on the server"
         elif state == "42501" or isinstance(error, psycopg.errors.InsufficientPrivilege):
             reason = "the user isn't allowed to make or use its tables"
+        elif state == "55P03":
+            reason = "another program is setting up its tables; try again"
+        elif isinstance(error, psycopg_pool.PoolTimeout):
+            reason = "no connection could be had in time (the server is down or busy)"
         else:
             reason = "the server can't be reached"
         detail = masked(" ".join(text.split()), database_url)[:300]
@@ -551,8 +595,10 @@ class PostgresBackend:
         driver begins one with the first statement, read-only for a read."""
         psycopg = _driver()[0]
         pool = self._pool(where, timeout)
+        # not the database timeout, which is for a busy database and runs to
+        # minutes: with the server gone, every operation would wait that long
         try:
-            conn = pool.getconn(timeout=float(timeout or 30))
+            conn = pool.getconn(timeout=min(float(timeout or 30), CHECKOUT_TIMEOUT))
         except psycopg.Error as E:
             raise self._unavailable(E, url()) from E
         try:
@@ -577,7 +623,8 @@ class PostgresBackend:
             pools, self._pools = self._pools, {}
             self._ready.clear()
         for pool in pools.values():
-            pool.close()
+            # at exit, don't wait on a server that has gone
+            pool.close(timeout=1)
 
     # --- errors ---
 
@@ -603,15 +650,11 @@ class PostgresBackend:
             psycopg = _driver()[0]
         except PostgresUnavailable:
             return False
-        return isinstance(
-            error,
-            (
-                psycopg.errors.SerializationFailure,
-                psycopg.errors.DeadlockDetected,
-                psycopg.errors.LockNotAvailable,
-                psycopg.OperationalError,
-            ),
-        ) and not isinstance(error, psycopg.errors.QueryCanceled)
+        if not isinstance(error, psycopg.OperationalError):
+            return False
+        state = getattr(error, "sqlstate", None)
+        # no code: the connection went before the server could give one
+        return state is None or state in RETRY_STATES or state.startswith("08")
 
     def busy(self, error):
         try:

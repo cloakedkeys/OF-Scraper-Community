@@ -273,7 +273,7 @@ def _add_backend(backend):
 
 def backend_for(kwargs):
     """The engine an operation runs on: PostgreSQL when a database URL is
-    set (DATABASE_URL), SQLite when not. An operation given db_path names a
+    set (OFSC_DATABASE_URL), SQLite when not. An operation given db_path names a
     SQLite file, whichever engine keeps the creators' data: merge, the
     upgrade of one file, and the tests work on files."""
     if kwargs.get("db_path"):

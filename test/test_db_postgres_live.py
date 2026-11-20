@@ -237,6 +237,61 @@ def test_a_read_only_operation_cannot_write(pg, no_wait):
     assert [row["model_id"] for row in table_rows("models", **CREATOR)] == [ONE]
 
 
+def test_a_write_after_a_read_only_operation_still_writes(pg, no_wait):
+    # connections go back to the pool and come out again: "read only" must
+    # not stay on one. More rounds than the pool has connections
+    start()
+
+    @wrapper.operation_wrapper
+    def write(number, conn=None, **kwargs):
+        conn.execute("INSERT INTO models (model_id) VALUES (?)", [number])
+        conn.commit()
+
+    for number in range(1000, 1000 + postgres.POOL_SIZE * 2):
+        table_rows("models", read_only=True, **CREATOR)
+        write(number)
+
+    assert len(table_rows("models", **CREATOR)) == 1 + postgres.POOL_SIZE * 2
+
+
+def test_two_programs_making_the_tables_at_once_both_succeed(pg, no_wait):
+    # each new program checks and makes the tables under one lock
+    import concurrent.futures
+
+    def make():
+        engine = postgres.PostgresBackend()
+        try:
+            engine.create_tables(ALL_FLAGS)
+        finally:
+            engine.shutdown()
+
+    with concurrent.futures.ThreadPoolExecutor(4) as workers:
+        for done in [workers.submit(make) for _ in range(4)]:
+            done.result()
+
+    assert len(others.get_schema_changes(**CREATOR)) == len(ALL_FLAGS)
+
+
+def test_dates_are_read_the_same_whatever_the_servers_date_style(pg, no_wait):
+    start()
+    with psycopg.connect(URL, autocommit=True) as conn:
+        database = conn.execute("SELECT current_database()").fetchone()[0]
+        conn.execute(f'ALTER DATABASE "{database}" SET DateStyle TO \'German, DMY\'')
+    try:
+        postgres.POSTGRES.shutdown()
+        start()
+
+        async def go():
+            await posts.write_post_table([post(10)], **CREATOR)
+            return await posts.get_all_posts_transition(**CREATOR)
+
+        saved = asyncio.run(go())
+    finally:
+        with psycopg.connect(URL, autocommit=True) as conn:
+            conn.execute(f'ALTER DATABASE "{database}" RESET DateStyle')
+    assert saved[0]["created_at"] == "2024-01-03T03:04:05+00:00"
+
+
 def test_what_is_not_committed_is_rolled_back(pg, no_wait):
     start()
 

@@ -122,7 +122,47 @@ def test_the_startup_check_asks_the_server_when_a_url_is_set(monkeypatch, caplog
     ],
 )
 def test_the_password_is_found_in_either_spelling(url, password):
-    assert postgres._password(url) == password
+    secrets = postgres._secrets(url)
+    if password is None:
+        assert secrets == []
+    else:
+        assert password in secrets
+        # and the URL itself, longest first
+        assert secrets[0] == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        # a mistyped scheme, or none: the driver quotes the whole URL back
+        "postgresql:/scraper:SECRETpw@db.example/library",
+        "postgres//scraper:SECRETpw@db.example/library",
+        "scraper:SECRETpw@db.example/library",
+        # an @ in the password that wasn't written as %40: the driver takes
+        # what follows it for the server's name
+        "postgresql://scraper:xx@SECRETpw@db.example/library",
+        "postgresql://scraper:SECRETpw@more@db.example/library",
+    ],
+)
+def test_a_password_in_a_url_that_isnt_read_as_meant_is_still_hidden(url):
+    said = [
+        f'missing "=" after "{url}" in connection info string',
+        "failed to resolve host 'SECRETpw@db.example': Name or service not known",
+        "password authentication failed (SECRETpw)",
+    ]
+    for text in said:
+        assert "SECRETpw" not in postgres.masked(text, url)
+
+
+def test_only_the_variable_with_the_scrapers_name_turns_postgresql_on(monkeypatch):
+    # DATABASE_URL is set for other software on many machines
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
+    for name in ("DATABASE_URL", "POSTGRES_URL", "PGHOST", "PGDATABASE"):
+        monkeypatch.setenv(name, URL)
+    assert postgres.enabled() is False
+    assert wrapper.backend_for({}) is wrapper.SQLITE
+    monkeypatch.setenv("OFSC_DATABASE_URL", URL)
+    assert postgres.enabled() is True
 
 
 def test_messages_name_the_server_and_never_the_login():
@@ -141,12 +181,164 @@ def test_the_password_is_hidden_from_every_log_line(monkeypatch):
 
     record = logging.LogRecord(
         "shared", logging.ERROR, __file__, 1,
-        f"connection to {URL} failed (password s3cr@t-word)", None, None,
+        f"connection to db.example failed (password s3cr@t-word, from {URL})",
+        None, None,
     )
     line = log_classes.SensitiveFormatter("%(message)s").format(record)
 
     assert "s3cr" not in line
-    assert "db.example" in line
+    assert "db.example failed" in line
+
+
+def test_opening_the_pool_hides_the_password_first(monkeypatch):
+    psycopg = pytest.importorskip("psycopg")
+    import ofscraper.utils.logs.utils.sensitive as sensitive
+
+    monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
+    monkeypatch.setenv(postgres.URL_KEY, URL)
+
+    def refused(*args, **kwargs):
+        raise psycopg.OperationalError(
+            'connection failed: FATAL: password authentication failed for user'
+            ' "scraper" (s3cr@t-word)'
+        )
+
+    monkeypatch.setattr(psycopg, "connect", refused)
+
+    with pytest.raises(postgres.PostgresUnavailable) as raised:
+        postgres.POSTGRES._open_pool("onlyfans", 30)
+
+    message = str(raised.value)
+    assert "the user name or password was refused" in message
+    assert "db.example:5433/library" in message
+    assert "s3cr" not in message
+    # and from then on, out of every log line
+    record = logging.LogRecord(
+        "shared", logging.ERROR, __file__, 1, "tried s3cr@t-word", None, None
+    )
+    assert "s3cr" not in log_classes.SensitiveFormatter("%(message)s").format(record)
+
+
+def unavailable(error, url=URL):
+    return str(postgres.POSTGRES._unavailable(error, url))
+
+
+def test_a_connection_that_cant_be_made_gets_its_own_sentence():
+    psycopg = pytest.importorskip("psycopg")
+    psycopg_pool = pytest.importorskip("psycopg_pool")
+    error = psycopg.OperationalError
+
+    assert "user name or password was refused" in unavailable(
+        error('FATAL: role "nobody" does not exist')
+    )
+    assert "no database with that name" in unavailable(
+        error('FATAL: database "library" does not exist')
+    )
+    # a server whose name has "database" in it is not a missing database
+    assert "the server can't be reached" in unavailable(
+        error("failed to resolve host 'database.example': name does not exist")
+    )
+    assert "isn't allowed" in unavailable(psycopg.errors.InsufficientPrivilege("no"))
+    assert "another program is setting up" in unavailable(
+        psycopg.errors.LockNotAvailable("lock timeout")
+    )
+    assert "down or busy" in unavailable(psycopg_pool.PoolTimeout("30 sec"))
+
+
+def test_an_address_the_driver_cant_read_is_said_without_quoting_it():
+    psycopg = pytest.importorskip("psycopg")
+    url = "postgresql:/scraper:SECRETpw@db.example/library"
+
+    message = unavailable(
+        psycopg.ProgrammingError(f'missing "=" after "{url}" in connection info'), url
+    )
+
+    assert f"{postgres.URL_KEY} isn't an address PostgreSQL can read" in message
+    assert "SECRETpw" not in message and "scraper" not in message
+
+
+def state(name):
+    psycopg = pytest.importorskip("psycopg")
+    return getattr(psycopg.errors, name)("it happened")
+
+
+@pytest.mark.parametrize(
+    "name, again",
+    [
+        ("SerializationFailure", True),
+        ("DeadlockDetected", True),
+        ("LockNotAvailable", True),
+        ("AdminShutdown", True),
+        ("ConnectionFailure", True),
+        ("QueryCanceled", False),
+        ("DiskFull", False),
+        ("OutOfMemory", False),
+        ("TooManyConnections", False),
+        ("InvalidPassword", False),
+        ("UndefinedTable", False),
+        ("UniqueViolation", False),
+    ],
+)
+def test_only_an_error_a_retry_can_fix_is_retried(name, again):
+    assert postgres.POSTGRES.retryable(state(name)) is again
+    assert wrapper._retryable(state(name)) is again
+
+
+def test_a_connection_lost_without_a_word_from_the_server_is_retried():
+    psycopg = pytest.importorskip("psycopg")
+    assert postgres.POSTGRES.retryable(psycopg.OperationalError("closed")) is True
+    assert postgres.POSTGRES.retryable(psycopg.InterfaceError("closed")) is False
+    assert postgres.POSTGRES.retryable(ValueError("no")) is False
+
+
+def test_waiting_for_another_writer_is_busy_and_nothing_else_is():
+    assert postgres.POSTGRES.busy(state("LockNotAvailable")) is True
+    assert postgres.POSTGRES.busy(state("DeadlockDetected")) is True
+    assert postgres.POSTGRES.busy(state("SerializationFailure")) is False
+    assert postgres.POSTGRES.busy(state("DiskFull")) is False
+
+
+def test_a_server_that_has_gone_is_not_waited_on_for_minutes(monkeypatch):
+    pytest.importorskip("psycopg")
+    waits = []
+
+    class Pool:
+        def getconn(self, timeout):
+            waits.append(timeout)
+            return SimpleNamespace()
+
+    monkeypatch.setattr(postgres.POSTGRES, "_pool", lambda where, timeout: Pool())
+
+    # DATABASE_TIMEOUT is 300 seconds by default
+    postgres.POSTGRES.connect("onlyfans", True, timeout=300)
+    postgres.POSTGRES.connect("onlyfans", False, timeout=5)
+
+    assert waits == [postgres.CHECKOUT_TIMEOUT, 5]
+
+
+def test_a_server_too_old_is_refused_at_startup(monkeypatch):
+    def connect(version):
+        return lambda *args, **kwargs: SimpleNamespace(
+            info=SimpleNamespace(server_version=version)
+        )
+
+    monkeypatch.setattr(postgres.POSTGRES, "where", lambda kwargs, read_only: "onlyfans")
+    monkeypatch.setattr(postgres.POSTGRES, "close", lambda conn: None)
+    monkeypatch.setenv(postgres.URL_KEY, URL)
+
+    monkeypatch.setattr(postgres.POSTGRES, "connect", connect(140011))
+    with pytest.raises(postgres.PostgresUnavailable, match="is version 14; 15 or newer"):
+        postgres.POSTGRES.check()
+
+    monkeypatch.setattr(postgres.POSTGRES, "connect", connect(150004))
+    assert postgres.POSTGRES.check() == "15.4"
+
+
+def test_each_engine_saves_a_date_its_own_way():
+    # SQLite keeps what it's given; PostgreSQL gets a date it can read
+    assert wrapper.SQLITE.date_value(1709285400) == 1709285400
+    assert postgres.POSTGRES.date_value(1709285400) == "2024-03-01T09:30:00+00:00"
+    assert postgres.POSTGRES.date_value("") is None
 
 
 # --- the SQL and the values ---
@@ -336,6 +528,43 @@ def test_postgresql_has_the_tables_and_columns_sqlite_has(tmp_path):
     assert set(postgres.TABLES) == set(expected)
     for table, columns in expected.items():
         assert set(postgres.TABLE_COLUMNS[table]) == set(columns), table
+
+
+def test_postgresql_has_the_unique_keys_sqlite_has(tmp_path):
+    # the keys are what stop a row being saved twice
+    path = tmp_path / "current.db"
+
+    async def make():
+        await operations.create_tables(db_path=path)
+        await modify_tables(db_path=path, new_db=True)
+
+    asyncio.run(make())
+    expected = {}
+    with contextlib.closing(sqlite3.connect(path)) as conn:
+        for table in postgres.TABLES:
+            keys = set()
+            for _, name, unique, origin, _ in conn.execute(
+                f"PRAGMA index_list({table})"
+            ):
+                # u: a UNIQUE in the table's definition (pk is the row's id)
+                if unique and origin == "u":
+                    keys.add(
+                        frozenset(
+                            row[2] for row in conn.execute(f"PRAGMA index_info({name})")
+                        )
+                    )
+            expected[table] = keys
+
+    found = {
+        table: {
+            frozenset(part.strip() for part in line.split("(")[1].rstrip("),").split(","))
+            for line in create.splitlines()
+            if line.strip().startswith("UNIQUE")
+        }
+        for table, create in postgres.TABLES.items()
+    }
+    assert found == expected
+    assert found["medias"] == {frozenset({"media_id", "model_id", "post_id"})}
 
 
 def test_a_new_postgresql_database_has_had_every_upgrade_step(tmp_path):
