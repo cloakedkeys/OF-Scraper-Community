@@ -389,9 +389,16 @@ class FanslyStreamDownloadManager(DownloadManager):
 
         # BaseException: a cancelled run (Ctrl+C) also removes the .part
         try:
-            await self._copy_stream(
-                c, best, url, audio_url, temp, stream_timeout(ele.duration), medialog
-            )
+            try:
+                await self._copy_stream(
+                    c, best, url, audio_url, temp, stream_timeout(ele.duration), medialog
+                )
+            except SegmentError as e:
+                # the files already fetched stay and aren't fetched again
+                best, url, audio_url = await self._fresh_stream(c, ele, e)
+                await self._copy_stream(
+                    c, best, url, audio_url, temp, stream_timeout(ele.duration), medialog
+                )
             await self._check_complete(temp, ele)
             total = temp.stat().st_size
 
@@ -419,8 +426,8 @@ class FanslyStreamDownloadManager(DownloadManager):
             return await self._finish(temp, placeholderObj, ele, username, model_id, total)
         except SegmentError as e:
             temp.unlink(missing_ok=True)
-            # a refused audio track is handled in _parallel_copy; a refused
-            # video file leaves no stream to save
+            # a refused audio track is handled in _parallel_copy; a video
+            # file refused again with new links leaves no stream to save
             if not (_refused(e) and _direct_fallback(ele)):
                 raise
             self.ctx.log.info(f"{medialog} {e}; downloading the direct file instead")
@@ -429,6 +436,24 @@ class FanslyStreamDownloadManager(DownloadManager):
         except BaseException:
             temp.unlink(missing_ok=True)
             raise
+
+    async def _fresh_stream(self, c, ele, e):
+        """(best, url, audio url) from new links after the CDN refused one of
+        the stream's video files. Fansly sometimes signs the links for another
+        address (#536), so they are asked for again, once, as for a refused
+        playlist. Raises ``e`` again when there are none to use."""
+        if not _refused(e) or not await refresh_media_link(ele):
+            raise e
+        best = fansly_video.select_best(fansly_video.raw_media(ele))
+        if not best or not best.is_stream:
+            raise e
+        try:
+            url, audio_url = await self._stream_urls(c, best)
+        except fansly_video.StreamError:
+            raise e
+        # the audio playlist is fetched again with the new links
+        self.audio_refused = None
+        return best, url, audio_url
 
     async def _copy_stream(self, c, best, url, audio_url, temp, timeout, medialog):
         """Copy resumable files and join locally, or leave unusual streams to ffmpeg."""
