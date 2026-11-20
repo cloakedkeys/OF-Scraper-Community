@@ -38,6 +38,7 @@ from test_size_limit_skip import (  # noqa: F401  (env and fansly are fixtures)
     fansly,
     fansly_item,
     normal_item_run,
+    photo,
     run_once,
 )
 
@@ -180,6 +181,53 @@ def test_stop_during_after_download_script_still_reports_the_file(stoppable, hea
     assert counted == counts(photo_count=1)
     assert common_globals.stopped == 0
     assert common_globals.total_bytes_downloaded == len(BODY)
+    assert heard == [
+        ("item_downloaded", 7, path),
+        ("item_finished", 7, USERNAME, "downloaded", None),
+    ]
+
+
+def test_stop_during_the_transfer_sends_one_stopped_event(stoppable, heard, monkeypatch):
+    monkeypatch.setattr(md.MainDownloadManager, "_handle_result_main", _stop_and_wait)
+    counted, (ele,) = normal_item_run(stoppable)
+    assert counted == counts()
+    assert common_globals.stopped == 1 and ele.download_stopped
+    assert heard == [("item_finished", 7, USERNAME, "stopped", None)]
+
+
+def test_item_stopped_before_it_started_sends_no_event(stoppable, heard):
+    ele = photo("http://127.0.0.1:9")
+    stop.request()
+
+    async def go():
+        # its own task: the stop also cancels the task the item ran in
+        return await asyncio.create_task(
+            run_mod.handle_one((None, ele, MODEL_ID, USERNAME), None, lambda: 1)
+        )
+
+    assert asyncio.run(go()) is False
+    assert ele.download_unstarted
+    assert heard == []
+
+
+def test_retry_inside_the_downloader_sends_each_event_once(env, heard, monkeypatch):
+    monkeypatch.setenv("DOWNLOAD_NUM_TRIES", "3")
+    monkeypatch.setenv("OF_MIN_WAIT_API", "0")
+    monkeypatch.setenv("OF_MAX_WAIT_API", "0")
+    real = md.MainDownloadManager._main_download_sendreq
+    calls = []
+
+    async def fail_once(self, *a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("connection reset")
+        return await real(self, *a, **k)
+
+    monkeypatch.setattr(md.MainDownloadManager, "_main_download_sendreq", fail_once)
+    counted, _ = normal_item_run(env)
+    assert len(calls) == 2
+    assert counted == counts(photo_count=1)
+    (path,) = env.out.iterdir()
     assert heard == [
         ("item_downloaded", 7, path),
         ("item_finished", 7, USERNAME, "downloaded", None),
