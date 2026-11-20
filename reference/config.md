@@ -46,7 +46,7 @@ Each key lists these fields, when they apply: **Default**, **Read by** (the gett
 
 - **Default:** `"{home_directory}/Data/ofscraper"` · **Read by:** `get_save_location()` in `ofscraper/utils/paths/common.py`
 - **Default from:** [`SAVE_PATH_DEFAULT`](env.md#save_path_default)
-- The root folder for downloads. `dir_format` is resolved under it. It is also the temp-file root when `temp_dir` is unset. Fansly runs save to a `Fansly` subfolder of it. Surrounding quotes from the Windows "Copy as path" command are stripped.
+- The root folder for downloads. `dir_format` is resolved under it. It is also the temp-file root when `temp_dir` is unset. Fansly runs save to a `Fansly` subfolder of it, unless `dir_format` or `file_format` uses `{site_name}` (or `{sitename}`): then each site's folder comes from the template, so `{site_name}/{model_username}/...` gives `<save location>/Onlyfans/...` and `<save location>/Fansly/...`. The database path and the `{save_location}` and `{root}` values keep the `Fansly` subfolder either way. Surrounding quotes from the Windows "Copy as path" command are stripped.
 
 ### `file_options.dir_format`
 
@@ -99,7 +99,7 @@ Each key lists these fields, when they apply: **Default**, **Read by** (the gett
 
 - **Default:** `"media_id"` · **Read by:** `get_filename_collision()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`FILENAME_COLLISION_DEFAULT`](env.md#filename_collision_default)
-- What happens when a download's target path already holds a different file. `overwrite` keeps the old behaviour: the larger file wins. Any other value saves the new file as `name_<media_id>`, then `name_<media_id>_2` and so on. An existing file with identical content is kept.
+- What happens when a download's target path already holds a different file. `overwrite` keeps the old behaviour: the larger file wins. Any other value saves the new file as `name_<media_id>`, then `name_<media_id>_2` and so on. An existing file with identical content is kept. With `--allow-dupes`, an identical file counts as this download only when the database records it for the same media and post; otherwise it is another post's copy and the new one gets its own name, in both modes.
 
 ## `download_options`
 
@@ -262,7 +262,7 @@ Each key lists these fields, when they apply: **Default**, **Read by** (the gett
 
 - **Default:** `false` · **Read by:** `get_sanitizeDB()` in `ofscraper/utils/config/data.py`
 - **Default from:** [`SANITIZE_DB_DEFAULT`](env.md#sanitize_db_default)
-- When true, post and message text is stored in the database with HTML tags removed and whitespace collapsed. When false, the raw API text is stored. It does not affect file names.
+- When true, post and message text is stored in the database with HTML tags removed and whitespace collapsed. When false, the raw API text is stored. It does not affect file names. Fansly style codes (`[s:lg]`, `[c:blue]`, `**bold**`, `*italic*`, `~~`, `[text](url)` links keep only their text, and a backslash-escaped character is kept without its backslash) are always removed, whatever this is set to: from the database, `.txt` files, file names, text filters and script input. Text saved by earlier versions keeps them until a `--metadata` run rewrites it, and `stash_sync` copies the saved text as it is.
 
 ### `advanced_options.temp_dir`
 
