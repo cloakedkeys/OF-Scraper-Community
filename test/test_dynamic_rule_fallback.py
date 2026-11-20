@@ -284,13 +284,13 @@ def all_sources_down(hosts, monkeypatch):
         "get_settings",
         lambda: SimpleNamespace(
             anon=True,
-            dynamic_rules="xagler",
+            dynamic_rules="digitalcriminals",
             ssl_verify="false",
             cached_disabled=True,
         ),
     )
     monkeypatch.setattr(sessionmanager.sites, "is_fansly", lambda: False)
-    for source in ["xagler", *request.FALLBACK_SOURCES]:
+    for source in request.FALLBACK_SOURCES:
         hosts.replies[source] = timeout(f"https://{source}.rules.example/rule.json")
     return hosts
 
@@ -315,7 +315,7 @@ def test_signed_request_asks_the_sources_once(all_sources_down, monkeypatch):
             ):
                 pass
 
-    assert all_sources_down.asked == ["xagler", *request.FALLBACK_SOURCES]
+    assert all_sources_down.asked == request.FALLBACK_SOURCES
     assert not sent
 
 
@@ -337,5 +337,5 @@ def test_signed_async_request_asks_the_sources_once(all_sources_down, monkeypatc
     with pytest.raises(request.DynamicRuleUnavailable):
         asyncio.run(run())
 
-    assert all_sources_down.asked == ["xagler", *request.FALLBACK_SOURCES]
+    assert all_sources_down.asked == request.FALLBACK_SOURCES
     assert not sent
