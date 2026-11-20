@@ -24,7 +24,7 @@ from contextlib import closing
 from pathlib import Path
 
 from ofscraper.sites.fansly.constants import ORIGIN as FANSLY_ORIGIN
-from ofscraper.sites.fansly.normalize import hashtags
+from ofscraper.sites.fansly.normalize import hashtags, strip_fansly_markup
 
 DEFAULT_URL = "http://localhost:9999/graphql"
 ONLYFANS, FANSLY = "onlyfans", "fansly"
@@ -240,8 +240,12 @@ def describe(entry, texts, username, message_ids=frozenset(), purchase_types=Non
 
 
 def plain_text(text):
-    """Fansly captions are plain text; trim each line."""
-    return "\n".join(line.strip() for line in (text or "").splitlines()).strip()
+    """A Fansly caption without its style codes, each line trimmed.
+
+    Rows saved before the codes were removed on scraping still hold them.
+    """
+    text = strip_fansly_markup(text or "")
+    return "\n".join(line.strip() for line in text.splitlines()).strip()
 
 
 def mentions(text, username=None):
