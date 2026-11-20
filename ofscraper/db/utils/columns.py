@@ -1,8 +1,9 @@
-import ofscraper.db.operations_.wrapper as wrapper
-
-
 def table_columns(cur, table):
     """The names of the columns `table` has."""
+    # imported here: this module has no imports of its own, and so can be
+    # imported before anything else
+    import ofscraper.db.operations_.wrapper as wrapper
+
     return wrapper.backend_of(cur).table_columns(cur, table)
 
 

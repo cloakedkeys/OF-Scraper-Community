@@ -136,7 +136,11 @@ def test_the_engine_of_a_connection_or_cursor(tmp_path):
             assert wrapper.backend_of(cur) is wrapper.SQLITE
 
 
-def test_tables_and_columns_are_asked_of_the_engine(tmp_path):
+def test_an_object_no_engine_owns_is_taken_for_sqlites():
+    assert wrapper.backend_of(object()) is wrapper.SQLITE
+
+
+def test_sqlite_answers_for_its_tables_and_columns(tmp_path):
     with contextlib.closing(sqlite3.connect(tmp_path / "a.db")) as conn:
         conn.execute("CREATE TABLE medias (id INTEGER, model_id INTEGER)")
         with contextlib.closing(conn.cursor()) as cur:
@@ -144,6 +148,66 @@ def test_tables_and_columns_are_asked_of_the_engine(tmp_path):
             assert wrapper.SQLITE.table_exists(cur, "profiles") is False
             assert db_columns.table_columns(cur, "medias") == {"id", "model_id"}
             assert db_columns.table_columns(cur, "profiles") == set()
+
+
+def test_the_columns_of_a_table_are_asked_of_the_engine(tmp_path, monkeypatch):
+    asked = []
+
+    def table_columns(cur, table):
+        asked.append(table)
+        return {"made", "up"}
+
+    monkeypatch.setattr(wrapper.SQLITE, "table_columns", table_columns)
+
+    with contextlib.closing(sqlite3.connect(tmp_path / "a.db")) as conn:
+        with contextlib.closing(conn.cursor()) as cur:
+            assert db_columns.table_columns(cur, "medias") == {"made", "up"}
+            # and so are the helpers built on it
+            assert db_columns.creator_filter(cur, "medias", 5) == ("", [])
+    assert asked == ["medias", "medias"]
+
+
+@WRAPPERS
+def test_a_connection_that_fails_to_start_is_closed_by_the_engine(
+    tmp_path, wrap, monkeypatch
+):
+    # the wrapper never gets a connection that failed at BEGIN, so it can't
+    # close it: the engine does
+    opened = []
+    real_connect = wrapper._connect
+
+    class FailsAtBegin(sqlite3.Connection):
+        def execute(self, sql, *args):
+            if sql.startswith("BEGIN"):
+                raise ValueError("no")
+            return super().execute(sql, *args)
+
+    def connect(database_path, read_only, **kwargs):
+        conn = real_connect(database_path, read_only, factory=FailsAtBegin, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(wrapper, "_connect", connect)
+
+    with pytest.raises(ValueError):
+        call(wrap, lambda conn=None, **kwargs: None, db_path=tmp_path / "a.db")
+
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        opened[0].execute("SELECT 1")
+
+
+def test_the_column_helpers_can_be_imported_before_anything_else():
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import ofscraper.db.utils.columns"],
+        capture_output=True,
+        text=True,
+        cwd=pathlib.Path(operations.__file__).parents[2],
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_a_creator_has_a_database_once_its_file_is_there(tmp_path, monkeypatch):
