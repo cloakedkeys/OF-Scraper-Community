@@ -285,7 +285,7 @@ def _drm_run(tmp_path, monkeypatch, **kwargs):
             f.write(AUDIO + VIDEO)
         return SimpleNamespace(stderr=b"", stdout=b"")
 
-    def move(temp, path, ele):
+    def move(temp, path, ele, **kwargs):
         temp.replace(final)
         return final
 
