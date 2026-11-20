@@ -22,6 +22,7 @@ from rich.console import Console
 import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.utils.rebuild as rebuild
 import ofscraper.db.utils.columns as db_columns
+import ofscraper.utils.settings as settings
 from ofscraper.db.operations_.profile import get_single_model_via_profile
 from ofscraper.utils.context.run_async import run
 
@@ -88,6 +89,11 @@ mediaUpdateDownload = """Update 'medias'
 SET
 directory=?,filename=?,size=?,downloaded=?,hash=?,skip_permanent=?
 WHERE media_id=(?) and model_id=(?);"""
+# the same for one post's copy, with allow-dupes
+mediaUpdateDownloadPost = """Update 'medias'
+SET
+directory=?,filename=?,size=?,downloaded=?,hash=?,skip_permanent=?
+WHERE media_id=(?) and model_id=(?) and post_id=(?);"""
 
 
 mediaDupeHashesMedia = """
@@ -435,10 +441,22 @@ def get_media_post_ids(model_id=None, username=None, conn=None, **kwargs) -> lis
 
 @wrapper.operation_wrapper
 def get_media_post_ids_downloaded(
-    model_id=None, username=None, conn=None, **kwargs
+    model_id=None,
+    username=None,
+    conn=None,
+    model_only=False,
+    without_permanent_skips=False,
+    **kwargs,
 ) -> list:
+    """model_only keeps the rows of model_id; without_permanent_skips leaves
+    out the permanent skip_download_script skips (#354)."""
+    query, params = allPostIDDLCheck, []
+    if model_only:
+        query, params = query + " and model_id=(?)", [model_id]
+    if without_permanent_skips:
+        query += " and skip_permanent IS NOT 1"
     with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(allPostIDDLCheck)
+        cur.execute(query, params)
         return [(dict(row)["media_id"], dict(row)["post_id"]) for row in cur.fetchall()]
 
 
@@ -866,8 +884,13 @@ def update_media_table_download_helper(
         hashdata,
         1 if skip_permanent else None,
     ]
-    insertData.extend([media.id, model_id])
-    curr.execute(mediaUpdateDownload, insertData)
+    if settings.allow_dupes():
+        # each post's copy is downloaded on its own, so only its row changes
+        insertData.extend([media.id, model_id, media.post_id])
+        curr.execute(mediaUpdateDownloadPost, insertData)
+    else:
+        insertData.extend([media.id, model_id])
+        curr.execute(mediaUpdateDownload, insertData)
     conn.commit()
 
 

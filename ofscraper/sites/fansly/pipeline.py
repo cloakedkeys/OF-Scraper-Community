@@ -35,7 +35,6 @@ import ofscraper.sites as sites
 import ofscraper.utils.cache.cache as cache
 import ofscraper.utils.live.screens as progress_utils
 import ofscraper.utils.live.updater as progress_updater
-import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.separate as separate
 import ofscraper.utils.settings as settings
 import ofscraper.utils.system.free as free
@@ -149,8 +148,8 @@ class Selector:
     """The per-page form of ``PostCollection.get_media_to_download``.
 
     Keeps, for one creator's run, the media already chosen (one per media
-    id, or per media id and post with ``ALLOW_DUPE_MEDIA``; the first copy
-    seen wins) and the ids already downloaded, read once.
+    id, or per media id and post with allow-dupes; the first copy seen
+    wins) and the media already downloaded, read once.
     """
 
     def __init__(self, model_id, username):
@@ -158,18 +157,24 @@ class Selector:
         self.downloaded = filters.downloaded_media_ids(
             username=username, model_id=model_id
         )
+        # allow-dupes: media ids whose Purchased copies are left out
+        # (message_purchased_filter); Messages is scanned before Purchased
+        self.kept = set()
+        if settings.allow_dupes() and self.downloaded is not None:
+            self.kept = {media_id for media_id, _ in self.downloaded}
 
     def select(self, posts):
         media = [m for post in posts for m in post.prepare_media_for_download()]
         media = filters.seperate_self(media)
-        per_post = of_env.getattr("ALLOW_DUPE_MEDIA")
+        media = filters.message_purchased_filter(media, kept=self.kept)
+        self.kept.update(m.id for m in media if filters.response_area(m) == "messages")
         out = []
         for item in media:
-            key = (item.id, item.post_id) if per_post else item.id
+            key = filters.media_key(item)
             if key in self.seen:
                 continue
             self.seen.add(key)
-            if self.downloaded is not None and item.id in self.downloaded:
+            if self.downloaded is not None and key in self.downloaded:
                 continue
             out.append(item)
         if self.downloaded is not None:
@@ -292,12 +297,6 @@ PAGES = {
 # ------------------------------------------------------------------ producer
 
 
-def _media_key(item):
-    if of_env.getattr("ALLOW_DUPE_MEDIA"):
-        return (item.id, item.post_id)
-    return item.id
-
-
 def _new_rows(run, posts):
     """The media rows a page adds. The scan-first path writes one row per
     file from its whole list (``dupefiltermedia``: one copy, a viewable one
@@ -307,7 +306,7 @@ def _new_rows(run, posts):
     """
     out = []
     for item in filters.dupefiltermedia([m for p in posts for m in p.all_media]):
-        key = _media_key(item)
+        key = filters.media_key(item)
         if key in run.rows:
             continue
         if not item.canview:

@@ -46,3 +46,21 @@ download_limit_option = click.option(
     default=None,
     type=parse_size,
 )
+
+allow_dupes_option = click.option(
+    "-ad",
+    "--allow-dupes/--no-allow-dupes",
+    "--allow-dupe-downloads",
+    "allow_dupe_downloads",
+    help="Download media that is in several posts once for each post, instead of once (default: ALLOW_DUPE_MEDIA, off)",
+    default=None,
+    is_flag=True,
+)
+
+keep_message_purchased_dupes_option = click.option(
+    "--keep-message-purchased-dupes",
+    "keep_message_purchased_dupes",
+    help="With --allow-dupes: also download media that is in both Messages and Purchased from Purchased, instead of from Messages only",
+    default=False,
+    is_flag=True,
+)
