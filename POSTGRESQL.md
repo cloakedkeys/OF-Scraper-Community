@@ -27,7 +27,7 @@ Any of these works:
 
 Leave it unset, or empty, to keep using SQLite files.
 
-It is not a `config.json` setting, because it holds a password. `config.json` has a line, `advanced_options.database_url`, that only says so and points here; anything written there is ignored and replaced.
+It is not a `config.json` setting, because it holds a password. `config.json` has a line, `advanced_options.database_url`, that only says so and points here; anything written there is ignored and replaced, with a warning that says so.
 
 The password is never written to the log. If a special character in it breaks the address, percent-encode it (`@` is `%40`).
 

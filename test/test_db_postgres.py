@@ -20,6 +20,7 @@ import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.postgres as postgres
 import ofscraper.filters.media.filters as filters
 import ofscraper.utils.config.data as config_data
+import ofscraper.utils.config.file as config_file
 import ofscraper.utils.config.schema as config_schema
 import ofscraper.utils.settings as settings
 import ofscraper.main.open.run as run
@@ -143,6 +144,32 @@ def test_an_address_written_in_config_json_is_not_used_or_kept(monkeypatch, writ
     assert rebuilt["advanced_options"]["database_url"] == config_data.DATABASE_URL_NOTE
     assert "s3cr" not in str(rebuilt)
     assert postgres.enabled() is False
+
+
+@pytest.mark.parametrize(
+    "config, said",
+    [
+        ({"advanced_options": {"database_url": URL}}, True),
+        ({"database_url": URL}, True),
+        ({"config": {"advanced_options": {"database_url": URL}}}, True),
+        ({"advanced_options": {"database_url": config_data.DATABASE_URL_NOTE}}, False),
+        ({"advanced_options": {"database_url": ""}}, False),
+        ({"advanced_options": {}}, False),
+        ({"advanced_options": None}, False),
+    ],
+)
+def test_an_address_written_in_config_json_is_said_to_be_unused(
+    monkeypatch, caplog, config, said
+):
+    monkeypatch.setattr(config_file, "write_config", lambda config: None)
+
+    with caplog.at_level(logging.WARNING, logger="shared"):
+        config_file.auto_update_config(config)
+
+    assert ("advanced_options.database_url in config.json is not read" in caplog.text) is said
+    assert "OFSC_DATABASE_URL" in caplog.text or not said
+    # the address isn't repeated: it holds a password
+    assert "s3cr" not in caplog.text
 
 
 # --- what counts as already downloaded ---
