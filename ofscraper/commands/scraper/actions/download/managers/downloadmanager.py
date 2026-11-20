@@ -30,6 +30,7 @@ import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.commands.scraper.actions.utils.log as common_logs
 from ofscraper.commands.scraper.actions.utils.log import get_medialog
 import ofscraper.utils.system.free as system
+import ofscraper.utils.events as events
 from ofscraper.db.operations_.media import (
     mark_media_as_downloaded,
     unmark_permanent_skips,
@@ -425,8 +426,9 @@ class DownloadManager:
         if not system.check_free_size():
             raise Exception(of_env.getattr("SPACE_DOWNLOAD_MESSAGE"))
 
-    async def _after_download_script(self, filepath):
+    async def _after_download_script(self, filepath, ele):
         await after_download_script(filepath)
+        await events.emit("item_downloaded", ele=ele, path=filepath)
 
     def _size_written(self, ele, size):
         """The size of a file whose reply didn't say how big it was (no
