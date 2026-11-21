@@ -50,6 +50,7 @@ Run like that, it only reports: how many files, creators and rows it found for e
 - **Each file goes to its site's tables**, OnlyFans or Fansly.
 - **A creator comes from one file.** If two files hold rows for the same creator (after a rename, or a changed `metadata` setting), put them together with Merge Databases first.
 - **A creator PostgreSQL already has rows for is refused**, so a file can't be brought in twice. Creators it doesn't have yet can be brought in later.
+- **A creator's names come with the dates they were seen at**, where the file has them. A name PostgreSQL already has (the scraper has started on the creator there, and saved nothing yet) keeps the dates it has there.
 - **A value PostgreSQL's column can't hold stops the file**, and is listed with its table, row and column: an id that isn't a number, a yes/no column holding something else, a date that can't be read. Empty dates become empty. Two rows that would be the same row once a missing creator is filled in stop it too.
 - **`--skip-bad-files`** brings in the files that can be, and leaves out (and lists) the ones that can't.
 
@@ -95,6 +96,7 @@ What comes back is what the scraper reads from PostgreSQL. For files you brought
 - **Real column types.** Ids are 64-bit numbers (media, post and label ids are text: a few of them are words or hashes), yes/no columns are booleans and dates are timestamps, so other tools can query the database directly.
 - **Already-downloaded media is still judged per creator.** A run skips media the database says is downloaded. A SQLite file is one creator's, so media was never skipped because another creator had it, and it isn't with PostgreSQL either: only the creator's own rows count. (`--force-model-unique` therefore changes nothing here.)
 - **No automatic backup copies.** The scraper copies a SQLite file before it upgrades it. For PostgreSQL, back up with `pg_dump`.
+- **A new version adds its new columns when it starts.** Tables an earlier version made get the columns added since (so far `first_seen_at` and `last_seen_at` in `profiles`: when each of a creator's names was seen). The rows already there are kept as they are, with nothing in the new columns. The login has to own the tables, as it does when the scraper made them. The export only reads, so it adds nothing: columns the tables don't have yet come out empty.
 - **Your SQLite files are left alone.** They are not read, changed or deleted while PostgreSQL is on.
 
 ## What doesn't work with it yet
@@ -106,4 +108,4 @@ What comes back is what the scraper reads from PostgreSQL. For files you brought
 
 `test/test_db_postgres_live.py` runs the engine against a real server, and `test/test_postgres_import_live.py` and `test/test_postgres_export_live.py` the two commands above. They are skipped unless `OFSC_TEST_POSTGRES_URL` names a server the tests may use; each test works in schemas of its own and drops them. CI runs them against the oldest and newest supported PostgreSQL.
 
-A column added to a SQLite table also needs adding to `TABLES` in `ofscraper/db/postgres.py`, with the step that adds it to PostgreSQL databases made before. `test/test_db_postgres.py` fails until the two match.
+A column added to a SQLite table also needs adding to `TABLES` in `ofscraper/db/postgres.py`, with the step that adds it to PostgreSQL databases made before: an entry in `ADDED_COLUMNS` there. At each start `create_tables` asks which of those columns the tables have and adds the ones that are missing. `test/test_db_postgres.py` fails until the two match.

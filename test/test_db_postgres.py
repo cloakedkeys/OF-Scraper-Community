@@ -715,6 +715,133 @@ def test_a_new_postgresql_database_has_had_every_upgrade_step(tmp_path):
     assert done == set(ALL_FLAGS)
 
 
+# the upgrade steps there were when PostgreSQL could first be used: every
+# database it made has had them. A step added since belongs in
+# postgres.ADDED_COLUMNS when it adds columns, so that a database made
+# before gets them (a step of another kind needs its own way in, and its
+# name here)
+STEPS_AT_FIRST = {
+    "media_hash",
+    "media_model_id",
+    "posts_model_id",
+    "posts_pinned",
+    "products_model_id",
+    "other_model_id",
+    "stories_model_id",
+    "messages_model_id",
+    "labels_model_id",
+    "media_posted_at",
+    "media_unlocked",
+    "media_duration",
+    "posts_stream",
+    "posts_opened",
+    "posts_is_deleted",
+    "messages_is_deleted",
+    "posts_purchase_type",
+    "posts_mentions",
+    "messages_group_id",
+    "media_skip_permanent",
+    "profile_username_constraint_modified",
+    "stories_model_id_constraint_added",
+    "labels_model_id_constraint_added",
+    "posts_model_id_constraint_added",
+    "others_model_id_constraint_added",
+    "products_model_id_constraint_added",
+    "messages_model_id_constraint_added",
+    "media_post_id_constraint_added",
+    "media_bool_changes",
+    "media_size_skip_repaired",
+}
+
+
+def test_every_step_added_since_reaches_a_database_made_before():
+    added = [flag for flag, _table, _columns in postgres.ADDED_COLUMNS]
+
+    assert len(added) == len(set(added))
+    assert set(added) == set(ALL_FLAGS) - STEPS_AT_FIRST
+    assert STEPS_AT_FIRST <= set(ALL_FLAGS)
+    for _flag, table, columns in postgres.ADDED_COLUMNS:
+        for column in columns:
+            assert column in postgres.TABLE_COLUMNS[table]
+            # no default and no NOT NULL: adding it rewrites no row, and
+            # the rows already there are simply without a value
+            assert postgres.COLUMN_TYPES[table][column] in (
+                "TIMESTAMPTZ",
+                "TEXT",
+                "BIGINT",
+                "BOOLEAN",
+                "NUMERIC",
+            )
+    assert postgres.ADDED_COLUMNS == (
+        ("profiles_seen_at", "profiles", ("first_seen_at", "last_seen_at")),
+    )
+
+
+class ColumnsCursor:
+    """A cursor of a server whose tables have the columns it is told."""
+
+    def __init__(self, columns):
+        self.columns = columns
+        self.asked = []
+        self.found = []
+
+    def execute(self, query, params=None):
+        self.asked.append((" ".join(query.split()), params))
+        self.found = []
+        if "information_schema.columns" in query:
+            self.found = [(column,) for column in self.columns[params[0]]]
+        return self
+
+    def fetchall(self):
+        return self.found
+
+
+ASK_FOR_COLUMNS = (
+    "SELECT column_name FROM information_schema.columns"
+    " WHERE table_schema = current_schema() AND table_name = ?",
+    ["profiles"],
+)
+STEP_DONE = (
+    "INSERT INTO schema_flags (flag_name, flag_value) VALUES (?, '1')"
+    " ON CONFLICT (flag_name) DO NOTHING",
+    ["profiles_seen_at"],
+)
+
+
+def test_tables_made_before_get_the_columns_added_since():
+    cur = ColumnsCursor({"profiles": ["id", "user_id", "username"]})
+
+    postgres.POSTGRES._add_columns(cur)
+
+    assert cur.asked == [
+        ASK_FOR_COLUMNS,
+        ("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ", None),
+        ("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ", None),
+        STEP_DONE,
+    ]
+
+
+def test_tables_that_have_the_columns_are_only_asked():
+    # every start after the first: nothing is changed, and nothing locked
+    cur = ColumnsCursor({"profiles": postgres.TABLE_COLUMNS["profiles"]})
+
+    postgres.POSTGRES._add_columns(cur)
+
+    assert cur.asked == [ASK_FOR_COLUMNS]
+
+
+def test_a_column_that_is_missing_alone_is_added_alone():
+    cur = ColumnsCursor({"profiles": ["id", "user_id", "username", "first_seen_at"]})
+
+    postgres.POSTGRES._add_columns(cur)
+
+    assert cur.asked == [
+        ASK_FOR_COLUMNS,
+        ("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ", None),
+        STEP_DONE,
+    ]
+
+
 def test_sqlite_files_are_still_prepared_the_old_way(sqlite_file):
     assert wrapper.SQLITE.born_current is False
 

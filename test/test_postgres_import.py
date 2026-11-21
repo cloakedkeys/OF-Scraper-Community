@@ -27,7 +27,11 @@ from test.import_files import (
     file_2023,
     file_before_newest_columns,
     sql,
+    without_the_dates,
 )
+
+# a name recorded before its dates were kept (#643), or added by hand
+NO_DATES = {"first_seen_at": None, "last_seen_at": None}
 
 
 class ServerError(Exception):
@@ -230,7 +234,7 @@ def test_a_current_file_is_brought_in(tmp_path):
     assert (third["media_id"], third["post_id"]) == ("1", "20")
     assert target.rows("onlyfans", "labels")[0]["label_id"] == "900"
     assert target.rows("onlyfans", "profiles") == [
-        {"user_id": 111, "username": "a_creator"}
+        {"user_id": 111, "username": "a_creator", **NO_DATES}
     ]
     # the files weren't touched, and nothing was left beside them
     assert snapshot(folder) == before
@@ -258,7 +262,7 @@ def test_a_file_from_2023_is_brought_in(tmp_path):
     assert medias[0]["created_at"] == "2023-01-05T10:00:00+00:00"
     assert len(target.rows("onlyfans", "messages")) == 1
     assert target.rows("onlyfans", "profiles") == [
-        {"user_id": 111, "username": "a_creator"}
+        {"user_id": 111, "username": "a_creator", **NO_DATES}
     ]
     # the 2023 release had no models table: the creator is added, as a scan would
     assert target.rows("onlyfans", "models") == [{"model_id": 111}]
@@ -282,6 +286,69 @@ def test_a_file_from_before_the_newest_columns_is_brought_in(tmp_path):
     assert target.rows("onlyfans", "medias")[0]["skip_permanent"] is None
     assert target.rows("onlyfans", "posts")[0]["mentions"] is None
     assert snapshot(folder) == before
+
+
+def test_the_dates_of_a_creators_names_come_too(tmp_path):
+    folder = tmp_path / "data"
+    path = current_file(folder / "111" / "user_data.db", 111)
+    sql(
+        path,
+        "INSERT INTO profiles (user_id, username, first_seen_at, last_seen_at)"
+        " VALUES (111, ?, ?, ?)",
+        [
+            ("newer_name", "2024-03-01T09:30:00+00:00", "2024-04-01T09:30:00+00:00"),
+            # as a hand may have written them: no offset, a number of seconds
+            ("older_name", "2023-01-05 10:00:00", 1709285400),
+            ("half_dated", None, "2024-02-01T00:00:00+00:00"),
+        ],
+    )
+    target = Target()
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 0, said
+    assert target.rows("onlyfans", "profiles") == [
+        {"user_id": 111, "username": "a_creator", **NO_DATES},
+        {
+            "user_id": 111,
+            "username": "newer_name",
+            "first_seen_at": "2024-03-01T09:30:00+00:00",
+            "last_seen_at": "2024-04-01T09:30:00+00:00",
+        },
+        {
+            "user_id": 111,
+            "username": "older_name",
+            "first_seen_at": "2023-01-05T10:00:00+00:00",
+            "last_seen_at": "2024-03-01T09:30:00+00:00",
+        },
+        {
+            "user_id": 111,
+            "username": "half_dated",
+            "first_seen_at": None,
+            "last_seen_at": "2024-02-01T00:00:00+00:00",
+        },
+    ]
+
+
+def test_a_file_from_before_the_dates_comes_in_without_them(tmp_path):
+    folder = tmp_path / "data"
+    path = without_the_dates(current_file(folder / "111" / "user_data.db", 111))
+    before = snapshot(folder)
+    target = Target()
+
+    code, said = run(folder, target, apply=True)
+
+    assert code == 0, said
+    assert target.rows("onlyfans", "profiles") == [
+        {"user_id": 111, "username": "a_creator", **NO_DATES}
+    ]
+    # the file itself still has no such columns
+    assert snapshot(folder) == before
+    assert [row[1] for row in sql(path, "PRAGMA table_info(profiles)")] == [
+        "id",
+        "user_id",
+        "username",
+    ]
 
 
 def test_each_file_goes_to_its_sites_tables(tmp_path):
@@ -418,7 +485,7 @@ def test_an_empty_file_is_left_out(tmp_path):
     assert code == 0, said
     assert "1 file has nothing in it and is left out" in said
     assert target.rows("onlyfans", "profiles") == [
-        {"user_id": 111, "username": "a_creator"}
+        {"user_id": 111, "username": "a_creator", **NO_DATES}
     ]
 
 
@@ -469,6 +536,14 @@ def test_a_value_that_cant_be_stored_stops_the_import(tmp_path):
     folder, said = refused(tmp_path, spoil, "2 values can't be stored")
     assert "messages row 1, user_id: 'not-a-number' isn't a whole number" in said
     assert "posts row 2, paid: 2 is neither yes (1) nor no (0)" in said
+
+
+def test_a_names_date_that_cant_be_read_stops_the_import(tmp_path):
+    def spoil(path):
+        sql(path, "UPDATE profiles SET last_seen_at = 'some day'")
+
+    folder, said = refused(tmp_path, spoil, "1 value can't be stored")
+    assert "profiles row 1, last_seen_at: 'some day' isn't a date" in said
 
 
 def test_text_that_isnt_utf8_is_listed(tmp_path):
