@@ -564,6 +564,9 @@ class sessionManager:
                 response_class=refusing.Response,
                 connector=aiohttp.TCPConnector(
                     limit=self._connect_limit,
+                    # how long an idle connection is kept, as for the sync
+                    # client below (#627); aiohttp's own default is 15
+                    keepalive_timeout=self._keep_alive_exp,
                     ssl=ssl_context,  # Passed to TCPConnector
                     # which address a host's requests go to (Fansly, #536)
                     resolver=self._resolver,
