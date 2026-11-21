@@ -94,8 +94,14 @@ VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING;
 profileLastSeen = """
 SELECT username, last_seen_at FROM profiles WHERE user_id = ?
 """
+# Moves a name's last_seen_at forward, and never back. The last ? is the
+# date as this program read it: where that is still there it is replaced,
+# whatever its form. Where another program has written one since, only an
+# older one is replaced
 profileSeenAgain = """
-UPDATE profiles SET last_seen_at = ? WHERE user_id = ? AND username = ?
+UPDATE profiles SET last_seen_at = ?
+WHERE user_id = ? AND username = ?
+    AND (last_seen_at IS NULL OR last_seen_at < ? OR last_seen_at = ?)
 """
 
 
@@ -103,6 +109,33 @@ profileInsertTransition = """INSERT INTO profiles(
 user_id,username,first_seen_at,last_seen_at)
             VALUES (?, ?, ?, ?);
 """
+# What becomes of a name's dates when rows are brought in from elsewhere
+# (Merge Databases, postgres_import) and the name is already there: the
+# earlier first_seen_at and the later last_seen_at are kept. A date is never
+# emptied, and a row that would stay as it is isn't written. It follows an
+# INSERT INTO ... profiles (...) VALUES (...) of both dates, on either engine
+profileWiden = """
+ON CONFLICT (user_id, username) DO UPDATE SET
+    first_seen_at = CASE
+        WHEN excluded.first_seen_at < profiles.first_seen_at
+        THEN excluded.first_seen_at
+        ELSE COALESCE(profiles.first_seen_at, excluded.first_seen_at) END,
+    last_seen_at = CASE
+        WHEN excluded.last_seen_at > profiles.last_seen_at
+        THEN excluded.last_seen_at
+        ELSE COALESCE(profiles.last_seen_at, excluded.last_seen_at) END
+WHERE (excluded.first_seen_at IS NOT NULL AND (
+        profiles.first_seen_at IS NULL
+        OR excluded.first_seen_at < profiles.first_seen_at))
+    OR (excluded.last_seen_at IS NOT NULL AND (
+        profiles.last_seen_at IS NULL
+        OR excluded.last_seen_at > profiles.last_seen_at))
+"""
+profileInsertWiden = (
+    """INSERT INTO profiles (user_id, username, first_seen_at, last_seen_at)
+VALUES (?, ?, ?, ?)"""
+    + profileWiden
+)
 modelInsert = """
 INSERT INTO models (model_id) VALUES (?) ON CONFLICT DO NOTHING;
 """
@@ -231,14 +264,18 @@ def write_profile_table(model_id=None, username=None, conn=None, **kwargs) -> li
         else:
             now = _now()
             when = wrapper.date_value(conn, now.isoformat())
-            seen = {
-                row[0]: _moment(row[1])
+            saved = {
+                row[0]: row[1]
                 for row in cur.execute(profileLastSeen, [model_id]).fetchall()
             }
+            seen = {name: _moment(date) for name, date in saved.items()}
             if username not in seen:
                 cur.execute(profileInsertSeen, [model_id, username, when, when])
             elif _seen_again(seen, username, now):
-                cur.execute(profileSeenAgain, [when, model_id, username])
+                cur.execute(
+                    profileSeenAgain,
+                    [when, model_id, username, when, saved[username]],
+                )
         conn.commit()
 
 
@@ -252,8 +289,11 @@ def profiles_transition_rows(inputData) -> list:
 
 @wrapper.operation_wrapper_async
 def write_profile_table_transition(inputData, conn=None, **kwargs) -> list:
+    """Bring another database's names in. One this database hasn't got is
+    added with its dates; one it has keeps its row, and its dates are
+    widened to take the other's in (profileWiden)."""
     with contextlib.closing(conn.cursor()) as cur:
-        cur.executemany(profileInsertTransition, profiles_transition_rows(inputData))
+        cur.executemany(profileInsertWiden, profiles_transition_rows(inputData))
         conn.commit()
 
 

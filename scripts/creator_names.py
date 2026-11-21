@@ -38,12 +38,23 @@ run this script.
 --add appends a name and ignores one already recorded. --seen DATE says when the name was
 in use: 2024-03-01, or with a time, 2024-03-01T09:30:00+00:00 (without an offset the time
 is UTC). A new name gets DATE as both of its dates. For a name already recorded, the dates
-are widened to take DATE in and never narrowed. A date in the future is refused. Without
---seen the name gets no dates, and one already recorded keeps its own. --seen needs a
-database that OF-Scraper has opened since it started keeping dates.
+are widened to take DATE in and never narrowed. A date more than a day in the future is
+refused (a day is allowed, because today's date where you are can be tomorrow's in UTC).
+Without --seen the name gets no dates, and one already recorded keeps its own. --seen
+needs a database that OF-Scraper has opened since it started keeping dates, and isn't
+taken for the placeholder, which never has a date.
 
 --add refuses a name, or a date, that would change the folder name OF-Scraper uses for
 a deleted account, unless you pass --force. Close OF-Scraper before using --add.
+
+--force doesn't choose the folder name: the rule above does. For a deleted account
+OF-Scraper keeps moving the last-seen date of the name it uses, each time it works on the
+account. So a name added without a date, or with an older one, doesn't become the folder
+name, with --force or without. To make a name the folder name on purpose, give it a --seen
+later than the last-seen date of every other name (the time now will do; the CSV has the
+full dates) and pass --force. When no name of the account has a date, any --seen does
+that, and without --seen only a name that comes first in alphabetical order does. The
+placeholder can't be made the folder name while another name is recorded.
 
 OnlyFans only: Fansly databases ({model_id}/fansly/user_data.db) aren't read.
 """
@@ -127,19 +138,23 @@ def _now():
 def parse_seen(text):
     """A date given to --seen, as OF-Scraper saves one: ISO text in UTC, to the second
     (2024-03-01T09:30:00+00:00). Raises ValueError for text that isn't a date, and for a
-    date in the future."""
+    date more than a day in the future."""
     try:
         moment = datetime.datetime.fromisoformat(text.strip())
-    except ValueError:
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=datetime.timezone.utc)
+        # OverflowError: a date at the very start or end of the calendar, whose offset
+        # takes it past that in UTC
+        moment = moment.astimezone(datetime.timezone.utc).replace(microsecond=0)
+    except (ValueError, OverflowError):
         raise ValueError(
             f"--seen: {text!r} isn't a date. Write it as 2024-03-01, or with a time as "
             "2024-03-01T09:30:00+00:00."
         ) from None
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=datetime.timezone.utc)
-    moment = moment.astimezone(datetime.timezone.utc).replace(microsecond=0)
-    if moment > _now():
-        raise ValueError(f"--seen: {text!r} is in the future.")
+    # a day's grace: a date without a time is its first moment in UTC, which is still to
+    # come for someone whose own day began earlier
+    if moment > _now() + datetime.timedelta(days=1):
+        raise ValueError(f"--seen: {text!r} is more than a day in the future.")
     return moment.isoformat()
 
 
@@ -174,6 +189,11 @@ def add_name(data_dir, model_id, name, force=False, seen=None):
     if not name:
         raise ValueError("NAME can't be empty")
     when = parse_seen(seen) if seen is not None else None
+    if when and name in placeholder_names(model_id):
+        raise ValueError(
+            f"--seen: {name!r} is the placeholder OF-Scraper gives a deleted account whose "
+            "name it doesn't know, not a name the creator had. It never has a date."
+        )
     db = pathlib.Path(data_dir) / str(model_id) / "user_data.db"
     if not db.exists():
         raise FileNotFoundError(f"no OF-Scraper database for account {model_id}: {db}")
@@ -238,7 +258,8 @@ def main(argv=None):
     ap.add_argument(
         "--seen",
         metavar="DATE",
-        help="with --add, when the name was in use: 2024-03-01 or 2024-03-01T09:30:00+00:00",
+        help="with --add, when the name was in use: 2024-03-01 or 2024-03-01T09:30:00+00:00 "
+        "(UTC unless it has an offset; no more than a day ahead)",
     )
     ap.add_argument(
         "--force",

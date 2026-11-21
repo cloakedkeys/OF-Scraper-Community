@@ -351,6 +351,130 @@ def test_a_file_from_before_the_dates_comes_in_without_them(tmp_path):
     ]
 
 
+# --- a name PostgreSQL already has ---
+
+
+class SqliteCursor:
+    def __init__(self, conn, asked):
+        self.cur = conn.cursor()
+        self.asked = asked
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *error):
+        self.cur.close()
+        return False
+
+    def execute(self, query, params=()):
+        self.cur.execute(query, params)
+        return self
+
+    def executemany(self, query, rows):
+        self.asked.append(" ".join(query.split()))
+        self.cur.executemany(query, rows)
+
+    def fetchone(self):
+        return self.cur.fetchone()
+
+
+@pytest.fixture
+def names_there():
+    """The real Target, and the statements it writes a creator's names
+    with, on a database that is SQLite: it reads that statement as
+    PostgreSQL does (test_postgres_import_live has the server). Gives
+    (target, what it was asked, a function that reads the names)."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("ATTACH DATABASE ':memory:' AS onlyfans")
+        conn.execute(
+            "CREATE TABLE onlyfans.profiles (id INTEGER PRIMARY KEY,"
+            " user_id INTEGER NOT NULL, username TEXT NOT NULL,"
+            " first_seen_at TIMESTAMP, last_seen_at TIMESTAMP,"
+            " UNIQUE (user_id, username))"
+        )
+        conn.execute(
+            "CREATE TABLE onlyfans.models (id INTEGER PRIMARY KEY,"
+            " model_id INTEGER NOT NULL, UNIQUE (model_id))"
+        )
+        asked = []
+        target = importer.Target.__new__(importer.Target)
+        target.conn = SimpleNamespace(cursor=lambda: SqliteCursor(conn, asked))
+        yield (
+            target,
+            asked,
+            lambda: conn.execute("SELECT * FROM onlyfans.profiles ORDER BY id").fetchall(),
+        )
+    finally:
+        conn.close()
+
+
+NAME_COLUMNS = ["user_id", "username", "first_seen_at", "last_seen_at"]
+EARLIER, EARLY, LATE, LATER = (
+    "2024-01-01T00:00:00+00:00",
+    "2024-02-01T00:00:00+00:00",
+    "2024-06-01T00:00:00+00:00",
+    "2024-07-01T00:00:00+00:00",
+)
+
+
+@pytest.mark.parametrize(
+    "has, brought, after",
+    [
+        # the server has the name without dates: the scraper has started on
+        # the creator there, and the file knows when the name was seen
+        ((None, None), (EARLY, LATE), (EARLY, LATE)),
+        # a date is never emptied
+        ((EARLY, LATE), (None, None), (EARLY, LATE)),
+        ((EARLY, LATE), (EARLIER, None), (EARLIER, LATE)),
+        ((EARLY, LATE), (None, LATER), (EARLY, LATER)),
+        # the file's dates are older, newer, wider and narrower
+        ((EARLY, LATER), (EARLIER, LATE), (EARLIER, LATER)),
+        ((EARLIER, LATE), (EARLY, LATER), (EARLIER, LATER)),
+        ((EARLY, LATE), (EARLIER, LATER), (EARLIER, LATER)),
+        ((EARLIER, LATER), (EARLY, LATE), (EARLIER, LATER)),
+        ((EARLY, LATE), (EARLY, LATE), (EARLY, LATE)),
+        ((None, None), (None, None), (None, None)),
+    ],
+)
+def test_a_name_postgresql_already_has_gets_the_dates_of_both(
+    names_there, has, brought, after
+):
+    target, asked, names = names_there
+    assert target.write("onlyfans", "profiles", NAME_COLUMNS, [(111, "a_creator", *has)]) == 1
+
+    new = target.write(
+        "onlyfans",
+        "profiles",
+        NAME_COLUMNS,
+        [(111, "a_creator", *brought), (111, "another_name", EARLY, LATE)],
+    )
+
+    # the row it had, with its id; only the row that is new is counted
+    assert new == 1
+    assert names() == [
+        (1, 111, "a_creator", *after),
+        (2, 111, "another_name", EARLY, LATE),
+    ]
+
+
+def test_only_a_names_dates_are_ever_changed_in_a_row_that_is_there(names_there):
+    target, asked, names = names_there
+    target.write("onlyfans", "profiles", NAME_COLUMNS, [(111, "a_creator", EARLY, LATE)])
+
+    # as a file from before this version's columns would be read: no dates
+    assert target.write("onlyfans", "profiles", ["user_id", "username"], [(111, "a_creator")]) == 0
+    assert target.write("onlyfans", "models", ["model_id"], [(111,), (111,)]) == 1
+
+    assert names() == [(1, 111, "a_creator", EARLY, LATE)]
+    assert asked[1:] == [
+        "INSERT INTO onlyfans.profiles (user_id, username) VALUES (?, ?)"
+        " ON CONFLICT DO NOTHING",
+        "INSERT INTO onlyfans.models (model_id) VALUES (?) ON CONFLICT DO NOTHING",
+    ]
+    assert "ON CONFLICT (user_id, username) DO UPDATE SET" in asked[0]
+
+
 def test_each_file_goes_to_its_sites_tables(tmp_path):
     folder = tmp_path / "data"
     current_file(folder / "111" / "user_data.db", 111)

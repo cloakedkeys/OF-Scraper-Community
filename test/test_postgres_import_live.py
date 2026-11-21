@@ -235,36 +235,69 @@ def test_the_dates_of_a_creators_names_are_brought_in(tmp_path, pg):
     ]
 
 
-def test_a_name_the_server_already_has_keeps_its_dates(tmp_path, pg):
+EARLIER, EARLY, LATE, LATER = (
+    "2024-01-01T00:00:00+00:00",
+    "2024-02-01T00:00:00+00:00",
+    "2024-06-01T00:00:00+00:00",
+    "2024-07-01T00:00:00+00:00",
+)
+
+
+@pytest.mark.parametrize(
+    "has, brought, after",
+    [
+        # the server has the name without dates, and the file has them
+        ((None, None), (EARLY, LATE), (EARLY, LATE)),
+        # a date is never emptied
+        ((EARLY, LATE), (None, None), (EARLY, LATE)),
+        ((None, LATE), (EARLY, None), (EARLY, LATE)),
+        # the file's dates are older than the server's, then newer
+        ((EARLY, LATER), (EARLIER, LATE), (EARLIER, LATER)),
+        ((EARLIER, LATE), (EARLY, LATER), (EARLIER, LATER)),
+        # wider, then narrower
+        ((EARLY, LATE), (EARLIER, LATER), (EARLIER, LATER)),
+        ((EARLIER, LATER), (EARLY, LATE), (EARLIER, LATER)),
+        ((EARLY, LATE), (EARLY, LATE), (EARLY, LATE)),
+    ],
+)
+def test_a_name_the_server_already_has_gets_the_dates_of_both(
+    tmp_path, pg, has, brought, after
+):
     schema = pg["onlyfans"]
     assert run(library(tmp_path), apply=True)[0] == 0
     # the scraper has started on the creator here, and saved nothing yet
     with psycopg.connect(URL, autocommit=True) as conn:
         conn.execute(
             f"INSERT INTO {schema}.profiles"
-            " (user_id, username, first_seen_at, last_seen_at) VALUES (333, 'a_third',"
-            " '2024-06-01T00:00:00+00:00', '2024-06-02T00:00:00+00:00')"
+            " (user_id, username, first_seen_at, last_seen_at)"
+            " VALUES (333, 'a_third', %s, %s)",
+            list(has),
         )
+    its_row = f"SELECT id, user_id FROM {schema}.profiles WHERE username = 'a_third'"
+    held = server(its_row)
+    names = counts(schema)["profiles"]
     later = tmp_path / "later"
     path = current_file(later / "333" / "user_data.db", 333, name="a_third")
-    sql(
-        path,
-        "UPDATE profiles SET first_seen_at = '2024-03-01T09:30:00+00:00',"
-        " last_seen_at = '2024-04-01T09:30:00+00:00'",
-    )
+    sql(path, "UPDATE profiles SET first_seen_at = ?, last_seen_at = ?", [brought])
     sql(
         path,
         "INSERT INTO profiles (user_id, username, last_seen_at)"
-        " VALUES (333, 'another_name', '2024-01-01T00:00:00+00:00')",
+        f" VALUES (333, 'another_name', '{EARLIER}')",
     )
 
     code, said = run(later, apply=True)
 
     assert code == 0, said
     assert names_and_dates(schema)[-2:] == [
-        ("a_third", "2024-06-01T00:00:00+00:00", "2024-06-02T00:00:00+00:00"),
-        ("another_name", None, "2024-01-01T00:00:00+00:00"),
+        ("a_third", *after),
+        ("another_name", None, EARLIER),
     ]
+    # the row it had, and one row more for the name that is new
+    assert server(its_row) == held
+    assert counts(schema)["profiles"] == names + 1
+    # a date that was widened is no row added: the count is the file's
+    # posts, media and the like, as for any file
+    assert "onlyfans: 8 rows added." in said
 
 
 def test_tables_made_before_the_dates_get_the_columns_when_a_file_is_brought_in(

@@ -364,6 +364,63 @@ def test_names_without_dates_go_by_the_databases_own_order(pg):
     assert name_of_a_deleted_account() == first
 
 
+def last_seen(schema):
+    """{name: when it was last seen, in UTC}."""
+    return {
+        row[2]: row[4] and arrow.get(row[4]).to("UTC").isoformat()
+        for row in profile_rows(schema)
+    }
+
+
+def test_a_date_another_program_moved_meanwhile_is_not_moved_back(pg, monkeypatch):
+    # two programs start the same creator: each reads the name's date and
+    # then writes its own time, and nothing keeps the other out between
+    clock = Clock()
+    monkeypatch.setattr(profile, "_now", clock)
+    start()
+    clock.later(days=1)
+    decide = profile._seen_again
+    others_time = after_start(days=1, seconds=5)
+
+    def meanwhile(seen, username, now):
+        # the other program's clock is seconds ahead of this one's
+        with psycopg.connect(URL, autocommit=True) as conn:
+            conn.execute(f"UPDATE {pg}.profiles SET last_seen_at = %s", [others_time])
+        return decide(seen, username, now)
+
+    monkeypatch.setattr(profile, "_seen_again", meanwhile)
+
+    start()
+
+    assert last_seen(pg) == {NAMES[ONE]: others_time}
+
+
+def test_the_statement_that_moves_a_date_only_moves_it_forward(pg):
+    start()
+    run_sql("DELETE FROM profiles")
+    dates = {
+        "older": after_start(seconds=-1),
+        "same": after_start(),
+        "newer": after_start(seconds=1),
+        "undated": None,
+    }
+    for name, date in dates.items():
+        run_sql(
+            "INSERT INTO profiles (user_id, username, last_seen_at) VALUES (?, ?, ?)",
+            [ONE, name, date],
+        )
+
+    for name in dates:
+        run_sql(profile.profileSeenAgain, [after_start(), ONE, name, after_start(), None])
+
+    assert last_seen(pg) == {
+        "older": after_start(),
+        "same": after_start(),
+        "newer": after_start(seconds=1),
+        "undated": after_start(),
+    }
+
+
 def test_each_site_has_its_own_tables(monkeypatch):
     first, second = new_schema(), new_schema()
     monkeypatch.setenv(postgres.URL_KEY, URL)

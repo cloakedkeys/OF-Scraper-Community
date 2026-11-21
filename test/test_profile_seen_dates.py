@@ -389,6 +389,150 @@ def test_a_date_is_never_moved_back(db, clock):
     assert names(db) == [("a_name", at(), at()), ("b_name", at(days=1), at(days=1))]
 
 
+def test_no_other_program_writes_to_a_file_between_the_read_and_the_write(
+    db, clock, monkeypatch
+):
+    # a SQLite file is this program's from before the dates are read, so
+    # what it read is still there when it writes. PostgreSQL has no such
+    # lock: there the statement itself keeps a date from going back
+    # (test_db_postgres_live, and the test below)
+    start("a_name")
+    clock.later(days=1)
+    decide = profile._seen_again
+    refused = []
+
+    def meanwhile(seen, username, now):
+        with contextlib.closing(sqlite3.connect(db, timeout=0)) as other:
+            try:
+                other.execute("UPDATE profiles SET last_seen_at = ?", (at(days=2),))
+            except sqlite3.OperationalError as E:
+                refused.append(str(E))
+        return decide(seen, username, now)
+
+    monkeypatch.setattr(profile, "_seen_again", meanwhile)
+
+    start("a_name")
+
+    assert refused == ["database is locked"]
+    assert names(db) == [("a_name", at(), at(days=1))]
+
+
+def test_the_statement_that_moves_a_date_only_moves_it_forward(db):
+    # the same moment as at(hours=-1), written with another offset: as text
+    # it comes after at()
+    other_form = arrow.get(at(hours=-1)).to("+13:00").isoformat()
+    assert other_form > at()
+    record(
+        db,
+        ("older", None, at(seconds=-1)),
+        ("same", None, at()),
+        ("newer", None, at(seconds=1)),
+        ("undated", None, None),
+        ("as it was read", None, "some day"),
+        ("in another form", None, other_form),
+    )
+
+    # the last value is the date as the program read it. For the first
+    # four that is some other date: another program has written since
+    read = {"as it was read": "some day", "in another form": other_form}
+    for name, _, _ in names(db):
+        sql(
+            db,
+            profile.profileSeenAgain,
+            [(at(), CREATOR, name, at(), read.get(name, at(days=-9)))],
+        )
+
+    assert names(db) == [
+        ("older", None, at()),
+        ("same", None, at()),
+        ("newer", None, at(seconds=1)),
+        ("undated", None, at()),
+        ("as it was read", None, at()),
+        ("in another form", None, at()),
+    ]
+
+
+def test_a_date_saved_with_another_offset_is_moved_like_any_other(db, clock):
+    # written by hand: the moment the clock starts at, which as text comes
+    # after the time twelve hours on
+    by_hand = arrow.get(at()).to("+13:00").isoformat()
+    assert by_hand > at(hours=12)
+    record(db, ("a_name", None, by_hand))
+    clock.later(hours=12)
+
+    start("a_name")
+
+    assert names(db) == [("a_name", None, at(hours=12))]
+
+
+# --- the edges of when a date is moved: to the second, on purpose ---
+
+
+def test_a_name_is_dated_again_when_another_was_seen_in_the_same_second(db, clock):
+    start("name_a")
+    start("name_b")
+    # of two seen at the same second, the one recorded later
+    assert chosen() == "name_b"
+
+    clock.later(minutes=10)
+    start("name_a")
+
+    assert names(db) == [("name_a", at(), at(minutes=10)), ("name_b", at(), at())]
+    assert chosen() == "name_a"
+
+
+def test_a_name_seen_at_this_very_second_is_left_alone(db, clock):
+    start("name_a")
+    start("name_b")
+    with watching(db) as written:
+        start("name_a")
+        assert not written()
+
+    assert names(db) == [("name_a", at(), at()), ("name_b", at(), at())]
+
+
+def test_a_date_is_moved_after_twelve_hours_and_not_a_second_sooner(db, clock):
+    start("a_name")
+    with watching(db) as written:
+        clock.later(hours=12, seconds=-1)
+        start("a_name")
+        assert not written()
+        clock.later(seconds=1)
+        start("a_name")
+        assert written()
+
+    assert names(db) == [("a_name", at(), at(hours=12))]
+
+
+@pytest.mark.parametrize(
+    "last, other, now, moved",
+    [
+        # no date yet
+        (None, None, at(), True),
+        # seen at this very second, whatever another name's date
+        (at(), None, at(), False),
+        (at(), at(), at(), False),
+        # the clock is behind the date
+        (at(), at(days=1), at(seconds=-1), False),
+        # another name seen at the same second, or since
+        (at(), at(), at(seconds=1), True),
+        (at(), at(seconds=1), at(seconds=2), True),
+        # another name seen before: once in twelve hours, to the second
+        (at(), at(seconds=-1), at(hours=12, seconds=-1), False),
+        (at(), at(seconds=-1), at(hours=12), True),
+        (at(), None, at(hours=12, seconds=-1), False),
+        (at(), None, at(hours=12), True),
+    ],
+)
+def test_when_a_names_date_is_moved(last, other, now, moved):
+    seen = {
+        "a_name": last and arrow.get(last),
+        "b_name": other and arrow.get(other),
+    }
+
+    assert profile._seen_again(seen, "a_name", arrow.get(now)) is moved
+
+
 def test_a_name_recorded_before_the_dates_gets_only_when_it_was_last_seen(db, clock):
     record(db, ("old_name", None, None))
 
@@ -580,24 +724,134 @@ def test_reading_every_name_of_a_table_from_before_the_dates(db):
     assert columns(db) == ["id", "user_id", "username"]
 
 
-def test_merge_brings_a_names_dates_along(tmp_path, monkeypatch):
+# --- Merge Databases ---
+
+
+def merged(db, tmp_path, monkeypatch, brought, held):
+    """Merge a database that has the names `brought` into `db`, which has
+    the names `held`."""
     source = tmp_path / "old" / "creator" / "user_data.db"
-    target = tmp_path / "new" / "user_data.db"
     monkeypatch.setattr(merge.paths_db, "get_all_db", lambda folder: [source])
-    for made in (source, target):
-        made.parent.mkdir(parents=True)
-        call(operations.create_tables, db_path=made)
-        call(transition.modify_tables, db_path=made, new_db=True)
-    record(source, ("old_name", at(), at(days=2)), ("shared_name", at(days=3), at(days=4)))
+    source.parent.mkdir(parents=True)
+    call(operations.create_tables, db_path=source)
+    call(transition.modify_tables, db_path=source, new_db=True)
+    record(source, *brought)
     # a database with nothing saved in it is passed over
     call(write_media_table_transition, [media_row(1, CREATOR)], db_path=source)
-    record(target, ("shared_name", at(days=5), at(days=6)))
+    record(db, *held)
 
-    failures, merged, _ = call(merge.MergeDatabase(), tmp_path / "old", target)
+    failures, done, _ = call(merge.MergeDatabase(), tmp_path / "old", db)
 
-    assert failures == [] and len(merged) == 1
-    # a name the merged database has keeps its own dates
-    assert names(target) == [
-        ("shared_name", at(days=5), at(days=6)),
-        ("old_name", at(), at(days=2)),
+    assert failures == [] and len(done) == 1
+    return db
+
+
+def test_merge_brings_a_names_dates_along(db, tmp_path, monkeypatch):
+    merged(
+        db,
+        tmp_path,
+        monkeypatch,
+        brought=[("old_name", at(), at(days=2)), ("shared_name", at(days=3), at(days=4))],
+        held=[("shared_name", at(days=5), at(days=6))],
+    )
+
+    # a name both have keeps its row, with the earlier first date and the
+    # later last one
+    assert sql(db, "SELECT * FROM profiles ORDER BY id") == [
+        (1, CREATOR, "shared_name", at(days=3), at(days=6)),
+        (2, CREATOR, "old_name", at(), at(days=2)),
     ]
+
+
+def test_a_merge_does_not_hand_a_deleted_account_an_older_name(db, tmp_path, monkeypatch):
+    # the merged database knows the name in use, without dates; the other
+    # knows when it was seen, and an older name besides
+    merged(
+        db,
+        tmp_path,
+        monkeypatch,
+        brought=[
+            ("old_name", at(days=1), at(days=30)),
+            ("current_name", at(days=31), at(days=300)),
+        ],
+        held=[("current_name", None, None)],
+    )
+
+    assert names(db) == [
+        ("current_name", at(days=31), at(days=300)),
+        ("old_name", at(days=1), at(days=30)),
+    ]
+    assert chosen() == "current_name"
+
+
+EARLY, EARLIER, LATE, LATER = at(days=2), at(days=1), at(days=8), at(days=9)
+# (the dates a name has, the dates brought in for it, the dates it has after)
+WIDENED = [
+    ((None, None), (EARLY, LATE), (EARLY, LATE)),
+    # a date is never emptied
+    ((EARLY, LATE), (None, None), (EARLY, LATE)),
+    ((EARLY, LATE), (EARLIER, None), (EARLIER, LATE)),
+    ((EARLY, LATE), (None, LATER), (EARLY, LATER)),
+    # the earlier first date and the later last one, from either side
+    ((EARLY, LATE), (EARLIER, LATER), (EARLIER, LATER)),
+    ((EARLIER, LATER), (EARLY, LATE), (EARLIER, LATER)),
+    ((EARLY, LATER), (EARLIER, LATE), (EARLIER, LATER)),
+    ((EARLY, LATE), (EARLY, LATE), (EARLY, LATE)),
+    ((None, LATE), (EARLY, None), (EARLY, LATE)),
+    ((EARLY, None), (None, LATE), (EARLY, LATE)),
+    ((None, None), (None, None), (None, None)),
+]
+
+
+@pytest.mark.parametrize("has, brought, after", WIDENED)
+def test_a_merge_widens_the_dates_of_a_name_both_have(
+    db, tmp_path, monkeypatch, has, brought, after
+):
+    merged(
+        db,
+        tmp_path,
+        monkeypatch,
+        brought=[("a_name", *brought)],
+        held=[("b_name", EARLY, EARLY), ("a_name", *has)],
+    )
+
+    # the same rows, each with its id: only the dates have changed
+    assert sql(db, "SELECT * FROM profiles ORDER BY id") == [
+        (1, CREATOR, "b_name", EARLY, EARLY),
+        (2, CREATOR, "a_name", *after),
+    ]
+
+
+@pytest.mark.parametrize(
+    "brought",
+    [(None, None), (EARLY, LATE), (LATE, EARLY), (None, EARLY), (LATE, None)],
+)
+def test_a_name_whose_dates_would_stay_as_they_are_is_not_written(db, brought):
+    record(db, ("a_name", EARLY, LATE))
+    row = dict(user_id=CREATOR, username="a_name")
+    row.update(zip(profile.SEEN_COLUMNS, brought))
+
+    with watching(db) as written:
+        call(profile.write_profile_table_transition, [row], db_path=db)
+        assert not written()
+
+    assert names(db) == [("a_name", EARLY, LATE)]
+
+
+def test_a_dated_name_a_merge_brings_is_the_one_a_deleted_account_goes_by(
+    db, tmp_path, monkeypatch
+):
+    # none of the names here has a date, so the first by name is used. The
+    # other database saw another name: it is the only one known to be seen
+    record(db, ("alpha_name", None, None))
+    assert chosen() == "alpha_name"
+
+    merged(
+        db,
+        tmp_path,
+        monkeypatch,
+        brought=[("zeta_name", at(), at(days=2))],
+        held=[],
+    )
+
+    assert chosen() == "zeta_name"

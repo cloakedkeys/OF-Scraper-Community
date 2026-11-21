@@ -3,8 +3,10 @@ import contextlib
 import csv
 import datetime
 import importlib.util
+import os
 import pathlib
 import sqlite3
+import time
 from unittest import mock
 
 import arrow
@@ -86,6 +88,16 @@ def _app_folder_name(db, model_id):
         lambda self, model_id, model_username: db,
     ):
         return asyncio.run(profile.get_profile_info(model_id=model_id, username="x"))
+
+
+def _app_works_on(db, model_id, name):
+    """OF-Scraper starts work on the account under a name, by its own code."""
+    with mock.patch.object(
+        placeholder.databasePlaceholder,
+        "databasePathHelper",
+        lambda self, model_id, model_username: db,
+    ):
+        asyncio.run(profile.write_profile_table(model_id=model_id, username=name))
 
 
 def _folder_name(db, model_id):
@@ -220,6 +232,43 @@ def test_a_date_for_a_name_already_recorded_is_refused_when_the_folder_would_cha
     assert _folder_name(db, 7) == "alpha_name" == _app_folder_name(db, 7)
 
 
+def test_force_alone_does_not_choose_the_folder_name(tmp_path):
+    # the folder name is a name with a date: a name without one, or with an older one,
+    # doesn't take over, forced or not
+    db = _account(tmp_path, 7, [("zeta_name", MARCH, APRIL)])
+    creator_names.add_name(tmp_path, 7, "alpha_name", force=True)
+    creator_names.add_name(tmp_path, 7, "beta_name", seen="2024-03-15", force=True)
+    assert _folder_name(db, 7) == "zeta_name" == _app_folder_name(db, 7)
+
+    # a date later than every other name's does, with --force
+    with pytest.raises(creator_names.FolderNameWouldChange):
+        creator_names.add_name(tmp_path, 7, "beta_name", seen=MAY)
+    creator_names.add_name(tmp_path, 7, "beta_name", seen=MAY, force=True)
+    assert _folder_name(db, 7) == "beta_name" == _app_folder_name(db, 7)
+
+    # and the name stays: OF-Scraper dates the name it uses for a deleted account, so
+    # no older date takes over afterwards
+    _app_works_on(db, 7, "beta_name")
+    assert _dates(db)["beta_name"][1] > MAY
+    creator_names.add_name(tmp_path, 7, "alpha_name", seen=MAY, force=True)
+    assert _folder_name(db, 7) == "beta_name" == _app_folder_name(db, 7)
+
+
+def test_when_no_name_has_a_date_any_date_makes_a_name_the_folder_name(tmp_path):
+    db = _account(tmp_path, 7, ["alpha_name", "zeta_name"])
+    with pytest.raises(creator_names.FolderNameWouldChange):
+        creator_names.add_name(tmp_path, 7, "zeta_name", seen="2020-01-01")
+    creator_names.add_name(tmp_path, 7, "zeta_name", seen="2020-01-01", force=True)
+    assert _folder_name(db, 7) == "zeta_name" == _app_folder_name(db, 7)
+
+
+def test_the_placeholder_is_never_the_folder_name_beside_a_name(tmp_path):
+    db = _account(tmp_path, 7, ["zeta_name"])
+    for stand_in in creator_names.placeholder_names(7):
+        assert creator_names.add_name(tmp_path, 7, stand_in, force=True) is True
+    assert _folder_name(db, 7) == "zeta_name" == _app_folder_name(db, 7)
+
+
 def test_a_date_widens_the_dates_a_name_has_and_never_narrows_them(tmp_path):
     db = _account(tmp_path, 7, [("a_name", MARCH, APRIL), ("old_name", None, "2023-01-05T10:00:00+00:00")])
     # between the two: nothing to change
@@ -251,11 +300,56 @@ def test_a_date_is_saved_the_way_the_scraper_saves_one(given, saved):
     assert saved == arrow.get(saved).floor("second").isoformat()
 
 
-@pytest.mark.parametrize("given", ["01/03/2024", "yesterday", "2024-13-01", "", "2024-03"])
-def test_text_that_is_not_a_date_is_refused(tmp_path, given):
+@pytest.fixture
+def hours_from_utc():
+    """The computer's own time zone is hours from UTC, so that a time read as local time
+    would come out wrong. Set where it can be (not on Windows); elsewhere the test goes on
+    only if the zone is already away from UTC."""
+    if not hasattr(time, "tzset"):
+        if not datetime.datetime.now().astimezone().utcoffset():
+            pytest.skip("the time zone is UTC and can't be set here")
+        yield
+        return
+    before = os.environ.get("TZ")
+    os.environ["TZ"] = "Etc/GMT-5"
+    time.tzset()
+    try:
+        yield
+    finally:
+        if before is None:
+            del os.environ["TZ"]
+        else:
+            os.environ["TZ"] = before
+        time.tzset()
+
+
+def test_a_time_without_an_offset_is_utc_wherever_the_script_runs(hours_from_utc):
+    assert datetime.datetime.now().astimezone().utcoffset()
+    assert creator_names.parse_seen("2024-03-01T09:30:00") == MARCH
+    assert creator_names.parse_seen("2024-03-01") == "2024-03-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "given",
+    [
+        "01/03/2024",
+        "yesterday",
+        "2024-13-01",
+        "",
+        "2024-03",
+        # dates the calendar has, which their offset takes out of it in UTC
+        "0001-01-01T00:00:00+05:00",
+        "9999-12-31T23:59:59-05:00",
+    ],
+)
+def test_text_that_is_not_a_date_is_refused(tmp_path, capsys, given):
     db = _account(tmp_path, 7, ["zeta_name"])
     with pytest.raises(ValueError, match="isn't a date"):
         creator_names.add_name(tmp_path, 7, "another_name", seen=given)
+    # said in one line, and nothing is changed
+    args = ["--data-dir", str(tmp_path), "--add", "7", "another_name", "--seen", given]
+    assert creator_names.main(args) == 1
+    assert capsys.readouterr().err.startswith(f"--seen: {given!r} isn't a date.")
     assert _names(db) == ["zeta_name"]
 
 
@@ -263,12 +357,53 @@ def test_a_date_in_the_future_is_refused(tmp_path, monkeypatch):
     db = _account(tmp_path, 7, ["zeta_name"])
     now = datetime.datetime(2024, 5, 1, 12, tzinfo=datetime.timezone.utc)
     monkeypatch.setattr(creator_names, "_now", lambda: now)
-    with pytest.raises(ValueError, match="is in the future"):
-        creator_names.add_name(tmp_path, 7, "zeta_name", seen="2024-05-03")
+    for given in ("2024-05-03", "2024-05-02T12:00:01", "9999-12-31T23:59:59"):
+        with pytest.raises(ValueError, match="is more than a day in the future"):
+            creator_names.add_name(tmp_path, 7, "zeta_name", seen=given)
     assert _dates(db) == {"zeta_name": NO_DATES}
     # two days before is fine
     creator_names.add_name(tmp_path, 7, "zeta_name", seen="2024-04-29")
     assert _dates(db) == {"zeta_name": ("2024-04-29T00:00:00+00:00",) * 2}
+
+
+def test_a_date_up_to_a_day_ahead_is_taken(tmp_path, monkeypatch):
+    # late in the evening in UTC: for someone ten hours ahead it is already the 2nd, and
+    # the date they give is still to come in UTC
+    db = _account(tmp_path, 7, ["zeta_name"])
+    now = datetime.datetime(2024, 5, 1, 22, tzinfo=datetime.timezone.utc)
+    monkeypatch.setattr(creator_names, "_now", lambda: now)
+
+    creator_names.add_name(tmp_path, 7, "zeta_name", seen="2024-05-02")
+    assert _dates(db) == {"zeta_name": ("2024-05-02T00:00:00+00:00",) * 2}
+
+    # a day ahead to the second, and no further
+    creator_names.add_name(tmp_path, 7, "zeta_name", seen="2024-05-02T22:00:00")
+    assert _dates(db)["zeta_name"][1] == "2024-05-02T22:00:00+00:00"
+    with pytest.raises(ValueError, match="more than a day in the future"):
+        creator_names.add_name(tmp_path, 7, "zeta_name", seen="2024-05-02T22:00:01")
+
+
+@pytest.mark.parametrize("form", [0, 1], ids=["the placeholder", "with the id"])
+def test_the_placeholder_is_not_given_a_date(tmp_path, capsys, form):
+    stand_in = creator_names.placeholder_names(7)[form]
+    db = _account(tmp_path, 7, [("zeta_name", MARCH, APRIL), stand_in])
+    args = ["--data-dir", str(tmp_path), "--add", "7", stand_in]
+
+    # one that is recorded, and one that would be new
+    for account in (7, 8):
+        if account == 8:
+            _account(tmp_path, 8, ["a_name"])
+            args[3], args[4] = "8", creator_names.placeholder_names(8)[form]
+        assert creator_names.main(args + ["--seen", "2024-03-01", "--force"]) == 1
+        said = capsys.readouterr().err
+        assert said.startswith(f"--seen: {args[4]!r} is the placeholder")
+        assert "never has a date" in said
+
+    assert _dates(db) == {"zeta_name": (MARCH, APRIL), stand_in: NO_DATES}
+    assert _names(tmp_path / "8" / "user_data.db") == ["a_name"]
+    # another account's placeholder with the id is a name like any other here
+    if form == 1:
+        assert creator_names.add_name(tmp_path, 8, stand_in, seen=MARCH, force=True) is True
 
 
 def test_a_database_from_before_the_dates_takes_a_name_but_no_date(tmp_path):

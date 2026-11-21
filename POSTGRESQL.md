@@ -50,7 +50,7 @@ Run like that, it only reports: how many files, creators and rows it found for e
 - **Each file goes to its site's tables**, OnlyFans or Fansly.
 - **A creator comes from one file.** If two files hold rows for the same creator (after a rename, or a changed `metadata` setting), put them together with Merge Databases first.
 - **A creator PostgreSQL already has rows for is refused**, so a file can't be brought in twice. Creators it doesn't have yet can be brought in later.
-- **A creator's names come with the dates they were seen at**, where the file has them. A name PostgreSQL already has (the scraper has started on the creator there, and saved nothing yet) keeps the dates it has there.
+- **A creator's names come with the dates they were seen at**, where the file has them. A name PostgreSQL already has (the scraper has started on the creator there, and saved nothing yet) keeps its row, and its dates are widened to take the file's in: the earlier first-seen date and the later last-seen date are kept, and a date is never emptied. That adds no row, so it isn't in the count of rows added. A deleted account goes by the name seen last, so a name the file brings with a newer date than any PostgreSQL has becomes that name.
 - **A value PostgreSQL's column can't hold stops the file**, and is listed with its table, row and column: an id that isn't a number, a yes/no column holding something else, a date that can't be read. Empty dates become empty. Two rows that would be the same row once a missing creator is filled in stop it too.
 - **`--skip-bad-files`** brings in the files that can be, and leaves out (and lists) the ones that can't.
 
@@ -80,6 +80,7 @@ Run like that, it only reports: how many creators and rows it found, and which c
 What comes back is what the scraper reads from PostgreSQL. For files you brought in, those are the same rows, with these differences:
 
 - **A date** is the same moment, written in UTC (`2024-03-01T09:30:00+00:00`), whatever form the old file had: another offset, none, or a number of seconds. Anything finer than a millionth of a second is rounded.
+- **The dates of a name PostgreSQL already had** when the file was brought in are the dates of both: the earlier first-seen date and the later last-seen date, whichever side each came from. Dates the scraper has written since are in the file too.
 - **Empty text is empty (NULL)** in every column that holds a number, a yes or no or a date: a post's price, a media's size, a message's `user_id`, a label's `post_id`. Columns that hold text keep it.
 - **A yes or no** is 1 or 0, however the old file wrote it (`true`, `FALSE`).
 - **A whole-number price above 2^53** (9,007,199,254,740,992) comes back rounded: the scraper reads a price from PostgreSQL as a number with a fraction, which has no room for more.
