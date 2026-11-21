@@ -16,7 +16,16 @@ per creator, FileRows or PostgresRows, and asks both the same things:
 `columns` and `where` are SQL that both engines take. Values come out as
 SQLite gives them: a yes/no as 1 or 0, a date as ISO text (see postgres.py).
 
-Nothing here writes, and nothing here reads the scraper's settings.
+A file is only read. PostgreSQL is only read too, unless it is opened for
+changes (in_postgres with write=True, for recover_collisions). Its rows then
+also take:
+
+    change(table, row_id, was, to)
+                          change one of the creator's rows, if it still
+                          holds what was read from it
+    commit()              keep the changes; without it none is kept
+
+Nothing here reads the scraper's settings.
 """
 
 import contextlib
@@ -113,12 +122,38 @@ class PostgresRows:
             query += f" AND ({where})"
         return self._reader.rows(f"{query} ORDER BY id", [self.model_id])
 
+    def change(self, table, row_id, was, to):
+        """Change the creator's row with this id, if it still holds what was
+        read from it. `was` and `to` are {column: value}: the row is given
+        `to` only while it holds `was`. Returns whether it was changed. A
+        row that holds something else by now, is gone, or is another
+        creator's is left as it is.
+
+        Only for rows opened for changes (in_postgres with write=True), and
+        kept only by commit()."""
+        creator = "user_id" if table == "profiles" else "model_id"
+        unknown = (set(was) | set(to)) - self.columns(table)
+        if unknown:
+            raise ValueError(f"{table} has no column {sorted(unknown)[0]}")
+        if not to or {"id", creator} & set(to):
+            raise ValueError("a row's id and its creator can't be changed")
+        query = (
+            f"UPDATE {self._schema}.{table} SET {', '.join(f'{column} = ?' for column in to)}"
+            f" WHERE {creator} = ? AND id = ?"
+            + "".join(f" AND {column} IS NOT DISTINCT FROM ?" for column in was)
+        )
+        return self._reader.change(query, [*to.values(), self.model_id, row_id, *was.values()]) == 1
+
+    def commit(self):
+        """Keep every change made through this connection."""
+        self._reader.commit()
+
     def close(self):
         """Nothing to close: the connection is the whole run's (in_postgres)."""
 
 
 @contextlib.contextmanager
-def in_postgres(database_url, wanted_sites, wanted=()):
+def in_postgres(database_url, wanted_sites, wanted=(), write=False):
     """A PostgresRows for each creator the database holds rows for: a site at
     a time, in the order given, and by the id's text within a site. `wanted`
     keeps only the creators with one of these usernames (any case) or ids,
@@ -127,9 +162,13 @@ def in_postgres(database_url, wanted_sites, wanted=()):
     One read-only connection serves them all, and every read sees the
     database as it was at the first. It is closed when the block ends, so
     read inside the block. A server that can't be used, or a read that
-    fails, is a postgres.PostgresUnavailable."""
+    fails, is a postgres.PostgresUnavailable.
+
+    With `write`, the connection can also change rows (PostgresRows.change),
+    all in one transaction with the reads. The changes are kept only by
+    commit(): leaving the block without it leaves the database as it was."""
     wanted = {str(name).lower() for name in wanted}
-    reader = postgres.Reader(database_url)
+    reader = (postgres.Writer if write else postgres.Reader)(database_url)
     try:
         found = []
         seen = set()
