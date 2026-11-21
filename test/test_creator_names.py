@@ -305,26 +305,26 @@ def hours_from_utc():
     """The computer's own time zone is hours from UTC, so that a time read as local time
     would come out wrong. Set where it can be (not on Windows); elsewhere the test goes on
     only if the zone is already away from UTC."""
-    if not hasattr(time, "tzset"):
+    can_set = hasattr(time, "tzset")
+    before = os.environ.get("TZ")
+    if can_set:
+        # five hours ahead, given as an offset: that needs no zone files
+        os.environ["TZ"] = "AHEAD-5"
+        time.tzset()
+    try:
         if not datetime.datetime.now().astimezone().utcoffset():
             pytest.skip("the time zone is UTC and can't be set here")
         yield
-        return
-    before = os.environ.get("TZ")
-    os.environ["TZ"] = "Etc/GMT-5"
-    time.tzset()
-    try:
-        yield
     finally:
-        if before is None:
-            del os.environ["TZ"]
-        else:
-            os.environ["TZ"] = before
-        time.tzset()
+        if can_set:
+            if before is None:
+                del os.environ["TZ"]
+            else:
+                os.environ["TZ"] = before
+            time.tzset()
 
 
 def test_a_time_without_an_offset_is_utc_wherever_the_script_runs(hours_from_utc):
-    assert datetime.datetime.now().astimezone().utcoffset()
     assert creator_names.parse_seen("2024-03-01T09:30:00") == MARCH
     assert creator_names.parse_seen("2024-03-01") == "2024-03-01T00:00:00+00:00"
 

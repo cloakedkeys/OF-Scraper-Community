@@ -274,7 +274,9 @@ def test_a_name_the_server_already_has_gets_the_dates_of_both(
             list(has),
         )
     its_row = f"SELECT id, user_id FROM {schema}.profiles WHERE username = 'a_third'"
-    held = server(its_row)
+    # where the server keeps the row: it moves when the row is written again
+    its_place = f"SELECT ctid::text FROM {schema}.profiles WHERE username = 'a_third'"
+    held, place = server(its_row), server(its_place)
     names = counts(schema)["profiles"]
     later = tmp_path / "later"
     path = current_file(later / "333" / "user_data.db", 333, name="a_third")
@@ -295,6 +297,8 @@ def test_a_name_the_server_already_has_gets_the_dates_of_both(
     # the row it had, and one row more for the name that is new
     assert server(its_row) == held
     assert counts(schema)["profiles"] == names + 1
+    # and a row whose dates stay as they are isn't written at all
+    assert (server(its_place) == place) is (after == has)
     # a date that was widened is no row added: the count is the file's
     # posts, media and the like, as for any file
     assert "onlyfans: 8 rows added." in said

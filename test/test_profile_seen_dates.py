@@ -828,14 +828,16 @@ def test_a_merge_widens_the_dates_of_a_name_both_have(
 )
 def test_a_name_whose_dates_would_stay_as_they_are_is_not_written(db, brought):
     record(db, ("a_name", EARLY, LATE))
-    row = dict(user_id=CREATOR, username="a_name")
-    row.update(zip(profile.SEEN_COLUMNS, brought))
 
-    with watching(db) as written:
-        call(profile.write_profile_table_transition, [row], db_path=db)
-        assert not written()
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(profile.profileInsertWiden, (CREATOR, "a_name", *brought))
+        # no row was written, not even with the values it had
+        assert conn.total_changes == 0
+        conn.execute(profile.profileInsertWiden, (CREATOR, "a_name", EARLIER, None))
+        assert conn.total_changes == 1
+        conn.commit()
 
-    assert names(db) == [("a_name", EARLY, LATE)]
+    assert names(db) == [("a_name", EARLIER, LATE)]
 
 
 def test_a_dated_name_a_merge_brings_is_the_one_a_deleted_account_goes_by(
