@@ -276,53 +276,128 @@ def masked(text, database_url=None):
     hidden."""
     text = str(text)
     for secret in _secrets(database_url if database_url is not None else url()):
-        text = text.replace(secret, "{hidden}")
+        text = re.sub(_hiding(secret), "{hidden}", text)
     return text
+
+
+def _hiding(secret):
+    """The pattern that hides `secret`. Letters and digits alone (a short
+    password, a piece of one) are hidden only where they stand on their own:
+    "word" is hidden, "password" stays. A %-escape before them counts as a
+    gap: "%2Fword"."""
+    if secret.isascii() and secret.isalnum():
+        return rf"(?:(?<![A-Za-z0-9])|(?<=%[0-9A-Fa-f]{{2}})){re.escape(secret)}(?![A-Za-z0-9])"
+    return re.escape(secret)
+
+
+def _reading(database_url):
+    """The address as PostgreSQL reads it (user, password, host, port,
+    dbname...), or None when that can't be known for certain. The driver's
+    own reading is used when it is installed; without it, a URL is split as
+    PostgreSQL splits one: the login ends at the first @ before any /.
+
+    An @ anywhere but in the password means the address wasn't read as it
+    was meant (an @ in the password that isn't written as %40), so that
+    reading isn't trusted either."""
+    try:
+        from psycopg import Error
+        from psycopg.conninfo import conninfo_to_dict
+    except ImportError:
+        conninfo_to_dict = None
+    if conninfo_to_dict is not None:
+        try:
+            parts = conninfo_to_dict(database_url)
+        except Error:
+            return None
+    else:
+        scheme, sep, rest = database_url.partition("://")
+        if not sep or scheme not in ("postgresql", "postgres") or re.search(r"\s", rest):
+            return None
+        login, at, after = rest.partition("@")
+        if not at or "/" in login:
+            login, after = "", rest
+        user, _, password = login.partition(":")
+        try:
+            where = urllib.parse.urlsplit(f"//{after}")
+            port = where.port
+        except ValueError:
+            return None
+        parts = {
+            "user": urllib.parse.unquote(user),
+            "password": urllib.parse.unquote(password) if ":" in login else None,
+            "host": where.hostname,
+            "port": port,
+            "dbname": urllib.parse.unquote(where.path.lstrip("/")),
+        }
+        if "@" in after:
+            return None
+    if any("@" in str(value) for key, value in parts.items() if key != "password" and value):
+        return None
+    return parts
 
 
 def _secrets(database_url):
     """What to keep out of messages and logs, longest first: the URL itself
-    and every reading of its password. The server's driver and Python don't
-    read a URL alike (a mistyped scheme, an @ inside the password), and the
-    driver's errors quote what it read, so each reading is hidden."""
+    and its password, as PostgreSQL reads it. When that reading isn't certain
+    (see _reading), every piece of the address is hidden instead, and every
+    other way of reading its password: the driver's errors quote what it
+    read."""
     database_url = str(database_url or "")
+    if not database_url:
+        return []
+    parts = _reading(database_url)
     found = set()
-    try:
-        found.add(urllib.parse.urlsplit(database_url).password)
-    except ValueError:
-        pass
-    # the other spelling: host=... password=...
-    keyword = re.search(r"\bpassword\s*=\s*('(?:[^'\\]|\\.)*'|\S+)", database_url)
-    if keyword:
-        found.add(keyword.group(1).strip("'"))
-    # whatever sits between the user name's colon and the last @, however
-    # the rest is spelled, and its pieces if it has an @ of its own
-    loose = re.search(r"(?:^|/)[^/:@\s]*:([^/\s]+)@", database_url)
-    if loose:
-        found.add(loose.group(1))
-        found.update(loose.group(1).split("@"))
+    if parts is not None:
+        found.add(parts.get("password"))
+    else:
+        try:
+            found.add(urllib.parse.urlsplit(database_url).password)
+        except ValueError:
+            pass
+        # the other spelling: host=... password=...
+        keyword = re.search(r"\bpassword\s*=\s*('(?:[^'\\]|\\.)*'|\S+)", database_url)
+        if keyword:
+            found.add(keyword.group(1).strip("'"))
+        # whatever sits between the user name's colon and the last @
+        loose = re.search(r"(?:^|/)[^/:@\s]*:([^/\s]+)@", database_url)
+        if loose:
+            found.add(loose.group(1))
+        # and every piece of the address but the scheme and the keywords
+        keys = set(re.findall(r"(\w+)\s*=", database_url)) if "://" not in database_url else set()
+        found.update(
+            piece
+            for piece in re.split(r"[\s@:/?#&=,'\"]+", database_url)
+            if len(piece) >= 2 and piece not in keys | {"postgresql", "postgres"}
+        )
+    # and the password's own pieces, for a reading that splits it elsewhere
+    found.update(
+        piece
+        for secret in list(found)
+        for piece in re.split(r"[^A-Za-z0-9]+", secret or "")
+        if len(piece) >= 2
+    )
     secrets = set()
     for secret in found:
-        # too short to tell from ordinary text
-        if secret and len(secret) >= 3:
+        if secret:
             secrets.update(
                 {secret, urllib.parse.unquote(secret), urllib.parse.quote(secret, safe="")}
             )
     if secrets:
         secrets.add(database_url)
+    secrets.discard("")
     return sorted(secrets, key=len, reverse=True)
 
 
 def describe(database_url=None):
-    """The server and database a URL names, without the login: for messages."""
+    """The server and database a URL names, without the login: for messages.
+    Nothing of the address when PostgreSQL's reading of it isn't certain."""
     database_url = database_url if database_url is not None else url()
-    try:
-        parts = urllib.parse.urlsplit(database_url)
-        if parts.scheme and parts.hostname:
-            port = f":{parts.port}" if parts.port else ""
-            return f"{parts.hostname}{port}{parts.path}"
-    except ValueError:
-        pass
+    database_url = str(database_url or "")
+    parts = _reading(database_url) if "://" in database_url else None
+    if parts and parts.get("host"):
+        port = f":{parts['port']}" if parts.get("port") else ""
+        dbname = f"/{parts['dbname']}" if parts.get("dbname") else ""
+        return f"{parts['host']}{port}{dbname}"
     return "the configured database"
 
 
@@ -624,7 +699,7 @@ class PostgresBackend:
         import ofscraper.utils.logs.utils.sensitive as sensitive
 
         for text in _secrets(database_url):
-            sensitive.add_sensitive_pattern(re.escape(text))
+            sensitive.add_sensitive_pattern(_hiding(text))
 
     def _unavailable(self, error, database_url):
         """A connection that can't be made, as one sentence for the user.
