@@ -252,6 +252,7 @@ def _add(execute, folder, dated, model_id, name, when, force):
 
 
 def _in_schema(rows, query):
+    # the queries rewritten here name "profiles" only as the table
     return query.replace("profiles", f"{rows.schema}.profiles")
 
 
