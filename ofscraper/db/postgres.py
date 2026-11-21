@@ -16,7 +16,6 @@ URL is set.
 
 import atexit
 import functools
-import itertools
 import logging
 import os
 import re
@@ -237,6 +236,18 @@ class PostgresUnavailable(RuntimeError):
     the user. Not retried."""
 
 
+class Unreadable(PostgresUnavailable):
+    """The address can't be read as PostgreSQL reads it (see _reading). The
+    sentence names nothing of it, and it is raised without the driver's
+    error, which quotes the address."""
+
+    def __init__(self):
+        super().__init__(
+            f"{URL_KEY} isn't an address PostgreSQL can read. It should "
+            "look like postgresql://user:password@host:5432/database."
+        )
+
+
 def url():
     """The configured connection URL, or "" for SQLite."""
     return str(of_env.getattr(URL_KEY) or "").strip()
@@ -273,231 +284,71 @@ def warn_sqlite_files(tool):
 
 
 def masked(text, database_url=None):
-    """`text` with the URL, and anything in it that may be its password,
-    hidden."""
+    """`text` with the address and its password hidden. The password is
+    hidden as a whole, wherever it isn't part of a longer word."""
     text = str(text)
-    database_url = str((database_url if database_url is not None else url()) or "")
-    if database_url and _reading(database_url) is None:
-        # what the driver quotes of an address it read another way: any
-        # quoted part of the address, whatever it is cut from
-        text = re.sub(
-            r"\"([^\"]+)\"|'([^']+)'",
-            lambda quoted: "{hidden}" if (quoted[1] or quoted[2]) in database_url else quoted[0],
-            text,
-        )
-    for _, pattern in _patterns(database_url):
-        text = pattern.sub("{hidden}", text)
+    for secret in _secrets(database_url if database_url is not None else url()):
+        text = re.sub(_hiding(secret), "{hidden}", text)
     return text
 
 
-def _patterns(database_url):
-    """Each of _secrets(database_url), longest first, with the pattern that
-    hides it. Worked out once for each address."""
-    return _patterns_for(str(database_url or ""), _parser())
-
-
-@functools.lru_cache(maxsize=32)
-def _patterns_for(database_url, parser):
-    whole, pieces, certain = _found(database_url)
-    address = {database_url, urllib.parse.quote(database_url, safe="")}
-    patterns = []
-    for secret in sorted(whole | pieces, key=len, reverse=True):
-        if secret in pieces:
-            pattern = _hiding(secret)
-        elif certain and secret not in address:
-            pattern = _bounded(secret)
-        else:
-            pattern = re.escape(secret)
-        patterns.append((secret, re.compile(pattern)))
-    return tuple(patterns)
-
-
-def _bounded(secret):
-    """The pattern that hides the password of an address read for certain:
-    wherever it isn't part of a longer word, so a password "word" leaves
-    "password" as it is. The driver never prints the password itself, so
-    nothing is lost."""
-    start = r"(?<![A-Za-z0-9])" if secret[:1].isascii() and secret[:1].isalnum() else ""
-    end = r"(?![A-Za-z0-9])" if secret[-1:].isascii() and secret[-1:].isalnum() else ""
-    return f"{start}{re.escape(secret)}{end}"
-
-
-def _hiding(secret):
-    """The pattern that hides a piece of the password or the address.
-    Letters and digits alone are hidden only where they stand on their own:
-    the piece "word" is hidden, "password" stays. A %-escape before them
-    counts as a gap: "%2Fword". (The password itself is hidden wherever it
-    is.)"""
-    if secret.isascii() and secret.isalnum():
-        return rf"(?:(?<![A-Za-z0-9])|(?<=%[0-9A-Fa-f]{{2}})){re.escape(secret)}(?![A-Za-z0-9])"
-    return re.escape(secret)
-
-
 def _reading(database_url):
-    """The address as PostgreSQL reads it (user, password, host, port,
-    dbname...), or None when that can't be known for certain. The driver's
-    own reading is used when it is installed; without it, a URL is split as
-    PostgreSQL splits one: the login ends at the first @ before any /.
-
-    An @ anywhere but in the password means the address wasn't read as it
-    was meant (an @ in the password that isn't written as %40), so that
-    reading isn't trusted either; nor is a URL with a second @, or an @
-    after a / or a ?...= (a password with / or ?...= in it makes those), or
-    an address with a NUL, where PostgreSQL stops reading."""
-    parts = _read(str(database_url or ""), _parser())
-    return dict(parts) if parts is not None else None
-
-
-def _parser():
-    """The driver's own reader of an address, or None without the driver."""
+    """The address as PostgreSQL itself reads it (libpq, through the
+    driver): host, port, dbname, user, password... Or None when the driver
+    isn't installed, or it can't read the address, or what it read isn't
+    what was meant: an @ outside the password (one in the password that
+    isn't written as %40), a port that isn't a number. libpq never quotes
+    the password in its errors once it has read the address."""
+    database_url = str(database_url or "")
     try:
         from psycopg.conninfo import conninfo_to_dict
     except ImportError:
         return None
-    return conninfo_to_dict
-
-
-@functools.lru_cache(maxsize=32)
-def _read(database_url, conninfo_to_dict):
-    if "\x00" in database_url:
+    try:
+        parts = conninfo_to_dict(database_url)
+    # whatever stops the driver reading it (a ProgrammingError, a %-escape
+    # that isn't UTF-8, a NUL): it is an address that can't be read
+    except Exception:  # noqa: BLE001
         return None
+    others = [str(value) for key, value in parts.items() if key != "password"]
     _, sep, rest = database_url.partition("://")
-    if sep:
-        login = rest.partition("@")[0] if "@" in rest else ""
-        # PostgreSQL's login part ends at the first @ before any /: an @
-        # after a / was meant for the password. And a login part with
-        # ?...= in it may be a query (?password=...@host) that was meant
-        if "@" in rest.partition("/")[2] or "=" in login.partition("?")[2]:
-            return None
-        if rest.count("@") > 1:
-            return None
-    if conninfo_to_dict is not None:
-        from psycopg import Error
-
-        try:
-            parts = conninfo_to_dict(database_url)
-        # a %-escape that isn't UTF-8 is a UnicodeDecodeError, a ValueError
-        except (Error, ValueError):
-            return None
-    else:
-        scheme, sep, rest = database_url.partition("://")
-        # PostgreSQL refuses a space, and a % that isn't an escape
-        if (
-            not sep
-            or scheme not in ("postgresql", "postgres")
-            or re.search(r"\s|%(?![0-9A-Fa-f]{2})", rest)
-        ):
-            return None
-        login, at, after = rest.partition("@")
-        if not at or "/" in login:
-            login, after = "", rest
-        user, _, password = login.partition(":")
-        # PostgreSQL refuses a %-escape that isn't UTF-8, as the driver does
-        unquote = functools.partial(urllib.parse.unquote, errors="strict")
-        try:
-            where = urllib.parse.urlsplit(f"//{after}")
-            parts = {
-                "user": unquote(user),
-                "password": unquote(password) if ":" in login else None,
-                "host": unquote(where.hostname or ""),
-                "port": where.port,
-                "dbname": unquote(where.path.lstrip("/")),
-            }
-            # what the query names, as PostgreSQL takes it: ?password=...
-            for option in filter(None, where.query.split("&")):
-                key, _, value = option.partition("=")
-                parts[unquote(key)] = unquote(value)
-        except ValueError:
-            return None
-        if "@" in after:
-            return None
-    if any("@" in str(value) for key, value in parts.items() if key != "password" and value):
+    if (
+        "\x00" in database_url
+        # an @ after the login part of a URL was meant for the password
+        or (sep and "@" in rest.partition("/")[2])
+        or any("@" in value or not value.isprintable() for value in others)
+        or not re.fullmatch(r"[0-9,]*", str(parts.get("port") or ""))
+    ):
         return None
     return parts
 
 
 def _secrets(database_url):
-    """What to keep out of messages and logs, longest first: the URL itself
-    and its password, as PostgreSQL reads it. When that reading isn't certain
-    (see _reading), every part of the address is hidden too, and every
-    other way of reading its password: the driver's errors quote what it
-    read."""
-    return [secret for secret, _ in _patterns(database_url)]
+    """What to keep out of messages and logs, longest first: the address
+    itself, and its password as PostgreSQL reads it, as written and
+    %-encoded. Nothing else: libpq doesn't quote the password, and an
+    address it can't read gets a sentence of its own (see _unavailable)."""
+    database_url = str(database_url or "")
+    password = (_reading(database_url) or {}).get("password")
+    if not password:
+        return []
+    secrets = {database_url, password, urllib.parse.quote(password, safe="")}
+    return sorted(secrets, key=len, reverse=True)
 
 
-# the most stretches of a password tried, up to one space or @ after
-# another: enough for any password, and the work stays in proportion
-CUTS = 64
-
-
-def _found(database_url):
-    """_secrets in two sets, and whether the reading is certain: the
-    password and the address (hidden as _bounded says on a certain reading,
-    wherever they are otherwise), and the pieces of them, hidden as _hiding
-    says."""
-    if not database_url:
-        return set(), set(), True
-    parts = _reading(database_url)
-    found = set()
-    if parts is not None:
-        found.add(parts.get("password"))
-    else:
-        try:
-            found.add(urllib.parse.urlsplit(database_url).password)
-        except ValueError:
-            pass
-        # the other spelling: host=... password=..., up to each later space
-        keyword = re.search(r"\bpassword\s*=\s*", database_url)
-        if keyword:
-            value = database_url[keyword.end():]
-            found.add(value)
-            gaps = itertools.islice(re.finditer(r"\s", value), CUTS)
-            found.update(value[: gap.start()] for gap in gaps)
-            found.update(candidate.strip("'") for candidate in list(found) if candidate)
-    # what sits between the user name's colon and each @ after it: the
-    # password as written, however the rest is read
-    _, sep, rest = database_url.partition("://")
-    colon = rest.find(":")
-    if sep and colon >= 0:
-        ats = itertools.islice((at for at in re.finditer("@", rest) if at.start() > colon), CUTS)
-        found.update(rest[colon + 1 : at.start()] for at in ats)
-    found.discard(None)
-    found.discard("")
-    whole = set()
-    for secret in found:
-        whole.update({secret, urllib.parse.unquote(secret), urllib.parse.quote(secret, safe="")})
-    pieces = set()
-    if parts is None:
-        # a reading that isn't certain: the password's own pieces too, for
-        # a reading that splits it elsewhere, and every word of the address,
-        # and its parts on either side of an =, an @, a : or a /: the
-        # message then names nothing of it. (A certain reading hides only
-        # the whole password: its pieces are often ordinary words.)
-        pieces = _pieces(found, r"[^A-Za-z0-9]+")
-        words = database_url.split()
-        whole.update(words)
-        for split in (r"=", r"[@:/]", r"[@:/?&=#]", r"[^A-Za-z0-9]+"):
-            pieces.update(_pieces(words, split))
-    if whole or pieces:
-        whole.update({database_url, urllib.parse.quote(database_url, safe="")})
-    pieces -= whole | {"postgresql", "postgres"}
-    whole.discard("")
-    return whole, pieces, parts is not None
-
-
-def _pieces(texts, split):
-    """The parts of `texts` between what `split` matches, of 2 characters
-    or more."""
-    return {
-        piece for text in texts for piece in re.split(split, text or "") if len(piece) >= 2
-    }
+def _hiding(secret):
+    """The pattern that hides `secret` where it isn't part of a longer
+    word: a password "word" leaves "password" as it is."""
+    start = r"(?<![A-Za-z0-9])" if secret[:1].isascii() and secret[:1].isalnum() else ""
+    end = r"(?![A-Za-z0-9])" if secret[-1:].isascii() and secret[-1:].isalnum() else ""
+    return f"{start}{re.escape(secret)}{end}"
 
 
 def describe(database_url=None):
-    """The server and database a URL names, without the login: for messages.
-    Nothing of the address when PostgreSQL's reading of it isn't certain."""
-    database_url = database_url if database_url is not None else url()
-    database_url = str(database_url or "")
+    """The server and database a URL names, as PostgreSQL reads it, without
+    the login: for messages. "the configured database" when it can't be
+    read for certain, without the driver, or for the host=... spelling."""
+    database_url = str((database_url if database_url is not None else url()) or "")
     parts = _reading(database_url) if "://" in database_url else None
     if parts and parts.get("host"):
         port = f":{parts['port']}" if parts.get("port") else ""
@@ -758,13 +609,16 @@ class PostgresBackend:
         psycopg, psycopg_pool = _driver()
         database_url = url()
         self._hide_password(database_url)
+        if _reading(database_url) is None:
+            raise Unreadable() from None
         adapters = _adapters()
         # a first connection of our own: the pool only says it timed out,
         # this says why (no server, a refused login, no such database)
         try:
             psycopg.connect(database_url, connect_timeout=CONNECT_TIMEOUT).close()
         except psycopg.Error as E:
-            raise self._unavailable(E, database_url) from E
+            error = self._unavailable(E, database_url)
+            raise error from (None if isinstance(error, Unreadable) else E)
         lock_timeout = int(max(float(timeout or 0), 1) * 1000)
 
         def configure(conn):
@@ -794,6 +648,7 @@ class PostgresBackend:
         try:
             pool.open(wait=True, timeout=CONNECT_TIMEOUT * 2)
         except Exception as E:
+            # the address was read above: the error is the server's
             pool.close()
             raise self._unavailable(E, database_url) from E
         if not self._pools:
@@ -803,11 +658,11 @@ class PostgresBackend:
     def _hide_password(self, database_url):
         import ofscraper.utils.logs.utils.sensitive as sensitive
 
-        for secret, pattern in _patterns(database_url):
+        for text in _secrets(database_url):
             # not one character: a password of ! would hide every ! of
             # every log line (messages hide it, see masked)
-            if len(secret) > 1:
-                sensitive.add_sensitive_pattern(pattern)
+            if len(text) > 1:
+                sensitive.add_sensitive_pattern(_hiding(text))
 
     def _unavailable(self, error, database_url):
         """A connection that can't be made, as one sentence for the user.
@@ -817,13 +672,12 @@ class PostgresBackend:
         state = getattr(error, "sqlstate", None) or ""
         # a connection that was never made has no error code, only the
         # server's words
-        if isinstance(error, psycopg.ProgrammingError) and not state:
+        if (isinstance(error, psycopg.ProgrammingError) and not state) or _reading(
+            database_url
+        ) is None:
             # the driver couldn't read the address, and quotes it: say so
             # without the quote
-            return PostgresUnavailable(
-                f"{URL_KEY} isn't an address PostgreSQL can read. It should "
-                "look like postgresql://user:password@host:5432/database."
-            )
+            return Unreadable()
         if (
             state.startswith("28")
             or "authentication failed" in text
@@ -1075,6 +929,8 @@ class Reader:
         self._url = database_url
         self._errors = (psycopg.Error,)
         self._conn = None
+        if _reading(database_url) is None:
+            raise Unreadable() from None
         try:
             self._conn = psycopg.connect(
                 database_url,
@@ -1105,7 +961,8 @@ class Reader:
             self._conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
         except psycopg.Error as E:
             self.close()
-            raise POSTGRES._unavailable(E, database_url) from E
+            error = POSTGRES._unavailable(E, database_url)
+            raise error from (None if isinstance(error, Unreadable) else E)
 
     def rows(self, query, params=()):
         """Every row of a query, written as the table modules write theirs
