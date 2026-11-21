@@ -41,6 +41,9 @@ CHECKOUT_TIMEOUT = 30
 # out of memory or connections, or a cancelled query
 RETRY_STATES = frozenset({"40001", "40P01", "55P03", "57P01", "57P02", "57P03"})
 CONNECT_TIMEOUT = 15
+# the longest one read on a tool's own connection (Reader) may take, in
+# seconds: what the scraper's database timeout is unless it is changed
+READ_TIMEOUT = 300
 
 # Made at the current layout: the steps that upgrade an old SQLite file never
 # run here. test_db_postgres compares these with SQLite's tables, column by
@@ -853,6 +856,14 @@ class Reader:
             self._conn = psycopg.connect(
                 database_url,
                 connect_timeout=CONNECT_TIMEOUT,
+                # a server that is gone without saying so is noticed in a
+                # minute or two, not waited for
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=3,
+                # no statement is kept on the server: a pooler may hand the
+                # next one to another connection
+                prepare_threshold=None,
                 application_name="ofscraper",
                 context=_adapters(),
                 cursor_factory=_cursor_class(),
@@ -861,6 +872,10 @@ class Reader:
             # as the pool sets a connection up (see _open_pool)
             self._conn.execute("SET TIME ZONE 'UTC'")
             self._conn.execute("SET DateStyle TO 'ISO, YMD'")
+            # the server ends a read that waits on another program's lock,
+            # or that takes too long, and the read fails
+            self._conn.execute(f"SET lock_timeout = {CHECKOUT_TIMEOUT * 1000}")
+            self._conn.execute(f"SET statement_timeout = {READ_TIMEOUT * 1000}")
             self._conn.commit()
             # from here on: one read-only transaction, one view of the rows
             self._conn.read_only = True

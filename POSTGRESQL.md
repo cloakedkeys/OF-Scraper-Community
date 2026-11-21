@@ -65,10 +65,12 @@ python -m ofscraper.commands.stash_sync --postgres
 
 - **It reads the database that `OFSC_DATABASE_URL` names in the environment the command is run in.** It is a separate tool and doesn't read the scraper's settings, so an address that is only in a `.env` file that `config.json` names is not seen: set the variable for the command. In Docker, an address given under `environment:` is already set for a command run in the container.
 - **It needs the PostgreSQL driver**, as the scraper does.
-- **Every creator of both sites is synced** unless you narrow it: `--site onlyfans` or `--site fansly` keeps one site, and `--creator <username or id>` keeps one creator and can be given more than once.
-- **PostgreSQL is only read.** The command opens one read-only connection, sees the database as it was when it started reading, and closes the connection before it sends anything to Stash.
+- **Every creator of both sites is synced** unless you narrow it: `--site onlyfans` or `--site fansly` keeps one site, and `--creator <username or id>` keeps the creators it matches and can be given more than once. It matches an id on either site, and any username a creator has had, in any case, so it can match more than one creator.
+- **PostgreSQL is only read.** The command opens one read-only connection, sees the database as it was when it started reading, and closes the connection before it sends anything to Stash. Its login only needs `USAGE` on each site's schema and `SELECT` on its tables.
+- **A read doesn't wait for ever.** One that waits more than 30 seconds for a table another program has locked, or that takes more than 5 minutes, is ended by the server and the command stops.
+- **A few results differ from the files'.** `STASH.md` lists them.
 - **Given `user_data.db` files, it still reads those files.** With `OFSC_DATABASE_URL` set it then says that they hold nothing scraped since PostgreSQL was turned on. Files and `--postgres` together are refused.
-- **A server it can't use** (not running, a refused login, no such database, no driver) stops it with one sentence and exit code 1, before Stash is contacted.
+- **A server it can't use** (not running, a refused login, no such database, no driver, a login that may not read a site's tables) stops it with one sentence and exit code 1, before Stash is contacted. The sentence names the host, the port and the database, never the password.
 
 ## Recovering filename collisions
 
