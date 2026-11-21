@@ -8,7 +8,11 @@ import sends for a folder of files.
 """
 
 import asyncio
+import contextlib
 import os
+import sqlite3
+import threading
+import time
 from types import SimpleNamespace
 
 import arrow
@@ -22,7 +26,9 @@ import ofscraper.db.operations as operations
 import ofscraper.db.operations_.media as media
 import ofscraper.db.operations_.others as others
 import ofscraper.db.operations_.profile as profile
+import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.postgres as postgres
+import ofscraper.db.transition as transition
 import ofscraper.utils.settings as settings
 from ofscraper.db.difference import ALL_FLAGS, get_group_difference
 from ofscraper.db.transition import modify_tables
@@ -290,10 +296,46 @@ def test_a_database_with_nothing_in_it_is_said_so(tmp_path):
     assert code == 0
     assert "PostgreSQL has no rows." in said
 
-    code, said = run(tmp_path / "out", two_creators(tmp_path), apply=True, site="fansly")
+    code, said = run(tmp_path / "out", Database(), apply=True, site="fansly")
     assert code == 0
-    assert "PostgreSQL has no rows for fansly." in said
+    assert said.endswith("PostgreSQL has no rows for fansly.")
     assert not (tmp_path / "out").exists()
+
+
+def test_the_site_that_has_the_rows_is_named_when_another_is_asked_for(tmp_path):
+    code, said = run(tmp_path / "out", two_creators(tmp_path), apply=True, site="fansly")
+
+    assert code == 0
+    assert "PostgreSQL has no rows for fansly. It has rows for onlyfans." in said
+    assert not (tmp_path / "out").exists()
+
+
+def test_a_folder_that_cant_be_made_is_said_so(tmp_path):
+    database = two_creators(tmp_path)
+    (tmp_path / "mine").write_text("mine")
+    out = tmp_path / "mine" / "out"
+
+    code, said = run(out, database, apply=True)
+
+    assert code == 1
+    assert f"Nothing was written. {out} couldn't be made (" in said
+    assert (tmp_path / "mine").read_text() == "mine"
+    assert database.closed == 1
+
+
+def test_a_database_that_cant_be_opened_is_closed_again(tmp_path):
+    database = two_creators(tmp_path)
+
+    def refuses():
+        raise ServerError("the server said no")
+
+    database.open = refuses
+
+    code, said = run(tmp_path / "out", database, apply=True)
+
+    assert code == 1
+    assert "Nothing was written. the server said no" in said
+    assert database.closed == 1
 
 
 # --- the files ---
@@ -562,19 +604,22 @@ def test_another_folder_gets_a_left_out_creators_rows_out(tmp_path):
     assert files(tmp_path / "elsewhere") == [f"111/{DATABASE}", f"222/{DATABASE}"]
 
 
-def test_what_sqlite_kept_beside_a_database_that_has_gone_is_in_the_way(tmp_path):
+@pytest.mark.parametrize("suffix", ["-wal", "-journal"])
+def test_what_sqlite_kept_beside_a_database_that_has_gone_is_in_the_way(
+    tmp_path, suffix
+):
     # SQLite reads a -wal or -journal file into the database it sits beside
     database = two_creators(tmp_path)
     out = tmp_path / "out"
     (out / "111").mkdir(parents=True)
-    (out / "111" / f"{DATABASE}-wal").write_bytes(b"left behind")
+    (out / "111" / f"{DATABASE}{suffix}").write_bytes(b"left behind")
 
     code, said = run(out, database, apply=True)
 
     assert code == 1
-    assert f"{DATABASE}-wal is there without its database" in said
-    assert files(out) == [f"111/{DATABASE}-wal", f"222/{DATABASE}"]
-    assert (out / "111" / f"{DATABASE}-wal").read_bytes() == b"left behind"
+    assert f"{DATABASE}{suffix} is there without its database" in said
+    assert files(out) == [f"111/{DATABASE}{suffix}", f"222/{DATABASE}"]
+    assert (out / "111" / f"{DATABASE}{suffix}").read_bytes() == b"left behind"
     assert {creator for _, _, creator in database.asked} == {222}
 
 
@@ -690,33 +735,79 @@ def test_a_file_that_appears_meanwhile_is_left_as_it_is(tmp_path):
     assert files(out) == [f"111/{DATABASE}", f"222/{DATABASE}"]
 
 
-def test_a_finished_file_never_takes_another_files_name(tmp_path, monkeypatch):
-    def no_second_names(source, target):
-        raise OSError("this disk has none")
+def no_second_names(source, target):
+    """os.link on a disk without hard links: FAT, some network shares."""
+    raise OSError("this disk has none")
 
-    for link in (os.link, no_second_names):
-        monkeypatch.setattr(os, "link", link)
-        folder = tmp_path / link.__name__
-        folder.mkdir()
-        finished = folder / "finished"
-        finished.write_bytes(b"new")
 
-        exporter.place(finished, folder / DATABASE)
-        assert (folder / DATABASE).read_bytes() == b"new"
+def named(finished, name):
+    """place(), and whether the file got the name."""
+    try:
+        exporter.place(finished, name)
+    except exporter.Taken:
+        return False
+    return True
 
-        # the name it was made under is the caller's to remove
-        finished.unlink(missing_ok=True)
-        finished.write_bytes(b"newer")
-        with pytest.raises(exporter.Taken):
-            exporter.place(finished, folder / DATABASE)
-        assert (folder / DATABASE).read_bytes() == b"new"
-        assert finished.read_bytes() == b"newer"
+
+def test_a_finished_file_never_takes_another_files_name(tmp_path):
+    finished = tmp_path / "finished"
+    finished.write_bytes(b"new")
+
+    assert named(finished, tmp_path / DATABASE)
+    assert (tmp_path / DATABASE).read_bytes() == b"new"
+
+    # the name it was made under is the caller's to remove
+    finished.unlink()
+    finished.write_bytes(b"newer")
+    assert not named(finished, tmp_path / DATABASE)
+    assert (tmp_path / DATABASE).read_bytes() == b"new"
+    assert finished.read_bytes() == b"newer"
+
+
+def test_on_a_disk_without_second_names_a_name_is_looked_for_first(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(os, "link", no_second_names)
+    # a rename that replaces, as on every system but Windows
+    monkeypatch.setattr(os, "rename", os.replace)
+    finished = tmp_path / "finished"
+    finished.write_bytes(b"new")
+
+    # a name that is free is given
+    assert named(finished, tmp_path / DATABASE)
+    assert (tmp_path / DATABASE).read_bytes() == b"new"
+    assert not finished.exists()
+
+    # and one that is taken isn't
+    finished.write_bytes(b"newer")
+    assert not named(finished, tmp_path / DATABASE)
+    assert (tmp_path / DATABASE).read_bytes() == b"new"
+    assert finished.read_bytes() == b"newer"
+
+
+def test_a_rename_that_refuses_a_taken_name_leaves_the_file_there(
+    tmp_path, monkeypatch
+):
+    # without second names a file can take the name between the look and
+    # the rename. Windows' rename then refuses, as here; another system's
+    # replaces the file (see place)
+    monkeypatch.setattr(os, "link", no_second_names)
+    finished = tmp_path / "finished"
+    finished.write_bytes(b"new")
+    theirs = tmp_path / DATABASE
+
+    def refuses(source, target):
+        theirs.write_bytes(b"theirs")
+        raise FileExistsError("the name is taken")
+
+    monkeypatch.setattr(os, "rename", refuses)
+
+    assert not named(finished, theirs)
+    assert theirs.read_bytes() == b"theirs"
+    assert finished.read_bytes() == b"new"
 
 
 def test_a_disk_without_second_names_still_gets_its_files(tmp_path, monkeypatch):
-    def no_second_names(source, target):
-        raise OSError("this disk has none")
-
     monkeypatch.setattr(os, "link", no_second_names)
     out = tmp_path / "out"
 
@@ -773,21 +864,49 @@ def test_a_value_sqlite_would_keep_differently_stops_that_file(tmp_path):
     def spoil(database):
         of(database, "medias", 222)[1]["media_id"] = "007"
 
-    refused(tmp_path, spoil, "medias row 2, media_id: SQLite keeps '007' as 7")
+    said = refused(tmp_path, spoil, "medias row 2, media_id: SQLite keeps '007' as 7")
+    # which value, and where it has to be changed
+    assert (
+        f"  {tmp_path / 'out' / '222' / DATABASE}\n"
+        "    - medias row 2, media_id: SQLite keeps '007' as 7\n"
+        f"    - {exporter.IN_POSTGRESQL}"
+    ) in said
 
 
 def test_a_number_sqlite_cant_keep_stops_that_file(tmp_path):
     def spoil(database):
         of(database, "posts", 222)[0]["price"] = float("nan")
 
-    refused(tmp_path, spoil, "posts row 1, price: SQLite keeps nan as None")
+    said = refused(tmp_path, spoil, "posts row 1, price: SQLite keeps nan as None")
+    assert exporter.IN_POSTGRESQL in said
 
 
-def test_an_id_too_large_for_sqlite_stops_that_file(tmp_path):
+@pytest.mark.parametrize("number", [2**63, -(2**63) - 1, 2**70])
+def test_a_number_too_large_for_sqlite_stops_that_file(tmp_path, number):
     def spoil(database):
-        of(database, "medias", 222)[0]["media_id"] = 2**70
+        of(database, "posts", 222)[1]["price"] = number
 
-    refused(tmp_path, spoil, "it couldn't be written (")
+    said = refused(
+        tmp_path,
+        spoil,
+        f"posts row 2, price: {number} is too large a number for SQLite",
+    )
+    assert exporter.IN_POSTGRESQL in said
+
+
+def test_the_largest_number_sqlite_keeps_is_written(tmp_path):
+    database = two_creators(tmp_path)
+    of(database, "posts", 222)[0]["price"] = 2**63 - 1
+    of(database, "posts", 222)[1]["price"] = -(2**63)
+    out = tmp_path / "out"
+
+    code, said = run(out, database, apply=True)
+
+    assert code == 0, said
+    assert sql(out / "222" / DATABASE, "SELECT price FROM posts ORDER BY id") == [
+        (2**63 - 1,),
+        (-(2**63),),
+    ]
 
 
 def test_a_value_the_import_would_refuse_stops_that_file(tmp_path):
@@ -796,6 +915,45 @@ def test_a_value_the_import_would_refuse_stops_that_file(tmp_path):
 
     said = refused(tmp_path, spoil, "1 value can't be stored")
     assert "medias row 1, created_at: 'infinity' isn't a date" in said
+    assert exporter.IN_POSTGRESQL in said
+
+
+# Rows for current_file's creator 111 that the import brings in, and why the
+# file can't be written back (test_postgres_export_live.py asks a server too)
+TAKEN_ON_THE_WAY_IN = [
+    # a media id that isn't a whole number is text to PostgreSQL, which
+    # keeps it as it is. SQLite's column makes a number of it again
+    pytest.param(
+        "INSERT INTO medias (media_id, post_id, model_id) VALUES (1.5, 77, 111)",
+        "medias row 4, media_id: SQLite keeps '1.5' as 1.5",
+        id="an id that isn't a whole number",
+    ),
+    # SQLite keeps a number this large as one with a fraction, and
+    # PostgreSQL as the whole number it is
+    pytest.param(
+        "INSERT INTO posts (post_id, price, model_id) VALUES (77, 1e19, 111)",
+        "posts row 3, price: 10000000000000000000 is too large a number for SQLite",
+        id="a number too large",
+    ),
+]
+
+
+@pytest.mark.parametrize("row, why", TAKEN_ON_THE_WAY_IN)
+def test_a_value_the_import_took_can_stop_the_file_on_the_way_back(
+    tmp_path, row, why
+):
+    folder = tmp_path / "data"
+    sql(current_file(folder / "111" / DATABASE, 111), row)
+    out = tmp_path / "out"
+
+    code, said = run(out, holding(folder), apply=True)
+
+    assert code == 1
+    assert "onlyfans: 0 files written, 0 rows." in said
+    assert (
+        f"  {out / '111' / DATABASE}\n    - {why}\n    - {exporter.IN_POSTGRESQL}"
+    ) in said
+    assert list(out.iterdir()) == []
 
 
 def test_rows_that_dont_all_arrive_are_not_kept(tmp_path):
@@ -808,7 +966,156 @@ def test_rows_that_dont_all_arrive_are_not_kept(tmp_path):
 
         database.rows = loses_a_row
 
-    refused(tmp_path, spoil, "its medias table holds 2 rows where PostgreSQL holds 3")
+    said = refused(
+        tmp_path, spoil, "its medias table holds 2 rows where PostgreSQL holds 3"
+    )
+    # no value of PostgreSQL's is at fault
+    assert exporter.IN_POSTGRESQL not in said
+
+
+def test_only_a_folder_this_run_made_is_removed_with_its_file(tmp_path):
+    database = two_creators(tmp_path)
+    of(database, "medias", 222)[1]["media_id"] = "007"
+    out = tmp_path / "out"
+    # the creator's folder was there, empty
+    (out / "222").mkdir(parents=True)
+
+    code, said = run(out, database, apply=True)
+
+    assert code == 1
+    assert "1 file couldn't be written:" in said
+    assert files(out) == [f"111/{DATABASE}"]
+    assert sorted(path.name for path in out.iterdir()) == ["111", "222"]
+    assert list((out / "222").iterdir()) == []
+
+
+def test_rows_that_cant_be_moved_into_the_file_itself_stop_it(tmp_path, monkeypatch):
+    # SQLite keeps new rows beside a file (in its -wal file) until it can
+    # move them in, which it can't while another program is reading the
+    # file. Only the file itself gets the name
+    connect = sqlite3.connect
+    # not waiting for the reader to finish
+    monkeypatch.setattr(
+        sqlite3,
+        "connect",
+        lambda *args, **kwargs: connect(*args, **{**kwargs, "timeout": 0}),
+    )
+    database = two_creators(tmp_path)
+    out = tmp_path / "out"
+    rows = database.rows
+    readers = []
+
+    def someone_reads(site, table, columns, creator):
+        if creator == 222 and not readers:
+            (being_made,) = (out / "222").glob(f"*{exporter.PARTIAL}")
+            reader = connect(being_made)
+            readers.append(reader)
+            reader.execute("BEGIN")
+            reader.execute("SELECT COUNT(*) FROM medias").fetchall()
+        return rows(site, table, columns, creator)
+
+    database.rows = someone_reads
+
+    try:
+        code, said = run(out, database, apply=True)
+    finally:
+        for reader in readers:
+            reader.close()
+
+    assert code == 1
+    assert "onlyfans: 1 file written" in said
+    assert "it couldn't be written (the rows couldn't be moved into the file)" in said
+    assert f"222/{DATABASE}" not in files(out)
+
+
+def test_ctrl_c_while_a_files_tables_are_made_leaves_nothing_of_it(
+    tmp_path, monkeypatch
+):
+    # the scraper's code makes the tables on a thread of its own. Ctrl-C
+    # stops the run, not that thread, which has the file open until what
+    # it was doing is done. Here the thread is given the file to hold, and
+    # the run is stopped while it does
+    database = two_creators(tmp_path)
+    out = tmp_path / "out"
+    real = transition.modify_tables
+    holding = threading.Event()
+    let_go = threading.Event()
+
+    def holds(path):
+        with contextlib.closing(sqlite3.connect(path)) as conn:
+            conn.execute("SELECT COUNT(*) FROM medias").fetchall()
+            holding.set()
+            time.sleep(0.5)
+        let_go.set()
+
+    async def stopped(db_path, **kwargs):
+        if db_path.parent.name != "222":
+            return await real(db_path=db_path, **kwargs)
+        wrapper._DB_POOL.submit(holds, db_path)
+        holding.wait()
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(transition, "modify_tables", stopped)
+
+    with pytest.raises(KeyboardInterrupt):
+        run(out, database, apply=True)
+
+    # the run waited for the thread, and then removed what there was
+    assert let_go.is_set()
+    assert files(out) == [f"111/{DATABASE}"]
+    assert [path.name for path in out.iterdir()] == ["111"]
+    assert database.closed == 1
+
+
+def test_the_files_are_sqlites_own_while_the_scraper_uses_postgresql(
+    tmp_path, monkeypatch
+):
+    # every real run has OFSC_DATABASE_URL set, which sends the scraper's
+    # database code to PostgreSQL unless it is told which file to use
+    folder = tmp_path / "data"
+    current_file(folder / "111" / DATABASE, 111, site="fansly")
+    database = holding(folder)
+    monkeypatch.setattr(
+        postgres, "url", lambda: "postgresql://someone:a-password@db.invalid/library"
+    )
+    monkeypatch.setattr(postgres, "enabled", lambda: True)
+    reached = []
+
+    def refuse(name):
+        def inner(*args, **kwargs):
+            reached.append(name)
+            raise AssertionError(f"PostgreSQL was reached for: {name}")
+
+        return inner
+
+    for name in (
+        "where",
+        "connect",
+        "_pool",
+        "check",
+        "create_tables",
+        "database_exists",
+        "table_exists",
+        "table_columns",
+    ):
+        monkeypatch.setattr(postgres.PostgresBackend, name, refuse(name))
+    monkeypatch.setattr(wrapper, "_add_backend", refuse("_add_backend"))
+    engines = (list(wrapper._BACKENDS), wrapper.DB_ERRORS, wrapper.OPERATIONAL_ERRORS)
+    out = tmp_path / "out"
+
+    code, said = run(out, database, apply=True)
+
+    assert reached == []
+    assert code == 0, said
+    assert files(out) == [f"111/{DATABASE}"]
+    assert others.get_site_flag(db_path=out / "111" / DATABASE) == "fansly"
+    assert sql(out / "111" / DATABASE, "SELECT COUNT(*) FROM medias") == [(3,)]
+    # and the scraper's code is left as it was for whatever runs next
+    assert (
+        list(wrapper._BACKENDS),
+        wrapper.DB_ERRORS,
+        wrapper.OPERATIONAL_ERRORS,
+    ) == engines
 
 
 def test_tables_from_a_newer_version_are_refused(tmp_path):

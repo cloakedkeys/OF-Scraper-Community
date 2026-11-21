@@ -39,10 +39,22 @@ TABLES = (*importer.DATA_TABLES, *importer.SHARED_TABLES)
 # the column that names a row's creator, where it isn't model_id
 CREATOR_COLUMN = {"profiles": "user_id"}
 ALREADY_THERE = "it is already there, and a file that is there is never changed"
+# said under a value that stops a creator's file
+IN_POSTGRESQL = (
+    "that value is in PostgreSQL: change it there, then run this again. A row's"
+    " number is its place among the creator's rows of the table, oldest first"
+)
+# SQLite's whole numbers are 64 bits
+LARGEST = 2**63
 
 
 class Taken(Exception):
     """A file has appeared where a new one was to go."""
+
+
+class Unkept(Exception):
+    """A value PostgreSQL holds that a user_data.db can't keep as it is:
+    which, in words."""
 
 
 @dataclass
@@ -157,8 +169,8 @@ def plan(folder, site, held):
 
 def fill(temporary, file, read):
     """Make a database at `temporary` the way a scan makes a new creator's,
-    and put in the rows read(table, columns) gives. A row SQLite keeps
-    differently from how it was given raises ValueError."""
+    and put in the rows read(table, columns) gives. A value SQLite can't
+    keep as it was given raises Unkept."""
     app = importer._app()
 
     async def make():
@@ -172,7 +184,14 @@ def fill(temporary, file, read):
         if file.site != sites.DEFAULT_SITE:
             await app.others.write_site_flag(file.site, db_path=temporary)
 
-    asyncio.run(make())
+    try:
+        asyncio.run(make())
+    finally:
+        # that code works on one thread of its own, which Ctrl-C doesn't
+        # stop: it has the file open until what it was doing is done. Wait
+        # for that, so that what was made so far can be removed (a second
+        # Ctrl-C ends the wait, and can leave it)
+        app.wrapper._DB_POOL.submit(lambda: None).result()
     # the new file's own tables and columns, without each row's own id
     source = importer.Source(path=file.path, staged=temporary)
     wanted = importer.tables(source)
@@ -182,6 +201,7 @@ def fill(temporary, file, read):
         for table, columns in wanted.items():
             listed = ", ".join(columns)
             rows = [tuple(row) for row in read(table, columns)]
+            _fits(table, columns, rows)
             conn.executemany(
                 f"INSERT INTO {table} ({listed})"
                 f" VALUES ({', '.join('?' for _ in columns)})",
@@ -194,10 +214,24 @@ def fill(temporary, file, read):
         # a scan adds its creator to models when it starts
         conn.execute(app.profile.modelInsert, [file.creator])
         conn.commit()
-        # into the file itself: until now SQLite kept the rows beside it
+        # Until now SQLite kept the rows beside the file (in its -wal file),
+        # and only the file itself gets the name. Closing the file moves
+        # them too, but says nothing when it can't: another program that
+        # has the file open is enough to stop it
         busy = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
         if busy:
             raise sqlite3.OperationalError("the rows couldn't be moved into the file")
+
+
+def _fits(table, columns, rows):
+    """A whole number of more than 64 bits is one SQLite can't take."""
+    for number, row in enumerate(rows, start=1):
+        for column, value in zip(columns, row):
+            if isinstance(value, int) and not -LARGEST <= value < LARGEST:
+                raise Unkept(
+                    f"{table} row {number}, {column}: {importer._short(value)}"
+                    " is too large a number for SQLite"
+                )
 
 
 def _same(table, columns, given, kept):
@@ -207,7 +241,7 @@ def _same(table, columns, given, kept):
     for number, (was, now) in enumerate(zip(given, kept), start=1):
         for column, before, after in zip(columns, was, now):
             if before != after:
-                raise ValueError(
+                raise Unkept(
                     f"{table} row {number}, {column}: SQLite keeps"
                     f" {importer._short(before)} as {importer._short(after)}"
                 )
@@ -216,60 +250,72 @@ def _same(table, columns, given, kept):
 
 
 def check(temporary, file):
-    """Why the finished file can't be kept, if it can't. It is read the way
-    the import reads a file: it has to hold as many rows as PostgreSQL does
-    for the creator, and nothing the import would refuse."""
+    """The finished file, read the way the import reads a file: it has to
+    hold nothing the import would refuse (Unkept), and as many rows as
+    PostgreSQL does for the creator (ValueError)."""
     source = importer.Source(path=file.path, staged=temporary)
     importer.read(source)
     if source.problems:
-        return source.problems[0]
+        raise Unkept(source.problems[0])
     expected = dict(file.counts, models=1)
     for table in TABLES:
         found = source.counts.get(table, 0)
         if found != expected.get(table, 0):
-            return (
+            raise ValueError(
                 f"its {table} table holds {found} rows where PostgreSQL holds"
                 f" {expected.get(table, 0)}"
             )
-    return None
 
 
 def place(temporary, path):
     """Give a finished file its name. A file that took the name meanwhile is
-    left as it is: Taken. The caller removes the other name."""
+    left as it is: Taken. The caller removes the other name.
+
+    Where the disk can give a file a second name (a hard link), and on
+    Windows, the step that gives the name is the one that refuses a name
+    that is taken. On another system's disk without second names (FAT and
+    exFAT, some network shares) the name is looked for first and given
+    after: a file another program makes in the moment between is replaced.
+    Holding the name with an empty file first would close that moment, and
+    leave an empty user_data.db behind when the run is killed."""
     try:
         # a second name for the file: never given in place of another file
         os.link(temporary, path)
     except FileExistsError:
         raise Taken() from None
     except OSError:
-        # a disk that has no second names (FAT, some network shares)
         if os.path.lexists(path):
             raise Taken() from None
-        os.rename(temporary, path)
+        try:
+            os.rename(temporary, path)
+        except FileExistsError:
+            # Windows, where a rename doesn't replace
+            raise Taken() from None
 
 
 def write(file, read):
     """Make file.path, whole or not at all. Why it couldn't be made is added
-    to file.problems; what the server refuses is raised. Either way nothing
-    else is left behind."""
+    to file.problems; what the server refuses is raised, and so is Ctrl-C.
+    Either way nothing else is left behind, unless another program has the
+    unfinished file open: Windows then doesn't let it be removed. Only a
+    run that is killed leaves it otherwise, and never under the name
+    user_data.db."""
     folder = file.path.parent
     new_folder = not folder.exists()
     temporary = folder / f"{DATABASE}.{uuid.uuid4().hex}{PARTIAL}"
     try:
         folder.mkdir(parents=True, exist_ok=True)
         fill(temporary, file, read)
-        problem = check(temporary, file)
-        if problem:
-            file.problems.append(problem)
-        else:
-            place(temporary, file.path)
-            file.written = True
+        check(temporary, file)
+        place(temporary, file.path)
+        file.written = True
     except Taken:
         file.problems.append(
             "a file appeared there while this ran, and was left as it is"
         )
-    except (sqlite3.Error, OSError, ValueError, OverflowError) as E:
+    except Unkept as E:
+        file.problems += [str(E), IN_POSTGRESQL]
+    except (sqlite3.Error, OSError, ValueError) as E:
         file.problems.append(f"it couldn't be written ({E})")
     finally:
         for suffix in BESIDE:
@@ -333,14 +379,22 @@ def run(folder, apply=False, site=None, target=None, out=print):
         # the driver's own errors, now that it is known to be installed
         refusals += tuple(target.errors)
         out("Reading what PostgreSQL holds (it is only read)...")
-        target.open()
         try:
-            held = {
-                name: target.held(name) for name in ([site] if site else sites.SITES)
-            }
+            target.open()
+            held = {name: target.held(name) for name in sites.SITES}
             held = {name: creators for name, creators in held.items() if creators}
+            if site and site not in held:
+                # most likely the other site was meant
+                others = " and ".join(sorted(held))
+                out(
+                    f"PostgreSQL has no rows for {site}."
+                    + (f" It has rows for {others}." if others else "")
+                )
+                return 0
+            if site:
+                held = {site: held[site]}
             if not held:
-                out(f"PostgreSQL has no rows{f' for {site}' if site else ''}.")
+                out("PostgreSQL has no rows.")
                 return 0
             if len(held) > 1:
                 # a site's creators are one profile's, with a .data folder of

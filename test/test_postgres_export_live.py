@@ -20,8 +20,9 @@ import ofscraper.db.postgres as postgres
 import ofscraper.sites as sites
 from ofscraper.db.difference import ALL_FLAGS
 from test.db_scenario import ONE, TWO, check, scenario
-from test.import_files import current_file, file_2023
+from test.import_files import current_file, file_2023, sql
 from test.test_postgres_export import (
+    TAKEN_ON_THE_WAY_IN,
     canonical,
     dump,
     each_creator_has_their_rows,
@@ -212,6 +213,23 @@ def test_a_file_that_is_already_there_is_left_and_another_folder_gets_it_out(
 
     assert code == 0, said
     assert dump(tmp_path / "elsewhere" / "222" / DATABASE) == dump(out / "222" / DATABASE)
+
+
+@pytest.mark.parametrize("row, why", TAKEN_ON_THE_WAY_IN)
+def test_a_value_the_import_took_can_stop_the_file_on_the_way_back(
+    tmp_path, pg, row, why
+):
+    folder = tmp_path / "data"
+    sql(current_file(folder / "111" / DATABASE, 111), row)
+    bring_in(folder)
+    out = tmp_path / "out"
+
+    code, said = run(out, apply=True)
+
+    # the value, and that PostgreSQL is where it has to be changed
+    assert code == 1
+    assert f"    - {why}\n    - {exporter.IN_POSTGRESQL}" in said, said
+    assert list(out.iterdir()) == []
 
 
 def test_each_site_is_written_by_a_run_of_its_own(tmp_path, pg):
