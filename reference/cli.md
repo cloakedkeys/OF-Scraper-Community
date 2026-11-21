@@ -96,6 +96,16 @@ Accepts 86 options. Its `--help` summary: Uses API to modify db files without th
 
 Accepts 61 options. Its `--help` summary: Print information from the database.
 
+### `postgres_export` (separate entry point)
+
+`python -m ofscraper.commands.postgres_export FOLDER [--apply] [--site SITE]`. It uses argparse and is not part of the CLI (see `POSTGRESQL.md`). The other direction of `postgres_import`: it writes what the PostgreSQL database that `OFSC_DATABASE_URL` names holds back to SQLite files, one per creator, at `FOLDER/<model_id>/user_data.db` (the layout of a profile's `.data` folder with the default `metadata`). PostgreSQL is only read, in one read-only transaction. Without `--apply` it only reports which files would be written. A `user_data.db` that already exists is never changed: its creator is left out and listed, and another FOLDER gets their rows out. Each file is made by the code that makes a new creator's database (so it has today's tables and every upgrade step recorded), under a `.partial` name beside its place, read back the way the import reads a file, and only then given its name. `--site` chooses the site when PostgreSQL has rows for more than one.
+
+Run `python -m ofscraper.commands.postgres_export FOLDER [OPTIONS]`.
+
+- `FOLDER`: folder the user_data.db files go under, one folder per creator
+- `--apply`: write the files; without it, only report
+- `--site`: the site whose creators are written; needed only when PostgreSQL has rows for more than one site
+
 ### `postgres_import` (separate entry point)
 
 `python -m ofscraper.commands.postgres_import FOLDER [--apply] [--skip-bad-files]`. It uses argparse and is not part of the CLI (see `POSTGRESQL.md`). It brings the `user_data.db` files found under FOLDER into the PostgreSQL database that `OFSC_DATABASE_URL` names. The files are only copied: each copy is brought up to date the way a scan would, and its rows are converted to PostgreSQL's column types and written to the schema of the file's site. Without `--apply` it only reports what would be brought in and what stands in the way: a value a column can't hold, a creator found in two files, a creator PostgreSQL already has rows for, a file from a newer version. With `--apply` everything goes in in one transaction.
@@ -147,7 +157,7 @@ Run `python -m ofscraper.commands.stash_sync (PATH... | --postgres) [OPTIONS]`.
 ### Scripts in `scripts/`
 
 - `scripts/commit_version.sh`: CI helper. Works out the commit-based version string, hashes and push type from git for the build workflows.
-- `scripts/creator_names.py`: `python scripts/creator_names.py [--all | --find NAME | --add MODEL_ID NAME [--force] | --csv FILE] [--data-dir DIR]`. Lists the usernames each creator account has had, from the `profiles` table of every `<data-dir>/<model_id>/user_data.db` (default: the main profile's `.data` folder). `--add` appends a name. It works on OnlyFans databases only.
+- `scripts/creator_names.py`: `python scripts/creator_names.py [--all | --find NAME | --add MODEL_ID NAME [--seen DATE] [--force] | --csv FILE] [--data-dir DIR]`. Lists the usernames each creator account has had, from the `profiles` table of every `<data-dir>/<model_id>/user_data.db` (default: the main profile's `.data` folder), with the days each name was first and last seen and the name a deleted account's folder would get. `--add` appends a name, and `--seen` gives it a date (`2024-03-01` or `2024-03-01T09:30:00+00:00`; UTC unless it has an offset, no more than a day ahead, and not for the deleted-account placeholder). `--add` refuses a name or date that would change the folder name of a deleted account, unless `--force` is given. `--force` doesn't choose that name: a name becomes it when its `--seen` is later than every other name's last-seen date. It works on OnlyFans databases only.
 - `scripts/determine_docker_stable_dev_tags.py`: CI helper. Asks the GitHub API for commit timestamps to decide the stable and dev Docker image tags.
 - `scripts/entry/`: Docker internals. `entrypoint.sh`, `lib_user_setup.sh`, `lib_paths.sh` and `lib_permissions.sh` set up the container user, the data and config paths and the permissions, then start the app.
 - `scripts/lint/`: CI lint helper. `python scripts/lint/check_blind_except.py [--update]` counts ruff's BLE001 (blind except) and S110 (try/except/pass) findings per file in `ofscraper/data/api` and `ofscraper/db` and fails when a count differs from `blind_except_baseline.json`. `--update` rewrites the baseline; commit it after removing findings.

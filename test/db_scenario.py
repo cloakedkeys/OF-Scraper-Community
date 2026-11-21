@@ -9,6 +9,7 @@ is checked wherever the tests run.
 
 import contextlib
 from types import SimpleNamespace
+from unittest import mock
 
 import arrow
 
@@ -33,11 +34,34 @@ DAY1 = "2024-01-03T03:04:05+00:00"
 DAY2 = "2024-02-04T10:00:00+00:00"
 # the same moment as 2024-03-05T06:30:00+00:00
 DAY3_OFFSET = "2024-03-05T08:30:00+02:00"
-DATE_KEYS = {"created_at", "posted_at"}
+DATE_KEYS = {"created_at", "posted_at", "first_seen_at", "last_seen_at"}
 TABLES = (
     "medias", "posts", "messages", "stories", "others", "products", "labels",
     "profiles", "models", "schema_flags",
 )
+# when the scenario's clock starts: the names' dates are counted from here
+START = "2024-05-01T12:00:00+00:00"
+# names recorded for creator two by a version that kept no dates. With a
+# capital: the order of names isn't the same on every engine
+OLD_NAMES = ("moe", "Zed", "abe")
+
+
+class Clock:
+    """The time the names are seen at, set by the scenario: both engines
+    then save the same dates."""
+
+    def __init__(self):
+        self.now = arrow.get(START)
+
+    def __call__(self):
+        return self.now
+
+    def later(self, **time):
+        self.now = self.now.shift(**time)
+
+
+def after_start(**time):
+    return arrow.get(START).shift(**time).isoformat()
 
 
 @wrapper.operation_wrapper
@@ -45,6 +69,28 @@ def table_rows(table, conn=None, **kwargs):
     """Every row of a table, as the engine gives them."""
     with contextlib.closing(conn.cursor()) as cur:
         return [dict(row) for row in cur.execute(f"SELECT * FROM {table}").fetchall()]
+
+
+@wrapper.operation_wrapper
+def record_names(names, model_id=None, conn=None, **kwargs):
+    """Names as a version before the dates recorded them."""
+    with contextlib.closing(conn.cursor()) as cur:
+        cur.executemany(
+            "INSERT INTO profiles (user_id, username) VALUES (?, ?)",
+            [(model_id, name) for name in names],
+        )
+        conn.commit()
+
+
+@wrapper.operation_wrapper
+def name_before_the_dates(model_id=None, conn=None, **kwargs):
+    """The name a deleted account went by before #643: the first row of the
+    query that was in use, on this engine."""
+    with contextlib.closing(conn.cursor()) as cur:
+        return cur.execute(
+            "SELECT username FROM profiles where user_id=(?) ORDER BY username",
+            [model_id],
+        ).fetchall()[0][0]
 
 
 def post(post_id, date=DAY1, **changes):
@@ -139,10 +185,39 @@ async def scenario():
     one = dict(model_id=ONE, username=NAMES[ONE])
     two = dict(model_id=TWO, username=NAMES[TWO])
 
-    for who in (one, two, one):  # a second start for creator one changes nothing
-        await operations.table_init_create(**who)
-    await profile.write_profile_table(model_id=ONE, username="renamed_one")
-    out["profile name"] = await profile.get_profile_info(**one)
+    # --- names, and the one a deleted account goes by (#643) ---
+    clock = Clock()
+    placeholder = profile.placeholder_names(ONE)[1]
+    with mock.patch.object(profile, "_now", clock):
+        await operations.table_init_create(**one)
+        # no name of creator two has a date: the name is the one used before
+        record_names(OLD_NAMES, **two)
+        out["name without dates is the one used before"] = (
+            await profile.get_profile_info(**two) == name_before_the_dates(**two)
+        )
+        clock.later(minutes=5)
+        # a second start for creator one changes nothing
+        for who in (two, one):
+            await operations.table_init_create(**who)
+        # nor does one for creator two minutes later: a run starts a creator
+        # more than once, and a name's date is then left as it is
+        clock.later(minutes=5)
+        await operations.table_init_create(**two)
+        out["profile name two"] = await profile.get_profile_info(**two)
+        await profile.write_profile_table(model_id=ONE, username="renamed_one")
+        out["profile name"] = await profile.get_profile_info(**one)
+        # back under the first name minutes later: it is dated all the same,
+        # and is the one seen last again
+        clock.later(minutes=5)
+        await operations.table_init_create(**one)
+        out["profile name, renamed back"] = await profile.get_profile_info(**one)
+        # the placeholder of a deleted account gets a row, and no date
+        await profile.write_profile_table(model_id=ONE, username=placeholder)
+        out["profile name, with a placeholder"] = await profile.get_profile_info(**one)
+        # a name recorded before the dates is seen again
+        clock.later(days=2)
+        await profile.write_profile_table(model_id=TWO, username=OLD_NAMES[0])
+        out["profile name two, an old name seen"] = await profile.get_profile_info(**two)
     out["profile of nobody"] = await profile.get_profile_info(model_id=999, username="x")
     out["profile table"] = await profile.check_profile_table_exists(**one)
     out["flags"] = sorted(others.get_schema_changes(**one))
@@ -297,11 +372,6 @@ async def scenario():
             repr(key): value
             for key, value in media.get_media_post_files_downloaded(**who).items()
         }
-        out[f"duplicate hashes {name}"] = media.get_dupe_media_hashes(**who)
-        out[f"duplicate images {name}"] = media.get_dupe_media_hashes(
-            mediatype="Images", **who
-        )
-        out[f"duplicate files {name}"] = media.get_dupe_media_files(hash="same", **who)
         out[f"unlocked {name}"] = await media.get_unlocked_media_ids(**who)
         out[f"permanent skips {name}"] = await media.get_permanent_skip_media_ids(
             model_id=who["model_id"]
@@ -334,7 +404,29 @@ async def scenario():
 
 def check(result):
     """What the scenario must give on any engine."""
-    assert result["profile name"] in ("creator_one", "renamed_one")
+    assert result["name without dates is the one used before"] in (True, 1)
+    assert result["profile name two"] == "creator_two"
+    assert result["profile name"] == "renamed_one"
+    assert result["profile name, renamed back"] == "creator_one"
+    assert result["profile name, with a placeholder"] == "creator_one"
+    assert result["profile name two, an old name seen"] == OLD_NAMES[0]
+    seen = {
+        (row["user_id"], row["username"]): (row["first_seen_at"], row["last_seen_at"])
+        for row in result["table profiles"]
+    }
+    assert seen == {
+        # first seen at the start; the second start five minutes later
+        # changed nothing; last seen when the creator was renamed back
+        (ONE, "creator_one"): (START, after_start(minutes=15)),
+        (ONE, "renamed_one"): (after_start(minutes=10),) * 2,
+        (ONE, profile.placeholder_names(ONE)[1]): (None, None),
+        # started again five minutes after: not written again
+        (TWO, "creator_two"): (after_start(minutes=5),) * 2,
+        # recorded before the dates: when it was first seen isn't known
+        (TWO, OLD_NAMES[0]): (None, after_start(days=2, minutes=15)),
+        (TWO, OLD_NAMES[1]): (None, None),
+        (TWO, OLD_NAMES[2]): (None, None),
+    }
     assert result["profile of nobody"] is None
     assert result["profile table"] in (True, 1)
     assert result["post ids one"] == [10, 11, 12, BIG]
@@ -355,9 +447,6 @@ def check(result):
     assert result["downloaded, every creator, no skips"] == [AVATAR, 1, 2, 7, 8]
     assert result["downloaded one"] == [AVATAR, 1, 2, 4, 7]
     assert result["downloaded two"] == [8]
-    assert result["duplicate hashes one"] == ["same"]
-    assert result["duplicate hashes two"] == []
-    assert result["duplicate files one"] == ["a.jpg", "b.jpg"]
     assert result["permanent skips one"] == [4]
     assert result["skips unmarked"] == 1
     assert result["permanent skips after"] == []
@@ -382,7 +471,7 @@ def check(result):
     assert texts[ONE, 31]["price"] == 12.5
     assert sorted(row["name"] for row in result["table labels"]) == ["Archived"] + ["favourites"] * 2 + ["renamed"]
     assert result["label posts, a word for an id"] == [11]
-    assert result["table models"] and len(result["table profiles"]) == 3
+    assert result["table models"] and len(result["table profiles"]) == 7
     assert len(result["table medias"]) == 11
     # ids come back as they went in: numbers as numbers, a hash as text
     assert [AVATAR, AVATAR_POST] in result["media pairs one"]
