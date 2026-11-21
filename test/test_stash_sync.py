@@ -18,6 +18,7 @@ import ofscraper.classes.of.posts as posts_
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.data.posts.post as post
 import ofscraper.db.operations as operations
+import ofscraper.db.postgres as postgres
 import ofscraper.utils.settings as settings
 from ofscraper.commands import stash_sync
 from ofscraper.commands.stash_sync import StashError, map_path, read_model, sync
@@ -141,6 +142,16 @@ class FakeStash:
         self.entities[kind][name] = new
         self.aliases[kind][new] = list(aliases)
         return new
+
+
+@pytest.fixture(autouse=True)
+def own_home(tmp_path_factory, monkeypatch):
+    """The command looks for the scraper's config.json when it starts (to say so
+    when PostgreSQL is on): a home folder without one, and PostgreSQL off."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
 
 
 @pytest.fixture
@@ -1042,6 +1053,30 @@ def test_no_tags(library):
     stash = FakeStash(scenes=[str(media_dir / "post.mp4")])
     sync([db], stash, apply=True, tags=False)
     assert stash.entities["tag"] == {}
+
+
+def test_cli_says_it_reads_sqlite_files_while_postgresql_is_on(library, stash_server, monkeypatch, capsys):
+    monkeypatch.setenv(postgres.URL_KEY, "postgresql://user:password@localhost/db")
+    db, media_dir = library
+    stash, url = stash_server
+    stash.add("scene", str(media_dir / "post.mp4"))
+    assert stash_sync.main([str(db), "--url", url]) == 0
+    said = capsys.readouterr()
+    assert said.err.startswith("warning: PostgreSQL is on (OFSC_DATABASE_URL is set)")
+    assert "stash_sync still reads the user_data.db files" in said.err
+    assert "password" not in said.err
+    # the report still comes, and is all there is on stdout
+    assert json.loads(said.out)["totals"]["to_update"] == 1
+
+
+def test_cli_says_nothing_about_postgresql_while_it_is_off(library, stash_server, capsys):
+    db, media_dir = library
+    stash, url = stash_server
+    stash.add("scene", str(media_dir / "post.mp4"))
+    assert stash_sync.main([str(db), "--url", url]) == 0
+    said = capsys.readouterr()
+    assert said.err == ""
+    assert json.loads(said.out)["totals"]["to_update"] == 1
 
 
 def test_unreachable_stash_exits_with_error(library, capsys):

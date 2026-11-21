@@ -5,10 +5,13 @@ itself is a stub, so the tests check which questions are asked and whether a
 merge runs.
 """
 
+import logging
+
 import ofscraper.__main__  # noqa: F401  (import order avoids a circular import)
 
 import pytest
 
+import ofscraper.db.postgres as postgres
 import ofscraper.prompts.prompts as prompts
 import ofscraper.utils.merge as merge_utils
 
@@ -100,3 +103,31 @@ def test_confirm_yes_runs_the_merge(monkeypatch):
     )
     assert merges == [("source", "merged")]
     assert asked == ["backup", "folder", "new_db", "confirm", "another"]
+
+
+def test_the_screen_says_it_reads_sqlite_files_while_postgresql_is_on(monkeypatch, caplog):
+    monkeypatch.setenv(postgres.URL_KEY, "postgresql://user:password@localhost/db")
+    with caplog.at_level(logging.WARNING, logger="shared"):
+        asked, merges = run_screen(
+            monkeypatch, backup=[True], confirm=[True], another=[False]
+        )
+    said = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert said == [
+        "PostgreSQL is on (OFSC_DATABASE_URL is set), but Merge Databases still"
+        " reads the user_data.db files, not PostgreSQL. Anything scraped since"
+        " PostgreSQL was turned on is not in those files, so Merge Databases"
+        " will not see it. See POSTGRESQL.md."
+    ]
+    # the merge still runs
+    assert merges == [("source", "merged")]
+    assert asked == ["backup", "folder", "new_db", "confirm", "another"]
+
+
+def test_the_screen_says_nothing_about_postgresql_while_it_is_off(monkeypatch, caplog):
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
+    with caplog.at_level(logging.DEBUG, logger="shared"):
+        asked, merges = run_screen(
+            monkeypatch, backup=[True], confirm=[True], another=[False]
+        )
+    assert caplog.records == []
+    assert merges == [("source", "merged")]

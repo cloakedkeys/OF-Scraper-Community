@@ -112,6 +112,17 @@ def select(data_dir, find=None, show_all=False):
     return rows
 
 
+def _warn_on_postgres():
+    """With PostgreSQL on, say that the user_data.db files are what is read.
+    The scraper knows whether it is on; where it isn't installed, or is a
+    version from before it said so, nothing can be said."""
+    try:
+        from ofscraper.db.postgres import warn_sqlite_files
+    except ImportError:
+        return
+    warn_sqlite_files("creator_names.py")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -127,6 +138,7 @@ def main(argv=None):
     )
     ap.add_argument("--csv", type=pathlib.Path, help="also write the listing to a CSV file")
     args = ap.parse_args(argv)
+    _warn_on_postgres()
 
     if args.add:
         model_id, name = args.add

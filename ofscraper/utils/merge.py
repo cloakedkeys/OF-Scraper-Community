@@ -1,13 +1,21 @@
+import logging
+
 from rich.console import Console
 
 import ofscraper.db.merge as merge
+import ofscraper.db.postgres as postgres
 import ofscraper.prompts.prompts as prompts
 from ofscraper.utils.context.run_async import run
 
 console = Console()
+log = logging.getLogger("shared")
 
 
 def merge_runner():
+    # the merge works on user_data.db files, whichever engine is in use
+    notice = postgres.sqlite_files_notice("Merge Databases")
+    if notice:
+        log.warning(notice)
     while True:
         while True:
             if not prompts.backup_prompt_db():

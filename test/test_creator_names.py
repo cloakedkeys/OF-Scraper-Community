@@ -6,6 +6,8 @@ import sqlite3
 
 import pytest
 
+import ofscraper.db.postgres as postgres
+
 _spec = importlib.util.spec_from_file_location(
     "creator_names",
     pathlib.Path(__file__).resolve().parents[1] / "scripts" / "creator_names.py",
@@ -23,6 +25,16 @@ CREATE TABLE profiles (
     UNIQUE (user_id, username)
 )
 """
+
+
+@pytest.fixture(autouse=True)
+def own_home(tmp_path_factory, monkeypatch):
+    """The script looks for the scraper's config.json when it starts (to say so
+    when PostgreSQL is on): a home folder without one, and PostgreSQL off."""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
 
 
 def _account(data_dir, model_id, names, media=0):
@@ -132,6 +144,26 @@ def test_cli_lists_and_writes_csv(tmp_path, capsys):
     assert "folder if deleted: current_name" in out
     with open(out_csv, newline="", encoding="utf-8") as fh:
         assert list(csv.reader(fh))[1] == ["1", "2", "current_name", "old_name", "current_name"]
+
+
+def test_cli_says_it_reads_sqlite_files_while_postgresql_is_on(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv(postgres.URL_KEY, "postgresql://user:password@localhost/db")
+    _account(tmp_path, 1, ["current_name", "old_name"], media=2)
+    assert creator_names.main(["--data-dir", str(tmp_path)]) == 0
+    said = capsys.readouterr()
+    assert said.err.startswith("warning: PostgreSQL is on (OFSC_DATABASE_URL is set)")
+    assert "creator_names.py still reads the user_data.db files" in said.err
+    assert "password" not in said.err
+    # the listing still comes
+    assert "current_name   also known as: old_name" in said.out
+
+
+def test_cli_says_nothing_about_postgresql_while_it_is_off(tmp_path, capsys):
+    _account(tmp_path, 1, ["current_name", "old_name"], media=2)
+    assert creator_names.main(["--data-dir", str(tmp_path)]) == 0
+    said = capsys.readouterr()
+    assert said.err == ""
+    assert "current_name   also known as: old_name" in said.out
 
 
 def test_cli_add_reports_a_missing_account(tmp_path, capsys):
