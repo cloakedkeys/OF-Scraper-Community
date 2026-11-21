@@ -409,11 +409,14 @@ def _found(database_url):
     whole = set()
     for secret in found:
         whole.update({secret, urllib.parse.unquote(secret), urllib.parse.quote(secret, safe="")})
-    # and the password's own pieces, for a reading that splits it elsewhere
-    pieces = _pieces(found, r"[^A-Za-z0-9]+")
+    pieces = set()
     if parts is None:
-        # and every word of the address, and its parts on either side of an
-        # =, an @, a : or a /: the message then names nothing of it
+        # a reading that isn't certain: the password's own pieces too, for
+        # a reading that splits it elsewhere, and every word of the address,
+        # and its parts on either side of an =, an @, a : or a /: the
+        # message then names nothing of it. (A certain reading hides only
+        # the whole password: its pieces are often ordinary words.)
+        pieces = _pieces(found, r"[^A-Za-z0-9]+")
         words = database_url.split()
         whole.update(words)
         for split in (r"=", r"[@:/]", r"[@:/?&=#]", r"[^A-Za-z0-9]+"):

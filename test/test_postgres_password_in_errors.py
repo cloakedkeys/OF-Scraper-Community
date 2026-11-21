@@ -46,16 +46,22 @@ def driver(request, monkeypatch):
 
 
 def said(address, password):
-    """What the driver or Python could quote back for this address."""
+    """What the driver could quote back for this address: the address, the
+    password, and for an address it may read another way, what that other
+    reading cuts out of it."""
+    quoted = [
+        f'missing "=" after "{address}" in connection info string',
+        f"authentication failed (given {password})",
+        f"given {urllib.parse.quote(password, safe='')}",
+    ]
+    if postgres._reading(address) is not None:
+        return quoted
     after_at = address.split("@", 1)[-1].split("/")[0]
     try:
         python_reading = urllib.parse.urlsplit(address).netloc
     except ValueError:
         python_reading = address
-    return [
-        f'missing "=" after "{address}" in connection info string',
-        f"authentication failed (given {password})",
-        f"given {urllib.parse.quote(password, safe='')}",
+    return quoted + [
         f"failed to resolve host '{after_at}'",
         f"Can't use the PostgreSQL database at {python_reading}: failed",
     ]
@@ -96,8 +102,25 @@ def test_the_password_is_hidden_wherever_it_is(driver):
 
 
 def test_a_piece_of_the_password_is_hidden_only_where_it_stands_alone(driver):
-    address = "postgresql://scraper:s3cr%40t-word@db.example/library"
+    # not read as meant (a second @), so its pieces are hidden too
+    address = "postgresql://scraper:s3cr@t-word@db.example/library"
     assert postgres.masked("password word", address) == "password {hidden}"
+
+
+@pytest.mark.parametrize("password", ["only-for-this-job", "not-the-password", "only-for-this-test"])
+def test_a_certain_reading_hides_the_password_and_not_its_words(driver, password):
+    address = f"postgresql://scraper:{urllib.parse.quote(password, safe='')}@db.example:5432/library"
+    said = (
+        f'connection to server at "db.example", port 5432 failed: FATAL: password'
+        f' authentication failed for user "scraper" (given {password} for the test);'
+        " cannot execute INSERT in a read-only transaction; this is only for the test"
+    )
+    shown = postgres.masked(said, address)
+    assert password not in shown
+    assert "(given {hidden} for the test)" in shown
+    for word in ("only", "for", "this", "the", "password", "read-only"):
+        assert word in shown
+    assert postgres.describe(address) == "db.example:5432/library"
 
 
 def fragments(password):
