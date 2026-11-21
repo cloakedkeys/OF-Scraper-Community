@@ -176,7 +176,7 @@ def assert_no_fragment(password, text, own=""):
     assert [part for part in fragments(password) if part in shown and part not in own] == []
 
 
-@pytest.mark.parametrize("password", ["YD%BDS", "k%aCs", "%f01w", "98%B3X"])
+@pytest.mark.parametrize("password", ["YD%BDS", "k%aCs", "%f01w", "98%B3X", "Ab%zz", "Ab%"])
 def test_a_percent_escape_that_isnt_utf8_is_not_an_error(driver, monkeypatch, password):
     address = f"postgresql://scraper:{password}@127.0.0.1:5432/library"
     assert postgres.describe(address) == UNREADABLE

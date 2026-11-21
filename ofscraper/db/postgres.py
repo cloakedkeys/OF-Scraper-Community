@@ -381,7 +381,12 @@ def _read(database_url, conninfo_to_dict):
             return None
     else:
         scheme, sep, rest = database_url.partition("://")
-        if not sep or scheme not in ("postgresql", "postgres") or re.search(r"\s", rest):
+        # PostgreSQL refuses a space, and a % that isn't an escape
+        if (
+            not sep
+            or scheme not in ("postgresql", "postgres")
+            or re.search(r"\s|%(?![0-9A-Fa-f]{2})", rest)
+        ):
             return None
         login, at, after = rest.partition("@")
         if not at or "/" in login:
@@ -394,7 +399,7 @@ def _read(database_url, conninfo_to_dict):
             parts = {
                 "user": unquote(user),
                 "password": unquote(password) if ":" in login else None,
-                "host": where.hostname,
+                "host": unquote(where.hostname or ""),
                 "port": where.port,
                 "dbname": unquote(where.path.lstrip("/")),
             }
