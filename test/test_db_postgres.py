@@ -9,6 +9,7 @@ import builtins
 import contextlib
 import logging
 import sqlite3
+import urllib.parse
 from types import SimpleNamespace
 
 import pytest
@@ -261,8 +262,8 @@ def test_the_password_is_found_in_either_spelling(url, password):
         assert secrets == []
     else:
         assert password in secrets
-        # and the URL itself, longest first
-        assert secrets[0] == url
+        # and the URL itself, as written and %-encoded, longest first
+        assert secrets[:2] == [urllib.parse.quote(url, safe=""), url]
 
 
 @pytest.mark.parametrize(

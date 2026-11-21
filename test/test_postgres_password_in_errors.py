@@ -1,6 +1,7 @@
 """No part of the PostgreSQL password in a message, whatever it is made of
 (#647). The addresses and passwords here are made up."""
 
+import logging
 import re
 import sys
 import urllib.parse
@@ -9,6 +10,8 @@ import pytest
 
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.db.postgres as postgres
+import ofscraper.utils.logs.utils.sensitive as sensitive
+from ofscraper.utils.logs.classes.classes import SensitiveFormatter
 
 UNREADABLE = "the configured database"
 
@@ -87,9 +90,80 @@ def test_a_normal_address_still_names_the_server(driver):
     assert masked == "could not reach db.example:5433 ({hidden}, {hidden})"
 
 
-def test_letters_alone_are_hidden_only_where_they_stand_alone(driver):
+def test_the_password_is_hidden_wherever_it_is(driver):
     address = "postgresql://scraper:Zq@db.example/library"
-    assert postgres.masked("Zqx given Zq.", address) == "Zqx given {hidden}."
-    # a piece of the password, inside a word of the message
+    assert postgres.masked("Zqx given Zq.", address) == "{hidden}x given {hidden}."
+
+
+def test_a_piece_of_the_password_is_hidden_only_where_it_stands_alone(driver):
     address = "postgresql://scraper:s3cr%40t-word@db.example/library"
     assert postgres.masked("password word", address) == "password {hidden}"
+
+
+def fragments(password):
+    """Every 2+ character stretch of the password with a letter or digit."""
+    return {
+        password[i:j]
+        for i in range(len(password))
+        for j in range(i + 2, len(password) + 1)
+        if re.search(r"[A-Za-z0-9]", password[i:j])
+    }
+
+
+def assert_no_fragment(password, text, own=""):
+    """No fragment of the password in `text`, but for those the message's
+    own words (`own`) have."""
+    shown = text.replace("{hidden}", "\0")
+    assert [part for part in fragments(password) if part in shown and part not in own] == []
+
+
+@pytest.mark.parametrize("password", ["YD%BDS", "k%aCs", "%f01w", "98%B3X"])
+def test_a_percent_escape_that_isnt_utf8_is_not_an_error(driver, monkeypatch, password):
+    address = f"postgresql://scraper:{password}@127.0.0.1:5432/library"
+    assert postgres.describe(address) == UNREADABLE
+    assert_no_fragment(password, postgres.masked(f"given {password} for {address}", address))
+    # and the log lines hide it from then on
+    monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
+    postgres.POSTGRES._hide_password(address)
+    record = logging.LogRecord("shared", logging.ERROR, __file__, 1, f"tried {password}", None, None)
+    assert_no_fragment(password, SensitiveFormatter("%(message)s").format(record))
+
+
+@pytest.mark.parametrize(
+    "address, password, said",
+    [
+        # an unquoted password with a space and an =: its second word is
+        # read as an option's name
+        ("host=db.example dbname=library password=DP UJ=R44", "DP UJ=R44", 'invalid connection option "UJ"'),
+        ("host=db.example dbname=library password=55B Z#N", "55B Z#N", 'missing "=" after "Z#N" in connection info string'),
+        ("postgresql://scraper:F& Z=@LK@db.example/library", "F& Z=@LK", 'unexpected spaces found in "F& Z="'),
+        # a quoted part of the address, cut where the driver cut it
+        ("postgresql://scraper:B+E8W @+@N@db.example/library", "B+E8W @+@N", "failed to resolve host '+@N@db.example'"),
+        (
+            "postgresql://scraper:@:?@R:/S%@db.example/library",
+            "@:?@R:/S%",
+            'missing key/value separator "=" in URI query parameter: "@R:/S%@db.example/library"',
+        ),
+    ],
+)
+def test_what_the_driver_quotes_of_an_unreadable_address_is_hidden(driver, address, password, said):
+    assert_no_fragment(password, postgres.masked(said, address))
+    assert postgres.describe(address) == UNREADABLE
+
+
+def test_a_password_that_looks_like_a_query_is_not_trusted(driver):
+    # PostgreSQL would read the password after the ? instead
+    address = "postgresql://scraper:Secret/Pw?password=1@db.example/library"
+    assert postgres.describe(address) == UNREADABLE
+    own = 'connection to server at "{}" failed (port "{}", dbname "{}")'
+    said = own.format("scraper", "Secret", "Pw?password=1@db.example/library")
+    assert_no_fragment("Secret/Pw?password=1", postgres.masked(said, address), own)
+
+
+def test_a_one_character_password_is_not_hidden_from_every_log_line(driver, monkeypatch):
+    monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
+    address = "postgresql://scraper:!@db.example/library"
+    postgres.POSTGRES._hide_password(address)
+    assert re.escape("!") not in sensitive._USER_ADDED_PATTERNS
+    # a message still hides it
+    assert postgres.masked("given !", address) == "given {hidden}"
