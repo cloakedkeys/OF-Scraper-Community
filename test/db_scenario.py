@@ -199,6 +199,10 @@ async def scenario():
         # a second start for creator one changes nothing
         for who in (two, one):
             await operations.table_init_create(**who)
+        # nor does one for creator two minutes later: a run starts a creator
+        # more than once, and a name's date is then left as it is
+        clock.later(minutes=5)
+        await operations.table_init_create(**two)
         out["profile name two"] = await profile.get_profile_info(**two)
         clock.later(days=1)
         await profile.write_profile_table(model_id=ONE, username="renamed_one")
@@ -413,12 +417,13 @@ def check(result):
     assert seen == {
         # first seen at the start; the second start five minutes later
         # changed nothing; last seen when the creator was renamed back
-        (ONE, "creator_one"): (START, after_start(days=1, minutes=10)),
-        (ONE, "renamed_one"): (after_start(days=1, minutes=5),) * 2,
+        (ONE, "creator_one"): (START, after_start(days=1, minutes=15)),
+        (ONE, "renamed_one"): (after_start(days=1, minutes=10),) * 2,
         (ONE, profile.placeholder_names(ONE)[1]): (None, None),
+        # started again five minutes after: not written again
         (TWO, "creator_two"): (after_start(minutes=5),) * 2,
         # recorded before the dates: when it was first seen isn't known
-        (TWO, OLD_NAMES[0]): (None, after_start(days=3, minutes=10)),
+        (TWO, OLD_NAMES[0]): (None, after_start(days=3, minutes=15)),
         (TWO, OLD_NAMES[1]): (None, None),
         (TWO, OLD_NAMES[2]): (None, None),
     }
