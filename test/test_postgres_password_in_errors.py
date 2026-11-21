@@ -96,9 +96,45 @@ def test_a_normal_address_still_names_the_server(driver):
     assert masked == "could not reach db.example:5433 ({hidden}, {hidden})"
 
 
-def test_the_password_is_hidden_wherever_it_is(driver):
+def test_the_password_is_hidden_where_it_is_not_part_of_a_longer_word(driver):
     address = "postgresql://scraper:Zq@db.example/library"
-    assert postgres.masked("Zqx given Zq.", address) == "{hidden}x given {hidden}."
+    assert postgres.masked("Zqx given Zq.", address) == "Zqx given {hidden}."
+    address = "postgresql://scraper:word@db.example/library"
+    said = 'FATAL: password authentication failed for user "scraper" (word)'
+    assert postgres.masked(said, address) == said.replace("(word)", "({hidden})")
+
+
+@pytest.mark.parametrize("query", ["?%70assword=1", "?sslmode=disable&%70assword=1"])
+def test_an_at_after_the_login_part_is_not_trusted(driver, query):
+    # PostgreSQL decodes the option's name: host scraper, port Secret,
+    # database Pw, and the password is what follows
+    address = f"postgresql://scraper:Secret/Pw{query}@db.example/library"
+    assert postgres.describe(address) == UNREADABLE
+    own = 'invalid port "{}" for database "{}"'
+    shown = postgres.masked(own.format("Secret", "Pw"), address)
+    assert_no_fragment("Secret/Pw", shown, own)
+    # and without the /: the ?...= may be a query that was meant
+    address = f"postgresql://scraper:Pw{query}@db.example/library"
+    assert postgres.describe(address) == UNREADABLE
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "postgresql://scraper@db.example/library?password=hunter2",
+        "postgresql://scraper@db.example/library?sslmode=require&%70assword=hunter2",
+        "postgresql://db.example/library?user=scraper&password=hunter2",
+    ],
+)
+def test_a_password_in_the_query_of_an_ordinary_address(driver, address):
+    assert postgres.describe(address) == "db.example/library"
+    assert postgres.masked("given hunter2", address) == "given {hidden}"
+
+
+def test_an_address_with_a_nul_is_not_trusted(driver):
+    address = "postgresql://scraper:hunter2\x00@db.example/library"
+    assert postgres.describe(address) == UNREADABLE
+    assert "hunter2" not in postgres.masked("given 'hunter2' and hunter2", address)
 
 
 def test_a_piece_of_the_password_is_hidden_only_where_it_stands_alone(driver):
