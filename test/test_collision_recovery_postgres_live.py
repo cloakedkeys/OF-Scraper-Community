@@ -40,6 +40,7 @@ from test.test_collision_recovery_postgres import (  # noqa: E402,F401  (the fix
     OTHER,
     OTHER_NAME,
     TO_MARK,
+    WHO,
     check_one_creator_or_none,
     check_only_that_creator,
     check_same_recovery,
@@ -104,53 +105,108 @@ def test_only_that_creators_rows_of_that_site_are_touched(three_creators, pg, tm
 
 def test_cli_works_on_the_database_its_environment_names(one_creator, pg, tmp_path, monkeypatch, capsys):
     bring_in(tmp_path / ".data")
-    monkeypatch.chdir(tmp_path / "undo")
+    monkeypatch.chdir(tmp_path)
     before = everything_held(pg)
     from_file = recover(one_creator)
 
-    code, out, err = command(capsys, "--postgres", "--creator", NAME)
+    code, out, err = command(capsys, "--postgres", "--creator", NAME, "--undo-dir", "undo")
 
     assert (code, err) == (0, "")
-    assert json.loads(out) == from_file
+    # what the file gives, and who the name turned out to be
+    assert json.loads(out) == {**from_file, "creator": WHO}
     assert from_file["media_to_mark"] == TO_MARK
-    # a preview changes nothing
+    # a preview changes nothing, and leaves nothing in the undo folder
     assert everything_held(pg) == before
-    assert not undo_files(tmp_path / "undo")
+    assert list((tmp_path / "undo").iterdir()) == []
 
+    # without a folder for the undo file nothing is applied
     code, out, err = command(capsys, "--postgres", "--creator", CREATOR, "--site", "onlyfans", "--apply")
+
+    assert (code, out) == (2, "")
+    assert "--postgres --apply needs --undo-dir" in err
+    assert everything_held(pg) == before
+
+    code, out, err = command(
+        capsys, "--postgres", "--creator", CREATOR, "--site", "onlyfans", "--apply", "--undo-dir", "undo"
+    )
 
     assert (code, err) == (0, "")
     applied = json.loads(out)
-    assert (applied["applied"], applied["rows_marked"]) == (True, MARKED)
+    assert (applied["applied"], applied["rows_marked"], applied["creator"]) == (True, MARKED, WHO)
     (saved,) = undo_files(tmp_path / "undo")
-    assert applied["undo_file"] == str(saved)
+    assert applied["undo_file"] == str(saved) and saved.is_absolute()
+    # the undo file says where it was made, without the login
+    record = json.loads(saved.read_text(encoding="utf-8"))
+    assert record["database"] == postgres.describe(URL)
+    assert list(record) == ["version", "source", "site", "model_id", "database", "rows"]
     marked = everything_held(pg)
     assert marked != before
 
     code, out, err = command(capsys, "--postgres", "--creator", NAME, "--undo", saved)
 
     assert (code, err) == (0, "")
-    assert json.loads(out) == {"applied": False, "rows_to_restore": MARKED}
+    assert json.loads(out) == {"applied": False, "rows_to_restore": MARKED, "creator": WHO}
     assert everything_held(pg) == marked
 
     code, out, err = command(capsys, "--postgres", "--creator", NAME, "--undo", saved, "--apply")
 
     assert (code, err) == (0, "")
-    assert json.loads(out) == {"applied": True, "rows_to_restore": MARKED}
+    assert json.loads(out) == {"applied": True, "rows_to_restore": MARKED, "creator": WHO}
     assert everything_held(pg) == before
 
 
-def test_a_database_without_the_scrapers_tables_has_no_creator(pg, capsys):
-    code, out, err = command(capsys, "--postgres", "--creator", "nobody", "--apply")
+def test_stopped_while_the_changes_are_saved_the_undo_file_is_the_way_back(
+    one_creator, pg, tmp_path, monkeypatch, capsys
+):
+    """Ctrl-C lands after the server kept the changes and before the command
+    knows it."""
+    bring_in(tmp_path / ".data")
+    before = everything_held(pg)
+    real = psycopg.Connection.commit
+    changing = []
+
+    def change(self, *args, was=creator_rows.PostgresRows.change):
+        changing.append(args)
+        return was(self, *args)
+
+    def commit(self):
+        real(self)
+        # not the commit that sets the connection up
+        if changing:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(creator_rows.PostgresRows, "change", change)
+    monkeypatch.setattr(psycopg.Connection, "commit", commit)
+
+    code, out, err = command(capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "undo")
+
+    monkeypatch.setattr(psycopg.Connection, "commit", real)
+    (saved,) = undo_files(tmp_path / "undo")
+    assert (code, out) == (130, "")
+    assert err.startswith("Recovery failed: This was stopped while the changes were being saved to the PostgreSQL")
+    assert f"The undo file is kept: {saved}." in err and err.count("\n") == 1
+    assert len(changing) == MARKED
+    assert everything_held(pg) != before
+
+    code, out, err = command(capsys, "--postgres", "--creator", NAME, "--undo", saved)
+    assert (code, err) == (0, "")
+    assert json.loads(out)["rows_to_restore"] == MARKED
+    code, out, err = command(capsys, "--postgres", "--creator", NAME, "--undo", saved, "--apply")
+    assert (code, err) == (0, "")
+    assert everything_held(pg) == before
+
+
+def test_a_database_without_the_scrapers_tables_has_no_creator(pg, tmp_path, capsys):
+    code, out, err = command(capsys, "--postgres", "--creator", "Nobody", "--apply", "--undo-dir", tmp_path)
 
     assert (code, out) == (1, "")
-    assert err == "Recovery failed: PostgreSQL has no creator named nobody (looked in: onlyfans, fansly)\n"
+    assert err == "Recovery failed: PostgreSQL has no creator named Nobody (looked in: onlyfans, fansly)\n"
 
 
-def test_a_refused_login_is_one_sentence_without_the_password(pg, monkeypatch, capsys):
+def test_a_refused_login_is_one_sentence_without_the_password(pg, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv(postgres.URL_KEY, changed_url(password="not-the-password"))
 
-    code, out, err = command(capsys, "--postgres", "--creator", NAME, "--apply")
+    code, out, err = command(capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path)
 
     assert (code, out) == (1, "")
     assert err.startswith("Recovery failed: Can't use the PostgreSQL database at ")
@@ -245,7 +301,8 @@ def test_a_row_the_scraper_changed_meanwhile_stops_the_run_with_nothing_changed(
 def test_a_row_the_scraper_holds_stops_the_run_with_nothing_changed(one_creator, pg, tmp_path, monkeypatch, capsys):
     bring_in(tmp_path / ".data")
     before = everything_held(pg)
-    monkeypatch.setattr(postgres.Writer, "LOCK_TIMEOUT", 1)
+    # how long a connection of the command's waits for a held row, in seconds
+    monkeypatch.setattr(postgres, "CHECKOUT_TIMEOUT", 1)
     # a write of the scraper's that isn't finished
     scraper = psycopg.connect(URL)
     try:
@@ -342,8 +399,12 @@ def test_undo_is_refused_for_what_it_doesnt_fit(three_creators, pg, tmp_path):
 
     # downloaded again with the file it had: nothing to restore in that row
     server(f"UPDATE {medias} SET filename = 'missing.jpg' WHERE model_id = {CREATOR} AND post_id = '106'")
-    assert on_postgres(URL, NAME, undo_file=saved, apply=True) == {"applied": True, "rows_to_restore": MARKED - 1}
-    assert on_postgres(URL, NAME, undo_file=saved, apply=True) == {"applied": True, "rows_to_restore": 0}
+    assert on_postgres(URL, NAME, undo_file=saved, apply=True) == {
+        "applied": True, "rows_to_restore": MARKED - 1, "creator": WHO,
+    }
+    assert on_postgres(URL, NAME, undo_file=saved, apply=True) == {
+        "applied": True, "rows_to_restore": 0, "creator": WHO,
+    }
 
 
 # --- one creator's rows, changed (creator_rows) ---
@@ -424,7 +485,9 @@ def test_the_connection_changes_rows_in_one_transaction_that_sees_one_moment(pg)
     try:
         assert tuple(writer.rows("SHOW transaction_read_only")[0]) == ("off",)
         assert tuple(writer.rows("SHOW transaction_isolation")[0]) == ("repeatable read",)
+        # the Reader's timeouts, which it is opened with
         assert tuple(writer.rows("SHOW lock_timeout")[0]) == ("30s",)
+        assert tuple(writer.rows("SHOW statement_timeout")[0]) == ("5min",)
         assert tuple(writer.rows("SHOW TimeZone")[0]) == ("UTC",)
         # the first read of a table is the moment every later one sees
         assert [tuple(row) for row in writer.rows(f"SELECT model_id FROM {models}")] == [(1,)]

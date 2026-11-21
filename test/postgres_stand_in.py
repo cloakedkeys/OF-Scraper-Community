@@ -34,6 +34,9 @@ TYPE_NAMES = {
 }
 # one row per key (the import leaves out a row that is already there)
 SHARED = {"profiles": ("user_id", "username"), "models": ("model_id",)}
+# taken when this is first imported, before a test puts the stand-in's Writer
+# in postgres.Writer's place
+REAL_COMMIT = postgres.Writer.commit
 
 
 def kept(value, kind):
@@ -81,10 +84,12 @@ class Server:
         self.fails_on = None
         # for a Writer: called once, before its first change (what another
         # program does between a tool's reads and its changes); an error
-        # its changes raise; an error its commit raises
+        # its changes raise; what its connection's commit raises without
+        # keeping the changes, or after it kept them (the answer never came)
         self.before_change = None
         self.change_error = None
         self.commit_error = None
+        self.commit_answer_lost = None
         self._open = False
         self._kept_elsewhere = []
 
@@ -273,11 +278,17 @@ class Writer(Reader):
     aren't locked, and a column takes any value."""
 
     def __init__(self, server, database_url):
+        import psycopg
+
         super().__init__(server, database_url)
         server.events.append(("open for changes",))
         server.db.execute("SAVEPOINT tool")
         server._open = True
         self._changed = False
+        # what postgres.Writer's own commit() needs of a connection
+        self._conn = SimpleNamespace(commit=self._keep)
+        self._errors = (psycopg.Error,)
+        self._url = database_url
 
     def change(self, query, params=()):
         self.server.events.append(("change", query))
@@ -298,13 +309,20 @@ class Writer(Reader):
             query.replace(" IS NOT DISTINCT FROM ", " IS "), values
         ).rowcount
 
-    def commit(self):
+    # the real one, over _keep: what it makes of a commit that goes wrong is
+    # the engine's to say
+    commit = REAL_COMMIT
+
+    def _keep(self):
+        """The connection's commit."""
         self.server.events.append(("commit",))
         assert not self.closed and self.server._open
         if self.server.commit_error:
             raise self.server.commit_error
         self.server.db.execute("RELEASE tool")
         self._end()
+        if self.server.commit_answer_lost:
+            raise self.server.commit_answer_lost
 
     def close(self):
         if self.server._open:

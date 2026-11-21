@@ -47,7 +47,7 @@ Which site a run uses is decided in this order:
 - **Each creator's `user_data.db`:** any scrape writes it. That covers the `download`, `like` and `unlike` actions, `manual`, the `*_check` commands and `metadata`. [database.md](database.md) lists which rows each one writes, and the backups made beside the database.
 - **Media:** files go under the save location, through `dir_format` and `file_format`. Downloads are written as `.part` files (in `advanced_options.temp_dir` when set) and then moved into place. `--no-auto-resume` deletes leftover `.part` files instead of resuming them.
 - **`db --export PATH`:** writes a CSV.
-- **`recover_collisions --apply`:** resets `downloaded` flags and writes an undo file beside the database. With `--postgres` the flags are in PostgreSQL, and the undo file goes to the current folder or `--undo-dir`.
+- **`recover_collisions --apply`:** resets `downloaded` flags and writes an undo file beside the database. With `--postgres` the flags are in PostgreSQL, and the undo file goes to `--undo-dir`, which `--apply` then needs.
 - **Logs and cache:** logs go to the `logging` folder. The cache goes to the profile's cache folder. `--no-cache` and `--no-api-cache` stop cache writes.
 
 ## Default folder layout

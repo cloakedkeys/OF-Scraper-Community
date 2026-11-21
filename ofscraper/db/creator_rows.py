@@ -162,7 +162,9 @@ class PostgresRows:
         return self._reader.change(query, [*to.values(), self.model_id, row_id, *was.values()]) == 1
 
     def commit(self):
-        """Keep every change made through this connection."""
+        """Keep every change made through this connection. Whatever stops
+        this once it has begun is a postgres.Unconfirmed: the changes may
+        have been kept all the same."""
         self._reader.commit()
 
     def close(self):

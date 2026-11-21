@@ -909,8 +909,12 @@ class ChangedMeanwhile(PostgresUnavailable):
 
 
 class Unconfirmed(PostgresUnavailable):
-    """The connection went while the changes were being kept, so it isn't
-    known whether they were."""
+    """Keeping the changes was begun and didn't end well (the connection
+    went, or the program was stopped), so it isn't known whether they were
+    kept. Whoever gets this must not tidy up as if they weren't."""
+
+    # it was stopped from the keyboard (Ctrl-C), not by the connection
+    interrupted = False
 
 
 class Writer(Reader):
@@ -921,11 +925,14 @@ class Writer(Reader):
     commit(); close() without it leaves the database as it was. Every read
     sees the database as it was at the first one, and the server refuses a
     change to a row that another program changed after that: a
-    ChangedMeanwhile, after which nothing can be kept."""
+    ChangedMeanwhile, after which nothing can be kept.
 
-    # how long a change waits for a row another program holds, in seconds:
-    # the scraper's own writes take a moment
-    LOCK_TIMEOUT = 30
+    The Reader's timeouts hold here too. A change waits CHECKOUT_TIMEOUT
+    for a row another program holds (the scraper's own writes take a
+    moment), and no statement may take longer than READ_TIMEOUT: a change
+    names one row by its id, so only the first read of a creator's rows
+    comes anywhere near that."""
+
     # another program got there first: it changed the row since the first
     # read (40001), holds it (55P03), or each waits for the other (40P01)
     _MEANWHILE = frozenset({"40001", "40P01", "55P03"})
@@ -934,8 +941,6 @@ class Writer(Reader):
         super().__init__(database_url)
         try:
             self._conn.read_only = False
-            self._conn.execute(f"SET lock_timeout = {self.LOCK_TIMEOUT * 1000}")
-            self._conn.commit()
         except self._errors as E:
             self.close()
             raise POSTGRES._unavailable(E, database_url) from E
@@ -960,13 +965,28 @@ class Writer(Reader):
             ) from E
 
     def commit(self):
-        """Keep what was changed."""
+        """Keep what was changed.
+
+        Once this has begun, whatever stops it is an Unconfirmed: a lost
+        connection, but also Ctrl-C or the program being told to end, which
+        the driver passes on whether or not the server had kept the changes
+        by then."""
         try:
             self._conn.commit()
-        except self._errors as E:
-            detail = masked(" ".join(str(E).split()), self._url)[:300]
-            raise Unconfirmed(
-                "The connection to the PostgreSQL database at"
-                f" {describe(self._url)} was lost while the changes were being"
-                f" saved, so it isn't known whether they were. ({detail})"
-            ) from E
+        except BaseException as E:
+            if isinstance(E, self._errors):
+                detail = masked(" ".join(str(E).split()), self._url)[:300]
+                said = (
+                    "The connection to the PostgreSQL database at"
+                    f" {describe(self._url)} was lost while the changes were being"
+                    f" saved, so it isn't known whether they were. ({detail})"
+                )
+            else:
+                said = (
+                    "This was stopped while the changes were being saved to the"
+                    f" PostgreSQL database at {describe(self._url)}, so it isn't"
+                    " known whether they were."
+                )
+            unconfirmed = Unconfirmed(said)
+            unconfirmed.interrupted = isinstance(E, KeyboardInterrupt)
+            raise unconfirmed from E

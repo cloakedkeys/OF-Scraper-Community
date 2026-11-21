@@ -18,6 +18,7 @@ import subprocess
 import sys
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -43,6 +44,8 @@ BIG = 2**62
 COLUMNS = ["media_id", "post_id", "directory", "filename", "downloaded", "size", "hash", "model_id"]
 # what `library` holds: rows, media to mark, rows marked, groups
 ROWS, TO_MARK, MARKED, GROUPS = 13, 5, 7, 3
+# who the name turns out to be, which a report from PostgreSQL says
+WHO = {"site": "onlyfans", "model_id": CREATOR, "username": NAME}
 MEANWHILE = (
     "Recovery failed: A row was changed by another program while this ran (is the"
     " scraper running?). Nothing was changed. Close the scraper and run this again.\n"
@@ -70,9 +73,10 @@ def server(monkeypatch):
     server.close()
 
 
-def cli(monkeypatch, capsys, *args, url=URL):
+def cli(monkeypatch, capsys, *args, url=URL, ends=True):
     """The command, with the address in its environment for the call only:
-    (exit code, stdout, stderr)."""
+    (exit code, stdout, stderr). With `ends`, an interrupt that comes out of
+    it as it is fails the test (it would stop the whole test run)."""
     capsys.readouterr()
     with monkeypatch.context() as patch:
         patch.setenv(postgres.URL_KEY, url)
@@ -80,6 +84,10 @@ def cli(monkeypatch, capsys, *args, url=URL):
             code = recover_collisions.main([str(arg) for arg in args]) or 0
         except SystemExit as stopped:
             code = stopped.code
+        except KeyboardInterrupt:
+            if not ends:
+                raise
+            pytest.fail("the command was stopped by an interrupt it should have ended on")
     said = capsys.readouterr()
     return code, said.out, said.err
 
@@ -209,7 +217,9 @@ def check_same_recovery(database_url, db, undo_dir):
 
     from_file = recover(db)
     from_database = on_postgres(database_url, name, undo_dir=undo_dir)
-    assert from_database == from_file
+    # the same report, and who the name turned out to be
+    assert from_database == {**from_file, "creator": WHO}
+    assert list(from_database)[:-1] == list(from_file)
     assert (from_file["media_to_mark"], len(from_file["groups"])) == (TO_MARK, GROUPS)
     assert from_file["groups"][2]["media"] == [
         {"model_id": CREATOR, "media_id": "feedc0de"}, {"model_id": CREATOR, "media_id": BIG},
@@ -220,25 +230,32 @@ def check_same_recovery(database_url, db, undo_dir):
 
     from_file = recover(db, apply=True)
     from_database = on_postgres(database_url, name, apply=True, undo_dir=undo_dir)
-    assert without_undo(from_database) == without_undo(from_file)
+    assert without_undo(from_database) == {**without_undo(from_file), "creator": WHO}
     assert (from_file["rows_marked"], from_file["applied"]) == (MARKED, True)
     after = file_rows(db)
     assert postgres_rows(database_url) == after
     assert [row[4] for row in after] == [0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, None]
+    # a full path, in the folder it was told
     assert [Path(from_database["undo_file"])] == undo_files(undo_dir)
+    assert Path(from_database["undo_file"]).is_absolute()
     # nothing left to mark, from either
-    assert on_postgres(database_url, name, apply=True, undo_dir=undo_dir) == recover(db, apply=True)
+    assert on_postgres(database_url, name, apply=True, undo_dir=undo_dir) == {
+        **recover(db, apply=True), "creator": WHO,
+    }
     assert len(undo_files(undo_dir)) == 1
 
     file_undo, database_undo = from_file["undo_file"], from_database["undo_file"]
     previewed = on_postgres(database_url, name, undo_file=database_undo)
-    assert previewed == undo(db, file_undo) == {"applied": False, "rows_to_restore": MARKED}
+    assert undo(db, file_undo) == {"applied": False, "rows_to_restore": MARKED}
+    assert previewed == {"applied": False, "rows_to_restore": MARKED, "creator": WHO}
     assert postgres_rows(database_url) == file_rows(db) == after
     restored = on_postgres(database_url, name, undo_file=database_undo, apply=True)
-    assert restored == undo(db, file_undo, apply=True) == {"applied": True, "rows_to_restore": MARKED}
+    assert undo(db, file_undo, apply=True) == {"applied": True, "rows_to_restore": MARKED}
+    assert restored == {"applied": True, "rows_to_restore": MARKED, "creator": WHO}
     assert postgres_rows(database_url) == file_rows(db) == before
     again = on_postgres(database_url, name, undo_file=database_undo, apply=True)
-    assert again == undo(db, file_undo, apply=True) == {"applied": True, "rows_to_restore": 0}
+    assert undo(db, file_undo, apply=True) == {"applied": True, "rows_to_restore": 0}
+    assert again == {"applied": True, "rows_to_restore": 0, "creator": WHO}
     assert postgres_rows(database_url) == before
 
 
@@ -273,7 +290,7 @@ def check_only_that_creator(database_url, snapshot, schema, undo_dir):
         database_url, NAME, site="onlyfans", undo_file=result["undo_file"], apply=True
     )
 
-    assert restored == {"applied": True, "rows_to_restore": MARKED}
+    assert restored == {"applied": True, "rows_to_restore": MARKED, "creator": WHO}
     assert snapshot() == before
 
 
@@ -288,16 +305,19 @@ def test_only_that_creators_rows_of_that_site_are_touched(three_brought_in, serv
 # --- preview and apply ---
 
 
-def test_a_preview_only_reads(brought_in, server, tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path / "undo")
+@pytest.mark.parametrize("folder", [[], ["--undo-dir", "undo"]])
+def test_a_preview_only_reads(brought_in, server, tmp_path, monkeypatch, capsys, folder):
+    monkeypatch.chdir(tmp_path)
     before = held(server)
 
-    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME)
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, *folder)
 
     assert (code, err) == (0, "")
     report = json.loads(out)
     assert (report["applied"], report["media_to_mark"], report["rows_marked"]) == (False, TO_MARK, 0)
-    assert report["undo_file"] is None and not undo_files(tmp_path / "undo")
+    assert report["undo_file"] is None
+    # nothing is left in the folder it would write to, or the one it is run in
+    assert list((tmp_path / "undo").iterdir()) == [] and not undo_files(tmp_path)
     assert held(server) == before
     # one connection, to the address in the environment, that can't change rows
     assert [event for event in server.events if event[0] == "connect"] == [("connect", URL)]
@@ -309,27 +329,41 @@ def test_a_preview_only_reads(brought_in, server, tmp_path, monkeypatch, capsys)
 def test_apply_saves_the_undo_file_first_then_changes_everything_in_one_transaction(
     brought_in, server, tmp_path, monkeypatch, capsys
 ):
-    monkeypatch.chdir(tmp_path / "undo")
+    monkeypatch.chdir(tmp_path)
     before = held(server)
     seen = {}
+    synced = os.fsync
+
+    def fsync(descriptor):
+        # the undo file, written out in full by the time it is made to stay
+        (saved,) = undo_files(tmp_path / "undo")
+        server.events.append(("fsync", len(json.loads(saved.read_text(encoding="utf-8"))["rows"])))
+        return synced(descriptor)
 
     def before_the_first_change():
         (saved,) = undo_files(tmp_path / "undo")
         seen["rows"] = len(json.loads(saved.read_text(encoding="utf-8"))["rows"])
         seen["held"] = held(server)
 
+    monkeypatch.setattr(os, "fsync", fsync)
     server.before_change = before_the_first_change
 
-    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply")
+    # the folder as it is typed, from where the command is run
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", "undo")
 
     assert (code, err) == (0, "")
     report = json.loads(out)
     assert (report["applied"], report["rows_marked"]) == (True, MARKED)
     # the whole undo file was there before anything was changed
     assert seen == {"rows": MARKED, "held": before}
-    # without --undo-dir it is in the folder the command is run in
+    # and was made to stay on the disk before that, not after
+    kinds = [event[0] for event in server.events]
+    assert ("fsync", MARKED) in server.events and kinds.count("fsync") == 1
+    assert kinds.index("fsync") < kinds.index("change")
+    # the report gives its full path
     (saved,) = undo_files(tmp_path / "undo")
-    assert report["undo_file"] == str(saved)
+    assert report["undo_file"] == str(saved) and saved.is_absolute()
+    assert not undo_files(tmp_path)
     assert re.fullmatch(r"postgresql-onlyfans-10\.collision-undo-[0-9a-f]{32}\.json", saved.name)
     kinds = [event[0] for event in server.events]
     assert kinds.count("connect") == 1 and kinds.count("open for changes") == 1
@@ -362,6 +396,7 @@ def test_the_undo_file_names_each_row_by_its_media_and_post_and_says_what_it_hel
         "source": "postgresql",
         "site": "onlyfans",
         "model_id": CREATOR,
+        "database": "db.example:5433/library",
         "rows": [
             {"media_id": media_id, "post_id": post_id, "downloaded": 1, "directory": directory,
              "filename": filename, "size": size, "hash": digest}
@@ -376,8 +411,37 @@ def test_the_undo_file_names_each_row_by_its_media_and_post_and_says_what_it_hel
             ]
         ],
     }
-    # nothing of where the database is
+    # where it was made, without the login
+    assert "s3cret-word" not in text and "scraper" not in text
+
+
+def test_an_address_that_names_no_server_leaves_that_out_of_the_undo_file(brought_in, tmp_path):
+    result = on_postgres("host=db.example dbname=library password=s3cret-word", NAME, apply=True, undo_dir=tmp_path / "undo")
+
+    text = Path(result["undo_file"]).read_text(encoding="utf-8")
+    assert list(json.loads(text)) == ["version", "source", "site", "model_id", "rows"]
     assert "s3cret-word" not in text and "db.example" not in text
+
+
+def test_an_undo_file_that_is_there_already_is_never_replaced(brought_in, server, tmp_path, monkeypatch, capsys):
+    """Two runs can't be given one name, but if they were: the file that is
+    there is another run's way back."""
+    before = held(server)
+    monkeypatch.setattr(recover_collisions.uuid, "uuid4", lambda: SimpleNamespace(hex="0" * 32))
+    taken = tmp_path / "undo" / ("postgresql-onlyfans-10.collision-undo-" + "0" * 32 + ".json")
+    taken.write_text("another run's undo file", encoding="utf-8")
+
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "undo"
+    )
+
+    assert (code, out) == (1, "")
+    assert err.startswith("Recovery failed: ") and taken.name in err and err.count("\n") == 1
+    # it is neither written over nor removed, and nothing is changed
+    assert taken.read_text(encoding="utf-8") == "another run's undo file"
+    assert undo_files(tmp_path / "undo") == [taken]
+    assert held(server) == before
+    assert not [event for event in server.events if event[0] in ("change", "commit")]
 
 
 def test_if_the_undo_file_cant_be_saved_nothing_is_changed(brought_in, server, tmp_path, monkeypatch, capsys):
@@ -401,17 +465,56 @@ def test_if_the_undo_file_cant_be_saved_nothing_is_changed(brought_in, server, t
     assert server.events[-1] == ("close",)
 
 
-def test_an_undo_folder_that_isnt_there_changes_nothing(brought_in, server, tmp_path, monkeypatch, capsys):
-    before = held(server)
+@pytest.mark.parametrize("apply", [[], ["--apply"]])
+def test_an_undo_folder_that_cant_take_a_file_is_said_before_anything_is_done(
+    brought_in, server, tmp_path, monkeypatch, capsys, apply
+):
+    """A preview finds it out, so that the apply after it doesn't."""
+    server.events.clear()
+    (tmp_path / "a-file").write_text("", encoding="utf-8")
+
+    for folder in ("no-such-folder", "a-file"):
+        code, out, err = cli(
+            monkeypatch, capsys, "--postgres", "--creator", NAME, *apply, "--undo-dir", tmp_path / folder
+        )
+
+        assert (code, out) == (1, "")
+        assert err == f"Recovery failed: The undo folder {tmp_path / folder} isn't there, or isn't a folder\n"
+    assert not (tmp_path / "no-such-folder").exists()
+
+    def denied(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(recover_collisions.tempfile, "TemporaryFile", denied)
 
     code, out, err = cli(
-        monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "no-such-folder"
+        monkeypatch, capsys, "--postgres", "--creator", NAME, *apply, "--undo-dir", tmp_path / "undo"
     )
 
     assert (code, out) == (1, "")
-    assert err.startswith("Recovery failed: ") and "no-such-folder" in err
-    assert held(server) == before
-    assert not (tmp_path / "no-such-folder").exists()
+    assert err == f"Recovery failed: The undo folder {tmp_path / 'undo'} can't be written to (Permission denied)\n"
+    # the database wasn't asked anything
+    assert server.events == []
+
+
+def test_apply_needs_a_folder_for_the_undo_file(brought_in, server, tmp_path, monkeypatch, capsys):
+    """The folder the command is run in may not be kept (in Docker it is
+    inside the container), and the undo file is the only way back."""
+    monkeypatch.chdir(tmp_path / "undo")
+    server.events.clear()
+
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply")
+
+    assert (code, out) == (2, "")
+    assert err.endswith(
+        "error: --postgres --apply needs --undo-dir: the folder for the undo file, which is the only way"
+        " back. Give a folder that is kept (in Docker a mounted one, not one inside the container)\n"
+    )
+    assert server.events == [] and not undo_files(tmp_path / "undo")
+    # the same without the command line
+    with pytest.raises(ValueError, match="A folder for the undo file is needed to apply"):
+        on_postgres(URL, NAME, apply=True)
+    assert server.events == []
 
 
 def fail_after(monkeypatch, made, outcome):
@@ -423,7 +526,7 @@ def fail_after(monkeypatch, made, outcome):
     def change(self, *args):
         calls.append(args)
         if len(calls) > made:
-            if isinstance(outcome, Exception):
+            if isinstance(outcome, BaseException):
                 raise outcome
             return outcome
         return real(self, *args)
@@ -459,6 +562,90 @@ def test_a_change_that_fails_part_way_leaves_every_row_as_it_was(
     assert held(server) == before
     assert not undo_files(tmp_path / "undo")
     assert "commit" not in [event[0] for event in server.events]
+
+
+def test_stopped_between_two_changes_no_row_is_changed_and_no_undo_file_is_left(
+    brought_in, server, tmp_path, monkeypatch, capsys
+):
+    """Ctrl-C before the changes are saved: as if the command hadn't run."""
+    before = held(server)
+    calls = fail_after(monkeypatch, 3, KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        cli(
+            monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "undo",
+            ends=False,
+        )
+
+    assert len(calls) == 4
+    assert held(server) == before
+    assert not undo_files(tmp_path / "undo")
+    kinds = [event[0] for event in server.events]
+    assert "commit" not in kinds and kinds[-1] == "close"
+
+
+def cant_remove(monkeypatch):
+    """The undo file can't be removed (the folder was made read-only
+    meanwhile, or another program holds the file)."""
+    real = Path.unlink
+
+    def unlink(path, *args, **kwargs):
+        if ".collision-undo-" in path.name:
+            raise PermissionError(13, "Permission denied")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+
+@pytest.mark.parametrize(
+    "outcome, reason",
+    [
+        (
+            False,
+            "A row was changed by another program while this ran (is the scraper running?). Nothing was changed."
+            " Close the scraper and run this again.",
+        ),
+        (
+            postgres.PostgresUnavailable("Can't change the PostgreSQL database at db.example:5433/library. (no)"),
+            "Can't change the PostgreSQL database at db.example:5433/library. (no). Nothing was changed.",
+        ),
+    ],
+)
+def test_an_undo_file_that_cant_be_removed_doesnt_hide_what_went_wrong(
+    brought_in, server, tmp_path, monkeypatch, capsys, outcome, reason
+):
+    before = held(server)
+    fail_after(monkeypatch, 3, outcome)
+    cant_remove(monkeypatch)
+
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "undo"
+    )
+
+    (left,) = undo_files(tmp_path / "undo")
+    assert (code, out) == (1, "")
+    assert err == (
+        f"Recovery failed: {reason} The undo file {left} could not be removed (Permission denied):"
+        " nothing needs it, and it is safe to delete.\n"
+    )
+    assert held(server) == before
+    assert "commit" not in [event[0] for event in server.events]
+
+
+def test_stopped_with_an_undo_file_that_cant_be_removed_it_still_stops(
+    brought_in, server, tmp_path, monkeypatch, capsys
+):
+    before = held(server)
+    fail_after(monkeypatch, 3, KeyboardInterrupt())
+    cant_remove(monkeypatch)
+
+    with pytest.raises(KeyboardInterrupt):
+        cli(
+            monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "undo",
+            ends=False,
+        )
+
+    assert held(server) == before
 
 
 def test_a_row_the_scraper_changed_meanwhile_is_not_overwritten(brought_in, server, tmp_path, monkeypatch, capsys):
@@ -502,28 +689,131 @@ def test_a_change_the_server_refuses_because_of_the_scraper_changes_nothing(
     assert not undo_files(tmp_path / "undo")
 
 
-def test_a_commit_that_may_not_have_arrived_keeps_the_undo_file(brought_in, server, tmp_path, monkeypatch, capsys):
-    server.commit_error = postgres.Unconfirmed(
-        "The connection to the PostgreSQL database at db.example:5433/library was lost while the"
-        " changes were being saved, so it isn't known whether they were. (server closed the connection)"
-    )
+# --- once the changes are being saved ---
+# Only the server knows whether it kept them, so the undo file stays whatever
+# stops the command, and the command says so.
 
-    code, out, err = cli(
+LOST = (
+    "The connection to the PostgreSQL database at db.example:5433/library was lost while the changes"
+    " were being saved, so it isn't known whether they were. (server closed the connection unexpectedly)"
+)
+STOPPED = (
+    "This was stopped while the changes were being saved to the PostgreSQL database at"
+    " db.example:5433/library, so it isn't known whether they were."
+)
+KEPT = "The undo file is kept: {}. Run this with --undo and that file, without --apply, to see whether the changes arrived."
+
+
+def lost():
+    import psycopg
+
+    return psycopg.OperationalError("server closed the connection\n\tunexpectedly")
+
+
+@pytest.mark.parametrize(
+    "stopped_by, arrived, code, said",
+    [
+        # the connection went
+        (lost, False, 1, LOST),
+        (lost, True, 1, LOST),
+        # Ctrl-C, which the driver passes on whatever became of the commit
+        (KeyboardInterrupt, False, 130, STOPPED),
+        (KeyboardInterrupt, True, 130, STOPPED),
+        # the program was told to end
+        (SystemExit, True, 1, STOPPED),
+    ],
+)
+def test_whatever_stops_the_saving_the_undo_file_is_kept_and_it_is_said(
+    brought_in, server, tmp_path, monkeypatch, capsys, stopped_by, arrived, code, said
+):
+    before = held(server)
+    setattr(server, "commit_answer_lost" if arrived else "commit_error", stopped_by())
+
+    exit_code, out, err = cli(
         monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "undo"
     )
 
     (saved,) = undo_files(tmp_path / "undo")
-    assert (code, out) == (1, "")
-    assert err == (
-        f"Recovery failed: {server.commit_error} The undo file is kept ({saved}): run this again"
-        " with --undo to see whether there is anything to restore.\n"
-    )
+    assert (exit_code, out) == (code, "")
+    # one sentence, with the file where it says it is
+    assert err == f"Recovery failed: {said} {KEPT.format(saved)}\n"
     assert len(json.loads(saved.read_text(encoding="utf-8"))["rows"]) == MARKED
-    # here the changes didn't arrive, and the undo file says so
-    server.commit_error = None
-    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", saved)
-    assert (code, err) == (0, "")
-    assert json.loads(out) == {"applied": False, "rows_to_restore": 0}
+    assert (held(server) != before) == arrived
+
+    # the undo file tells which it was, and is the way back if they arrived
+    server.commit_error = server.commit_answer_lost = None
+    exit_code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", saved)
+    assert (exit_code, err) == (0, "")
+    assert json.loads(out)["rows_to_restore"] == (MARKED if arrived else 0)
+    exit_code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", saved, "--apply")
+    assert (exit_code, err) == (0, "")
+    assert held(server) == before
+
+
+@pytest.mark.parametrize("stopped_by, code", [(KeyboardInterrupt, 130), (SystemExit, 1), (RuntimeError, 1)])
+def test_the_undo_file_is_kept_whoever_the_commit_is_stopped_in(
+    brought_in, server, tmp_path, monkeypatch, capsys, stopped_by, code
+):
+    """Not only what the connection's commit makes of it: anything that comes
+    out of the rows' commit, once it was called."""
+
+    def commit(self):
+        raise stopped_by()
+
+    monkeypatch.setattr(creator_rows.PostgresRows, "commit", commit)
+
+    exit_code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "undo"
+    )
+
+    (saved,) = undo_files(tmp_path / "undo")
+    assert (exit_code, out) == (code, "")
+    assert err == (
+        "Recovery failed: This was stopped while the changes were being saved to PostgreSQL, so it isn't"
+        f" known whether they were. {KEPT.format(saved)}\n"
+    )
+
+
+def test_an_undo_is_said_to_be_unconfirmed_whoever_its_commit_is_stopped_in(recovered, server, monkeypatch, capsys):
+    _, undo_file, _, _ = recovered
+
+    def commit(self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(creator_rows.PostgresRows, "commit", commit)
+
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, "--apply")
+
+    assert (code, out) == (130, "")
+    assert err == (
+        "Recovery failed: This was stopped while the changes were being saved to PostgreSQL, so it isn't"
+        " known whether they were. Run the same --undo again, without --apply: it shows what is left to"
+        " restore.\n"
+    )
+
+
+@pytest.mark.parametrize("stopped_by, arrived, code", [(lost, False, 1), (KeyboardInterrupt, True, 130)])
+def test_an_undo_that_is_stopped_while_it_is_saved_says_how_to_see_what_is_left(
+    recovered, server, monkeypatch, capsys, stopped_by, arrived, code
+):
+    _, undo_file, before, marked = recovered
+    setattr(server, "commit_answer_lost" if arrived else "commit_error", stopped_by())
+
+    exit_code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, "--apply")
+
+    assert (exit_code, out) == (code, "")
+    assert err == (
+        f"Recovery failed: {STOPPED if arrived else LOST} Run the same --undo again, without --apply:"
+        " it shows what is left to restore.\n"
+    )
+    assert held(server) == (before if arrived else marked)
+    assert Path(undo_file).exists()
+    assert "Traceback" not in err and err.count("\n") == 1
+
+    server.commit_error = server.commit_answer_lost = None
+    exit_code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file)
+    assert (exit_code, err) == (0, "")
+    assert json.loads(out)["rows_to_restore"] == (0 if arrived else MARKED)
 
 
 # --- undo ---
@@ -545,14 +835,14 @@ def test_cli_undo_previews_then_restores_exactly(recovered, server, monkeypatch,
     code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file)
 
     assert (code, err) == (0, "")
-    assert json.loads(out) == {"applied": False, "rows_to_restore": MARKED}
+    assert json.loads(out) == {"applied": False, "rows_to_restore": MARKED, "creator": WHO}
     assert held(server) == marked
     assert {event[0] for event in server.events} == {"connect", "query", "close"}
 
     code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", str(CREATOR), "--undo", undo_file, "--apply")
 
     assert (code, err) == (0, "")
-    assert json.loads(out) == {"applied": True, "rows_to_restore": MARKED}
+    assert json.loads(out) == {"applied": True, "rows_to_restore": MARKED, "creator": WHO}
     assert held(server) == before
     assert [event[0] for event in server.events][-MARKED - 2:] == ["change"] * MARKED + ["commit", "close"]
 
@@ -644,6 +934,107 @@ def test_undo_is_refused_when_a_row_changed_since(recovered, server, monkeypatch
     assert "change" not in [event[0] for event in server.events]
 
 
+ANOTHER = "postgresql://scraper:s3cret-word@other.example:5432/a_copy"
+
+
+@pytest.mark.parametrize("apply", [[], ["--apply"]])
+def test_an_undo_that_doesnt_fit_says_where_the_undo_file_was_made_if_not_here(
+    recovered, server, monkeypatch, capsys, apply
+):
+    """A hint: the rows are what is checked, since a database's address can
+    change."""
+    _, undo_file, before, marked = recovered
+
+    # the rows fit: the address is not asked about
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, url=ANOTHER)
+    assert (code, err) == (0, "")
+    assert json.loads(out)["rows_to_restore"] == MARKED
+
+    server.elsewhere("UPDATE onlyfans.medias SET size = 501 WHERE post_id = '106'")
+    changed = held(server)
+
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, *apply, url=ANOTHER
+    )
+
+    assert (code, out) == (1, "")
+    assert err == (
+        "Recovery failed: 1 of the undo file's 7 rows are no longer as the recovery left them"
+        " (media downloaded again since, or another database: the undo file was made on"
+        " db.example:5433/library, this is other.example:5432/a_copy). Nothing was restored\n"
+    )
+    assert held(server) == changed
+
+
+def without_where_it_was_made(undo_file):
+    """The undo file as it would be without that line."""
+    record = json.loads(Path(undo_file).read_text(encoding="utf-8"))
+    del record["database"]
+    Path(undo_file).write_text(json.dumps(record), encoding="utf-8")
+
+
+def test_an_undo_file_that_doesnt_say_where_it_was_made_still_works(recovered, server, monkeypatch, capsys):
+    _, undo_file, before, _ = recovered
+    without_where_it_was_made(undo_file)
+    server.elsewhere("UPDATE onlyfans.medias SET size = 501 WHERE post_id = '106'")
+
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, url=ANOTHER)
+
+    assert (code, out) == (1, "")
+    assert err == (
+        "Recovery failed: 1 of the undo file's 7 rows are no longer as the recovery left them"
+        " (media downloaded again since, or another database). Nothing was restored\n"
+    )
+
+    server.elsewhere("UPDATE onlyfans.medias SET size = 500 WHERE post_id = '106'")
+
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, "--apply", url=ANOTHER
+    )
+
+    assert (code, err) == (0, "")
+    assert json.loads(out) == {"applied": True, "rows_to_restore": MARKED, "creator": WHO}
+    assert held(server) == before
+
+
+@pytest.mark.parametrize("again", [lambda row: dict(row), lambda row: {**row, "media_id": "1", "post_id": "101"}])
+@pytest.mark.parametrize("apply", [[], ["--apply"]])
+def test_an_undo_file_that_lists_a_row_twice_is_refused(recovered, server, monkeypatch, capsys, again, apply):
+    """Not one this command wrote: the second time, in figures or in quotes."""
+    _, undo_file, _, marked = recovered
+    record = json.loads(Path(undo_file).read_text(encoding="utf-8"))
+    assert (record["rows"][0]["media_id"], record["rows"][0]["post_id"]) == (1, 101)
+    record["rows"].append(again(record["rows"][0]))
+    Path(undo_file).write_text(json.dumps(record), encoding="utf-8")
+
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, *apply)
+
+    assert (code, out) == (1, "")
+    assert err == (
+        "Recovery failed: Undo file lists a row twice (media 1, post 101): it isn't one this command"
+        " wrote. Nothing was restored\n"
+    )
+    assert held(server) == marked
+    assert not [event for event in server.events if event[0] in ("change", "commit")]
+
+
+def test_an_undo_file_with_its_ids_in_quotes_is_the_same_undo_file(recovered, server, monkeypatch, capsys):
+    """Written out again by another program, the ids may come as text: they
+    name the same creator and the same rows."""
+    _, undo_file, before, _ = recovered
+    record = json.loads(Path(undo_file).read_text(encoding="utf-8"))
+    record["model_id"] = str(record["model_id"])
+    for row in record["rows"]:
+        row["media_id"], row["post_id"] = str(row["media_id"]), str(row["post_id"])
+    Path(undo_file).write_text(json.dumps(record), encoding="utf-8")
+
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, "--apply")
+
+    assert (code, err) == (0, "")
+    assert json.loads(out) == {"applied": True, "rows_to_restore": MARKED, "creator": WHO}
+    assert held(server) == before
+
+
 def test_undo_leaves_a_row_that_is_downloaded_again_with_the_file_it_had(recovered, server, monkeypatch, capsys):
     """It is as the undo would leave it: there is nothing to restore in it."""
     _, undo_file, before, _ = recovered
@@ -652,7 +1043,7 @@ def test_undo_leaves_a_row_that_is_downloaded_again_with_the_file_it_had(recover
     code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, "--undo", undo_file, "--apply")
 
     assert (code, err) == (0, "")
-    assert json.loads(out) == {"applied": True, "rows_to_restore": MARKED - 1}
+    assert json.loads(out) == {"applied": True, "rows_to_restore": MARKED - 1, "creator": WHO}
     assert held(server) == before
 
 
@@ -722,16 +1113,53 @@ def test_the_creator_is_named_by_username_or_id(three_brought_in, monkeypatch, c
         code, out, err = cli(monkeypatch, capsys, "--postgres", *args)
         assert (code, err) == (0, "")
         report = json.loads(out)
-        return report["media_to_mark"], {media["model_id"] for group in report["groups"] for media in group["media"]}
+        # the creator in the groups is the creator the report names
+        assert {media["model_id"] for group in report["groups"] for media in group["media"]} == {
+            report["creator"]["model_id"]
+        }
+        return report["media_to_mark"], report["creator"]
 
-    assert marked("--creator", NAME) == (TO_MARK, {CREATOR})
-    assert marked("--creator", "A_Creator") == (TO_MARK, {CREATOR})
-    assert marked("--creator", OTHER_NAME) == (TO_MARK, {OTHER})
-    assert marked("--creator", str(OTHER)) == (TO_MARK, {OTHER})
-    assert marked("--creator", NAMESAKE) == (TO_MARK, {CREATOR})
+    first = {"site": "onlyfans", "model_id": CREATOR, "username": NAME}
+    second = {"site": "onlyfans", "model_id": OTHER, "username": OTHER_NAME}
+    namesake = {"site": "fansly", "model_id": CREATOR, "username": NAMESAKE}
+    assert marked("--creator", NAME) == (TO_MARK, first)
+    assert marked("--creator", "A_Creator") == (TO_MARK, first)
+    assert marked("--creator", OTHER_NAME) == (TO_MARK, second)
+    assert marked("--creator", str(OTHER)) == (TO_MARK, second)
+    assert marked("--creator", NAMESAKE) == (TO_MARK, namesake)
     # an id both sites have needs its site
-    assert marked("--creator", str(CREATOR), "--site", "onlyfans") == (TO_MARK, {CREATOR})
-    assert marked("--creator", str(CREATOR), "--site", "fansly") == (TO_MARK, {CREATOR})
+    assert marked("--creator", str(CREATOR), "--site", "onlyfans") == (TO_MARK, first)
+    assert marked("--creator", str(CREATOR), "--site", "fansly") == (TO_MARK, namesake)
+
+
+def test_the_report_says_who_the_name_turned_out_to_be(three_brought_in, server, tmp_path, monkeypatch, capsys):
+    """A number that is one creator's username and nobody's id works on that
+    creator: without the report saying so, an empty report reads as "that
+    creator has no collisions"."""
+    # saved with capitals, then under a name that is all figures
+    server.insert("onlyfans", "profiles", ["user_id", "username"], [(999, "Capital_Letters"), (999, "12345")])
+    server.insert("onlyfans", "medias", ["media_id", "post_id", "downloaded", "model_id"], [("1", "1", True, 999)])
+    # only ever saved with capitals, and with no profile at all
+    server.insert("onlyfans", "profiles", ["user_id", "username"], [(998, "Only_Capitals")])
+    server.insert("onlyfans", "medias", ["media_id", "post_id", "downloaded", "model_id"], [("1", "1", True, 998)])
+    server.insert("onlyfans", "medias", ["media_id", "post_id", "downloaded", "model_id"], [("1", "1", True, 997)])
+    nothing = {"groups": [], "media_to_mark": 0, "rows_marked": 0, "undo_file": None, "applied": False}
+
+    for typed, creator in [
+        ("12345", {"site": "onlyfans", "model_id": 999, "username": "12345"}),
+        ("capital_letters", {"site": "onlyfans", "model_id": 999, "username": "12345"}),
+        ("CAPITAL_LETTERS", {"site": "onlyfans", "model_id": 999, "username": "12345"}),
+        ("999", {"site": "onlyfans", "model_id": 999, "username": "12345"}),
+        # the username as it is saved, however it was typed
+        ("only_capitals", {"site": "onlyfans", "model_id": 998, "username": "Only_Capitals"}),
+        ("Only_Capitals", {"site": "onlyfans", "model_id": 998, "username": "Only_Capitals"}),
+        ("997", {"site": "onlyfans", "model_id": 997, "username": None}),
+    ]:
+        for apply in ([], ["--apply", "--undo-dir", tmp_path / "undo"]):
+            code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", typed, *apply)
+
+            assert (code, err) == (0, "")
+            assert json.loads(out) == {**nothing, "applied": bool(apply), "creator": creator}
 
 
 @pytest.mark.parametrize("apply", [[], ["--apply"]])
@@ -781,9 +1209,15 @@ def check_one_creator_or_none(database_url, add, undo_dir):
     assert {creator: postgres_rows(database_url, creator) for creator in before} == before
     assert not undo_files(undo_dir)
 
-    # each can be named by what only it has
-    assert run(OTHER_NAME, apply=False)["groups"][0]["media"][0]["model_id"] == OTHER
-    assert run("77", apply=False) == {"groups": [], "media_to_mark": 0, "rows_marked": 0, "undo_file": None, "applied": False}
+    # each can be named by what only it has, and the report says who it is,
+    # with the username that was saved last
+    named = run(OTHER_NAME, apply=False)
+    assert named["groups"][0]["media"][0]["model_id"] == OTHER
+    assert named["creator"] == {"site": "onlyfans", "model_id": OTHER, "username": "second_name"}
+    assert run("77", apply=False) == {
+        "groups": [], "media_to_mark": 0, "rows_marked": 0, "undo_file": None, "applied": False,
+        "creator": {"site": "onlyfans", "model_id": 77, "username": "second_name"},
+    }
     assert run(str(CREATOR), "fansly")["rows_marked"] == MARKED
     assert postgres_rows(database_url, OTHER) == before[OTHER]
     assert postgres_rows(database_url, 77) == before[77]
@@ -796,11 +1230,14 @@ def test_a_name_more_than_one_creator_goes_by_is_refused_and_each_can_still_be_n
     check_one_creator_or_none(URL, lambda *rows: server.insert("onlyfans", *rows), tmp_path / "undo")
 
 
-def test_a_creator_nobody_has_is_said(three_brought_in, server, monkeypatch, capsys):
-    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", "nobody", "--apply")
+def test_a_creator_nobody_has_is_said(three_brought_in, server, tmp_path, monkeypatch, capsys):
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", "Nobody_Here", "--apply", "--undo-dir", tmp_path / "undo"
+    )
 
     assert (code, out) == (1, "")
-    assert err == "Recovery failed: PostgreSQL has no creator named nobody (looked in: onlyfans, fansly)\n"
+    # the name as it was typed
+    assert err == "Recovery failed: PostgreSQL has no creator named Nobody_Here (looked in: onlyfans, fansly)\n"
 
     code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", OTHER_NAME, "--site", "fansly")
 
@@ -823,7 +1260,7 @@ def two_media(server, directory):
 def test_relative_recorded_paths_need_the_folder_they_start_from(server, tmp_path, monkeypatch, capsys):
     two_media(server, "downloads")
 
-    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", CREATOR, "--apply")
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", CREATOR, "--apply", "--undo-dir", tmp_path)
 
     assert (code, out) == (1, "")
     assert err == "Recovery failed: Relative recorded paths require --path-root (the original working directory)\n"
@@ -844,7 +1281,9 @@ def test_paths_recorded_on_another_system_are_refused(server, tmp_path, monkeypa
     such a path somewhere it never was."""
     two_media(server, ELSEWHERE)
 
-    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", CREATOR, "--apply", *root)
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", CREATOR, "--apply", "--undo-dir", tmp_path, *root
+    )
 
     assert (code, out) == (1, "")
     assert err.startswith("Recovery failed: The recorded path ")
@@ -881,6 +1320,18 @@ def test_a_file_with_such_paths_is_read_as_before(tmp_path):
             ["--postgres", "--creator", "a_creator", "--undo", "undo.json", "--undo-dir", "somewhere"],
             "--undo-dir is where --apply writes a new undo file",
         ),
+        (["--postgres", "--creator", "a_creator", "--apply"], "--postgres --apply needs --undo-dir"),
+        # a path that is empty (a shell variable that isn't set) is not the current folder
+        (["--postgres", "--creator", "a_creator", "--undo", ""], "error: --undo needs the path of an undo file"),
+        (["--postgres", "--creator", "a_creator", "--undo", " ", "--apply"], "error: --undo needs the path of an undo file"),
+        (["--postgres", "--creator", "a_creator", "--undo-dir", ""], "error: --undo-dir needs the path of a folder"),
+        (
+            ["--postgres", "--creator", "a_creator", "--apply", "--undo-dir", ""],
+            "error: --undo-dir needs the path of a folder",
+        ),
+        # short forms that fit two options by now
+        (["--postgres", "--creator", "a_creator", "--und", "undo.json"], "ambiguous option: --und could match --undo, --undo-dir"),
+        (["some/user_data.db", "--p", "somewhere"], "ambiguous option: --p could match --path-root, --postgres"),
     ],
 )
 def test_cli_refuses_what_it_cant_make_sense_of(monkeypatch, capsys, args, said):
@@ -951,6 +1402,16 @@ def test_cli_given_a_file_works_on_the_file_and_says_so_while_postgresql_is_on(o
     assert Path(report["undo_file"]).parent == one_creator.parent
 
 
+def test_given_a_file_an_undo_path_that_is_empty_fails_as_it_did(one_creator, capsys):
+    """Only with --postgres is it refused before anything is looked at."""
+    with pytest.raises(SystemExit) as stopped:
+        recover_collisions.main([str(one_creator), "--undo", ""])
+
+    said = capsys.readouterr()
+    assert (stopped.value.code, said.out) == (1, "")
+    assert said.err.startswith("Recovery failed: ") and said.err.count("\n") == 1
+
+
 # --- what goes wrong ---
 
 
@@ -970,20 +1431,68 @@ def test_a_read_that_fails_stops_the_run(brought_in, server, tmp_path, monkeypat
     assert not undo_files(tmp_path / "undo")
 
 
-@pytest.mark.parametrize("apply, connection", [([], "Reader"), (["--apply"], "Writer")])
-def test_cli_never_repeats_the_address_or_its_password(monkeypatch, capsys, apply, connection):
-    def refuses(url):
-        raise postgres.PostgresUnavailable(f"could not connect to {url} (password s3cret-word)")
+@pytest.mark.parametrize("apply", [False, True])
+def test_what_the_driver_says_never_repeats_the_address_or_its_password(tmp_path, monkeypatch, capsys, apply):
+    """The driver quotes what it was given. The engine hides the address and
+    its password in that, where it takes the driver's words."""
+    psycopg = pytest.importorskip("psycopg")
 
-    monkeypatch.setattr(postgres, connection, refuses)
+    def refuses(url, **kwargs):
+        raise psycopg.OperationalError(f'connection to "{url}" failed:\npassword s3cret-word was refused')
 
-    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, *apply)
+    monkeypatch.setattr(psycopg, "connect", refuses)
+
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", NAME, *(["--apply", "--undo-dir", tmp_path] if apply else [])
+    )
 
     assert (code, out) == (1, "")
-    assert err == "Recovery failed: could not connect to {hidden} (password {hidden})\n"
+    assert err == (
+        "Recovery failed: Can't use the PostgreSQL database at db.example:5433/library: the server can't be"
+        ' reached. (connection to "{hidden}" failed: password {hidden} was refused)\n'
+    )
 
 
-def test_a_missing_driver_is_one_sentence(monkeypatch, capsys):
+@pytest.mark.parametrize("password", ["postgres", "undo", "creator"])
+def test_the_commands_own_words_are_said_as_they_are_whatever_the_password(
+    brought_in, server, tmp_path, monkeypatch, capsys, password
+):
+    """A password can be a word the command uses: `postgres` is Docker's
+    usual one, and is in the undo file's name and in --postgres. Hiding it
+    everywhere gave the path of a file that isn't there."""
+    url = f"postgresql://scraper:{password}@db.example:5433/library"
+    assert password in str(tmp_path / "undo" / "postgresql-onlyfans-10") + " --postgres --creator"
+    server.commit_error = lost()
+
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path / "undo", url=url
+    )
+
+    (saved,) = undo_files(tmp_path / "undo")
+    assert (code, out) == (1, "")
+    assert err == f"Recovery failed: {LOST} {KEPT.format(saved)}\n"
+    server.commit_error = None
+
+    # an option, the name that was typed and a folder
+    file_undo = tmp_path / "from-a-file.json"
+    file_undo.write_text(json.dumps({"version": 1, "database": "user_data.db", "rows": []}), encoding="utf-8")
+    for args, said in [
+        (
+            ["--creator", NAME, "--undo", file_undo],
+            "Undo file was written for a user_data.db, not PostgreSQL: give that file in place of --postgres",
+        ),
+        (["--creator", password], f"PostgreSQL has no creator named {password} (looked in: onlyfans, fansly)"),
+        (
+            ["--creator", NAME, "--undo-dir", tmp_path / "undo" / password],
+            f"The undo folder {tmp_path / 'undo' / password} isn't there, or isn't a folder",
+        ),
+    ]:
+        code, out, err = cli(monkeypatch, capsys, "--postgres", *args, url=url)
+
+        assert (code, out, err) == (1, "", f"Recovery failed: {said}\n")
+
+
+def test_a_missing_driver_is_one_sentence(tmp_path, monkeypatch, capsys):
     real_import = builtins.__import__
 
     def no_driver(name, *args, **kwargs):
@@ -993,7 +1502,7 @@ def test_a_missing_driver_is_one_sentence(monkeypatch, capsys):
 
     monkeypatch.setattr(builtins, "__import__", no_driver)
 
-    for apply in ([], ["--apply"]):
+    for apply in ([], ["--apply", "--undo-dir", tmp_path]):
         code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, *apply)
 
         assert (code, out) == (1, "")
@@ -1001,13 +1510,16 @@ def test_a_missing_driver_is_one_sentence(monkeypatch, capsys):
         assert "[postgres]" in err and err.count("\n") == 1
 
 
-@pytest.mark.parametrize("apply", [[], ["--apply"]])
-def test_a_server_that_isnt_there_is_one_sentence(monkeypatch, capsys, apply):
+@pytest.mark.parametrize("apply", [False, True])
+def test_a_server_that_isnt_there_is_one_sentence(tmp_path, monkeypatch, capsys, apply):
     pytest.importorskip("psycopg")
     # Windows waits the whole time for a port nothing listens on
     monkeypatch.setattr(postgres, "CONNECT_TIMEOUT", 2)
 
-    code, out, err = cli(monkeypatch, capsys, "--postgres", "--creator", NAME, *apply, url=NOWHERE)
+    code, out, err = cli(
+        monkeypatch, capsys, "--postgres", "--creator", NAME, *(["--apply", "--undo-dir", tmp_path] if apply else []),
+        url=NOWHERE,
+    )
 
     assert (code, out) == (1, "")
     assert err.startswith(
@@ -1017,11 +1529,11 @@ def test_a_server_that_isnt_there_is_one_sentence(monkeypatch, capsys, apply):
     assert "s3cret-word" not in err and "scraper" not in err
 
 
-def test_an_address_the_driver_cant_read_is_said_without_quoting_it(monkeypatch, capsys):
+def test_an_address_the_driver_cant_read_is_said_without_quoting_it(tmp_path, monkeypatch, capsys):
     pytest.importorskip("psycopg")
 
     code, out, err = cli(
-        monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply",
+        monkeypatch, capsys, "--postgres", "--creator", NAME, "--apply", "--undo-dir", tmp_path,
         url="postgres//scraper:s3cret-word@db.example/library",
     )
 
@@ -1171,18 +1683,30 @@ def test_the_connection_can_change_rows_and_still_sees_the_database_at_one_momen
     assert kwargs["context"] is postgres._adapters()
     assert kwargs["cursor_factory"] is postgres._cursor_class()
     assert kwargs["row_factory"] is postgres.row_factory
-    # set up as a Reader is, then opened for changes
-    assert conn.did[-3:] == [("read_only", False), "SET lock_timeout = 30000", "commit"]
+    # set up as a Reader is, its timeouts with it, then opened for changes
+    assert conn.did == [
+        "SET TIME ZONE 'UTC'",
+        "SET DateStyle TO 'ISO, YMD'",
+        # how long a change waits for a row the scraper holds, and the
+        # longest any one statement may take
+        "SET lock_timeout = 30000",
+        "SET statement_timeout = 300000",
+        "commit",
+        ("read_only", True),
+        ("isolation_level", psycopg.IsolationLevel.REPEATABLE_READ),
+        ("read_only", False),
+    ]
     assert conn.read_only is False
     assert conn.isolation_level == psycopg.IsolationLevel.REPEATABLE_READ
-    assert "SET TIME ZONE 'UTC'" in conn.did
+    # a server that went quiet is noticed, and nothing is kept on a pooler
+    assert (kwargs["keepalives_idle"], kwargs["prepare_threshold"]) == (30, None)
 
     assert writer.change("UPDATE onlyfans.medias SET downloaded = ? WHERE id = ?", [0, 4]) == 3
     assert conn.did[-1] == ("UPDATE onlyfans.medias SET downloaded = ? WHERE id = ?", [0, 4])
     # nothing is kept until it is told to
-    assert conn.did.count("commit") == 2
+    assert conn.did.count("commit") == 1
     writer.commit()
-    assert conn.did.count("commit") == 3
+    assert conn.did.count("commit") == 2
     writer.close()
     writer.close()
     assert conn.did[-2:] == ["commit", "close"]
@@ -1228,6 +1752,28 @@ def test_a_commit_that_fails_is_not_known_to_have_been_kept(monkeypatch):
         "The connection to the PostgreSQL database at db.example:5433/library was lost while the"
         " changes were being saved, so it isn't known whether they were. (connection to {hidden} was lost)"
     )
+    assert raised.value.interrupted is False
+
+
+@pytest.mark.parametrize("stopped_by, interrupted", [(KeyboardInterrupt, True), (SystemExit, False), (MemoryError, False)])
+def test_a_commit_that_is_stopped_is_not_known_to_have_been_kept_either(monkeypatch, stopped_by, interrupted):
+    """Ctrl-C while the server is asked to keep the changes: the driver
+    passes it on whether the server had kept them or not, so it is no reason
+    to think it hadn't."""
+    psycopg = pytest.importorskip("psycopg")
+    monkeypatch.setattr(psycopg, "connect", lambda url, **kwargs: Connection(commit_fails=stopped_by()))
+    writer = postgres.Writer(URL)
+    writer.change("UPDATE onlyfans.medias SET downloaded = ? WHERE id = ?", [0, 4])
+
+    with pytest.raises(postgres.Unconfirmed) as raised:
+        writer.commit()
+
+    assert str(raised.value) == (
+        "This was stopped while the changes were being saved to the PostgreSQL database at"
+        " db.example:5433/library, so it isn't known whether they were."
+    )
+    assert raised.value.interrupted is interrupted
+    assert isinstance(raised.value.__cause__, stopped_by)
 
 
 def test_a_connection_that_cant_be_opened_for_changes_is_closed(monkeypatch):
@@ -1235,10 +1781,10 @@ def test_a_connection_that_cant_be_opened_for_changes_is_closed(monkeypatch):
     made = []
 
     class Refuses(Connection):
-        def execute(self, query, params=None):
-            if "lock_timeout" in query:
+        def __setattr__(self, name, value):
+            if (name, value) == ("read_only", False):
                 raise psycopg.OperationalError("server closed the connection unexpectedly")
-            return super().execute(query, params)
+            super().__setattr__(name, value)
 
     monkeypatch.setattr(psycopg, "connect", lambda url, **kwargs: made.append(Refuses()) or made[0])
 
@@ -1286,10 +1832,11 @@ def test_given_a_file_the_driver_isnt_loaded(one_creator):
     assert result.stderr.startswith("warning: PostgreSQL is on")
 
 
-@pytest.mark.parametrize("apply", [[], ["--apply"]])
-def test_working_on_postgresql_doesnt_load_the_scraper(apply):
+@pytest.mark.parametrize("apply", [False, True])
+def test_working_on_postgresql_doesnt_load_the_scraper(tmp_path, apply):
     """Nor does a setting the scraper would stop on stop it."""
     pytest.importorskip("psycopg")
+    apply = ["--apply", "--undo-dir", str(tmp_path)] if apply else []
     result = run_tool(
         "import sys\n"
         "import ofscraper.commands.recover_collisions as tool\n"
