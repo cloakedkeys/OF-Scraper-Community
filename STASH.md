@@ -35,7 +35,8 @@ That exact link is replaced by the conversation's link; any other link is kept.
 
 It reads OF-Scraper's databases offline and never contacts OnlyFans or Fansly.
 A Fansly database is recognised by the site OF-Scraper records in it; Fansly runs
-keep their databases in a `Fansly` folder under `.data` by default.
+keep their databases in a `Fansly` folder under `.data` by default. It can also
+read a PostgreSQL database: see "With PostgreSQL" below.
 
 ## Run it
 
@@ -69,11 +70,45 @@ The report is JSON. For each creator it counts:
 
 A few of the missing paths are listed under `not_in_stash_sample`.
 
+### With PostgreSQL
+
+If the scraper keeps its data in PostgreSQL (see `POSTGRESQL.md`), the
+`user_data.db` files stop being updated. Give `--postgres` in place of the paths
+to read PostgreSQL instead:
+
+```sh
+OFSC_DATABASE_URL=postgresql://user:password@host:5432/database \
+  python -m ofscraper.commands.stash_sync --postgres --apply
+```
+
+- The database is the one `OFSC_DATABASE_URL` names in the environment the
+  command is run in. An address that is only in one of the scraper's `.env`
+  files is not seen: this command doesn't read the scraper's settings.
+- Every creator of both sites is synced. `--site onlyfans` or `--site fansly`
+  keeps one site. `--creator <username or id>` keeps one creator, and can be
+  given more than once.
+- PostgreSQL is only read, and the address and its password are never printed.
+- The report is the same, except that `database` names the site and the
+  creator's id (`PostgreSQL: onlyfans, creator 123`) where it has a file's path.
+  A creator with no saved username is named by that id.
+- The same rows give the same result as from files, with two exceptions, both
+  in the date. PostgreSQL keeps a date as a moment and gives it in UTC, so a
+  date the scraper saved with another time zone can land on the next or the
+  previous day. And an empty posted date in a file leaves the item without a
+  date, where PostgreSQL uses the day the media was made.
+- The file paths are the ones the scraper recorded where it ran. If this command
+  or Stash runs somewhere else, use `--path-map` as below.
+
+Given paths, the command reads the files as before, and says so if
+`OFSC_DATABASE_URL` is set. Paths and `--postgres` together are refused.
+
 ## Options
 
 | Option | Use |
 |---|---|
 | `--apply` | write to Stash; without it, nothing is created or changed |
+| `--postgres` | read the PostgreSQL database `$OFSC_DATABASE_URL` names instead of `user_data.db` files; give no paths with it |
+| `--site`, `--creator` | with `--postgres`: only one site (`onlyfans` or `fansly`), or only the creators named by username or id |
 | `--scan` | with `--apply`, have Stash scan the download folders first and wait for it |
 | `--url` | Stash's GraphQL address (default `http://localhost:9999/graphql`, or `$STASH_URL`) |
 | `--api-key` | needed if Stash has a password: Settings → Security → API Key (or `$STASH_API_KEY`) |

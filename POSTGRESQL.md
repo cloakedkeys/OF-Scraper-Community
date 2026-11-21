@@ -55,6 +55,21 @@ Run like that, it only reports: how many files, creators and rows it found for e
 
 Afterwards the `user_data.db` files are no longer used. Keep them: there is no command yet for going back.
 
+## Syncing to Stash
+
+`stash_sync` (see `STASH.md`) reads PostgreSQL when it is given `--postgres` in place of the paths to `user_data.db` files:
+
+```
+python -m ofscraper.commands.stash_sync --postgres
+```
+
+- **It reads the database that `OFSC_DATABASE_URL` names in the environment the command is run in.** It is a separate tool and doesn't read the scraper's settings, so an address that is only in a `.env` file that `config.json` names is not seen: set the variable for the command. In Docker, an address given under `environment:` is already set for a command run in the container.
+- **It needs the PostgreSQL driver**, as the scraper does.
+- **Every creator of both sites is synced** unless you narrow it: `--site onlyfans` or `--site fansly` keeps one site, and `--creator <username or id>` keeps one creator and can be given more than once.
+- **PostgreSQL is only read.** The command opens one read-only connection, sees the database as it was when it started reading, and closes the connection before it sends anything to Stash.
+- **Given `user_data.db` files, it still reads those files.** With `OFSC_DATABASE_URL` set it then says that they hold nothing scraped since PostgreSQL was turned on. Files and `--postgres` together are refused.
+- **A server it can't use** (not running, a refused login, no such database, no driver) stops it with one sentence and exit code 1, before Stash is contacted.
+
 ## What is different
 
 - **One database for every creator.** Each site gets its own schema (`onlyfans`, `fansly`), holding the same tables a `user_data.db` has. Every row carries its creator's `model_id`.
@@ -66,14 +81,15 @@ Afterwards the `user_data.db` files are no longer used. Keep them: there is no c
 ## What doesn't work with it yet
 
 - **Existing libraries start empty** until you bring your `user_data.db` files in (see above). Until then the scraper treats everything as new.
-- **Tools that read `user_data.db` files** keep reading those files and don't see PostgreSQL: Merge Databases, `stash_sync`, `recover_collisions`, `scripts/creator_names.py`, and the GUI patch. Nothing scraped since you turned PostgreSQL on is in those files, and what a tool changes in them does not reach PostgreSQL.
-  - `stash_sync`, `recover_collisions` and `scripts/creator_names.py` say so when they start, if `OFSC_DATABASE_URL` is set in the environment they are run in. They don't read the scraper's settings, so they say nothing when the address is only in an env file that `config.json` names.
+- **Tools that read `user_data.db` files** keep reading those files and don't see PostgreSQL: Merge Databases, `recover_collisions`, `scripts/creator_names.py`, and the GUI patch. Nothing scraped since you turned PostgreSQL on is in those files, and what a tool changes in them does not reach PostgreSQL.
+  - `recover_collisions` and `scripts/creator_names.py` say so when they start, if `OFSC_DATABASE_URL` is set in the environment they are run in. They don't read the scraper's settings, so they say nothing when the address is only in an env file that `config.json` names.
   - Merge Databases says so on its screen.
   - The GUI patch doesn't say so.
+  - `stash_sync` reads PostgreSQL when you tell it to: see "Syncing to Stash" above.
 - **Going back** to SQLite files with what PostgreSQL holds isn't built. Unsetting `OFSC_DATABASE_URL` returns to your SQLite files as they were.
 
 ## Developing
 
-`test/test_db_postgres_live.py` runs the engine against a real server. It is skipped unless `OFSC_TEST_POSTGRES_URL` names one the tests may use; each test works in a schema of its own and drops it. CI runs it against the oldest and newest supported PostgreSQL.
+`test/test_db_postgres_live.py` runs the engine against a real server. It is skipped unless `OFSC_TEST_POSTGRES_URL` names one the tests may use; each test works in a schema of its own and drops it. CI runs it against the oldest and newest supported PostgreSQL. `test/test_stash_sync_postgres_live.py` does the same for `stash_sync --postgres`.
 
 A column added to a SQLite table also needs adding to `TABLES` in `ofscraper/db/postgres.py`, with the step that adds it to PostgreSQL databases made before. `test/test_db_postgres.py` fails until the two match.

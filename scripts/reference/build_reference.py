@@ -506,7 +506,7 @@ def render_cli(notes):
 SEPARATE_COMMANDS = {
     "postgres_import": "FOLDER [OPTIONS]",
     "recover_collisions": "DATABASE [OPTIONS]",
-    "stash_sync": "PATH... [OPTIONS]",
+    "stash_sync": "(PATH... | --postgres) [OPTIONS]",
 }
 
 
