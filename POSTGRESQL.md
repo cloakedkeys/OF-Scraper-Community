@@ -53,7 +53,33 @@ Run like that, it only reports: how many files, creators and rows it found for e
 - **A value PostgreSQL's column can't hold stops the file**, and is listed with its table, row and column: an id that isn't a number, a yes/no column holding something else, a date that can't be read. Empty dates become empty. Two rows that would be the same row once a missing creator is filled in stop it too.
 - **`--skip-bad-files`** brings in the files that can be, and leaves out (and lists) the ones that can't.
 
-Afterwards the `user_data.db` files are no longer used. Keep them: there is no command yet for going back.
+Afterwards the `user_data.db` files are no longer used. Keep them anyway, as your copy from before the switch.
+
+## Going back to SQLite files
+
+Unsetting `OFSC_DATABASE_URL` returns to your `user_data.db` files as they were, without anything scraped since. A second command writes what PostgreSQL holds back to files first:
+
+```
+python -m ofscraper.commands.postgres_export <folder>
+```
+
+Every creator PostgreSQL has rows for gets a file of their own, `<folder>/<the creator's id>/user_data.db`. A profile's `.data` folder is laid out like that, unless you changed the `metadata` setting: then move each file to where your setting puts it. `OFSC_DATABASE_URL` says which database is read, as above. Don't run the scraper while this runs: what it saves meanwhile isn't in the files.
+
+Run like that, it only reports: how many creators and rows it found, and which creators already have a file. Nothing is written. Add `--apply` to write the files.
+
+- **PostgreSQL is only read.** It holds everything afterwards as it did before.
+- **A file that is already there is never changed.** Its creator is left out and listed, and the others are written. To get that creator's rows, run the command again with another folder, an empty one. You then have both files. If you brought the old file into PostgreSQL before, the new one holds everything and can take its place. If you didn't, put the two together with Merge Databases. A `user_data.db-wal` or `user_data.db-journal` file left where a database used to be is in the way too.
+- **A file is whole or isn't there.** It is made under another name beside its place (`user_data.db.<letters>.partial`) and gets its name once it is complete. A run that is stopped leaves no half-written `user_data.db`, and can be run again: the files already written are left out. A `.partial` file left by a run that was killed can be deleted.
+- **A file is one the scraper would have made today.** The code that makes a new creator's database makes it, so it has the same tables and has had every upgrade step.
+- **A file is checked before it gets its name.** It has to hold the rows exactly as PostgreSQL gave them, and the import has to be able to read it. A creator whose file fails that is listed with the reason, and gets no file.
+- **One site at a time.** If PostgreSQL has rows for both OnlyFans and Fansly, add `--site onlyfans` or `--site fansly` and give each site its own folder: an id is a creator of its own on each site.
+
+What comes back is what the scraper reads from PostgreSQL. For files you brought in, those are the same rows, with these differences:
+
+- **A date** is the same moment, written in UTC (`2024-03-01T09:30:00+00:00`), whatever form the old file had.
+- **What the import tidied stays tidied:** an empty date is empty, a yes or no is 1 or 0, a number saved as text is a number.
+- **A row's own `id`** is its place among the creator's rows, oldest first. In a file that held one creator that is usually the id it had. Where it isn't, an undo file that `recover_collisions` wrote for the old file no longer finds its rows.
+- **A file that held several creators** comes back as one file for each. A file that held no posts, messages or media was never brought in, so it doesn't come back.
 
 ## What is different
 
@@ -67,7 +93,6 @@ Afterwards the `user_data.db` files are no longer used. Keep them: there is no c
 
 - **Existing libraries start empty** until you bring your `user_data.db` files in (see above). Until then the scraper treats everything as new.
 - **Tools that read `user_data.db` files** keep reading those files and don't see PostgreSQL: Merge Databases, `stash_sync`, `recover_collisions`, `scripts/creator_names.py`, and the GUI patch.
-- **Going back** to SQLite files with what PostgreSQL holds isn't built. Unsetting `OFSC_DATABASE_URL` returns to your SQLite files as they were.
 
 ## Developing
 
