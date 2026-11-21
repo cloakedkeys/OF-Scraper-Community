@@ -13,8 +13,10 @@ another: the connection the refusal came over is closed (a later request
 could reuse it), and the address is left out of the host's addresses, which
 is what new connections are made from. Every session then looks hosts up
 again before its next request (``times_left``): the addresses it saved may
-hold the one that was left. When every address of a host has refused, all
-are used again.
+hold the one that was left. A kept-alive connection to it that is still in
+a pool is closed when a request comes to use it, before anything is sent,
+and that request goes over another connection (``Request``). When every
+address of a host has refused, all are used again.
 
 Nothing here logs an address.
 """
@@ -55,6 +57,27 @@ class Response(aiohttp.ClientResponse):
         peer = self.came_over and self.came_over.get_extra_info("peername")
         self.came_from = peer[0] if peer else None
         return await super().start(connection)
+
+
+class Request(aiohttp.ClientRequest):
+    """Sends nothing over a connection to an address that was left: a
+    kept-alive one opened before then, or a new one made from addresses
+    saved before then. aiohttp closes the connection this fails on and sends
+    the request again, once; after that the session's own retries do."""
+
+    async def send(self, conn):
+        if goes_to_one_left(self.url.host, conn.transport):
+            raise aiohttp.ServerDisconnectedError(
+                "the connection is to an address that is no longer used"
+            )
+        return await super().send(conn)
+
+
+def goes_to_one_left(host, transport) -> bool:
+    """True when ``transport`` is a connection to an address of ``host``
+    that was left."""
+    peer = transport and transport.get_extra_info("peername")
+    return bool(peer) and peer[0] in _refusing.get(host, ())
 
 
 def leave(response) -> bool:

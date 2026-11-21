@@ -1,10 +1,10 @@
-"""Requests to Fansly's CDN reuse a kept-alive connection (#556).
+"""Requests to the file hosts reuse a kept-alive connection (#556).
 
 aiohttp reuses a connection only for a request whose SSL setting is the
 same object as the one that opened it. The session passed a new SSL context
 with every request, so every image and every stream segment opened a new
-connection. Fansly's CDN hosts now use the connector's own context; its API
-host and OnlyFans keep a new connection per request.
+connection. The file hosts (cdn*.fansly.com, cdn*.onlyfans.com) now use the
+connector's own context; the API hosts keep a new connection per request.
 
 One local server stands in for every host; the test resolver sends each
 name to it. The client's port tells the connections apart. aiohttp keys its
@@ -14,6 +14,8 @@ pool on the SSL setting for plain http too, so no certificate is needed.
 import asyncio
 import logging
 import socket
+import struct
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -25,6 +27,7 @@ import ofscraper.managers.sessionmanager.cert as cert
 import ofscraper.managers.sessionmanager.sessionmanager as sm
 import ofscraper.sites.fansly.address as fansly_address
 import ofscraper.utils.settings as settings
+from test_tls_clienthello import _fingerprint
 
 
 class _Log:
@@ -34,6 +37,7 @@ class _Log:
 
 @pytest.fixture(params=["default", "custom", "false"])
 def ssl_verify(request, monkeypatch):
+    site = SimpleNamespace(name="fansly")
     monkeypatch.setattr(
         settings,
         "get_settings",
@@ -42,9 +46,10 @@ def ssl_verify(request, monkeypatch):
             ssl_verify=request.param,
             cached_disabled=True,
             anon=False,
-            site="fansly",
+            site=site.name,
         ),
     )
+    request.node.site = site
     monkeypatch.setattr(common_globals, "log", _Log(), raising=False)
     # the custom context's seed, without reading anyone's auth
     monkeypatch.setattr(cert, "_fansly_seed", lambda: "fansly_test_seed")
@@ -97,15 +102,82 @@ def _client_ports(host, count=3):
     return ports
 
 
-def test_fansly_cdn_requests_share_one_connection(ssl_verify):
-    assert len(set(_client_ports("cdn3.fansly.com"))) == 1
+def _profile(request, host):
+    """A profile of the site ``host`` belongs to."""
+    request.node.site.name = "fansly" if "fansly" in host else "onlyfans"
 
 
-@pytest.mark.parametrize("host", ["apiv3.fansly.com", "cdn3.onlyfans.com", "onlyfans.com"])
-def test_api_and_onlyfans_requests_keep_a_new_connection_each(ssl_verify, host):
+@pytest.mark.parametrize(
+    "host", ["cdn3.fansly.com", "cdn2.onlyfans.com", "cdn3.onlyfans.com"]
+)
+def test_file_host_requests_share_one_connection(request, ssl_verify, host):
+    _profile(request, host)
+    assert len(set(_client_ports(host))) == 1
+
+
+@pytest.mark.parametrize("host", ["apiv3.fansly.com", "onlyfans.com"])
+def test_api_requests_keep_a_new_connection_each(request, ssl_verify, host):
+    _profile(request, host)
     if ssl_verify == "false":
         pytest.skip("False is one value, so aiohttp already reused these")
     assert len(set(_client_ports(host))) == 3
+
+
+def _client_hello(host):
+    """What a TLS fingerprint sees of one https request to host, sent
+    through the session. The host name itself (SNI) is left out."""
+    out = {}
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(10)
+
+        def accept():
+            conn, _ = listener.accept()
+            with conn:
+                data = b""
+                while len(data) < 5 or len(data) < 5 + struct.unpack(">H", data[3:5])[0]:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    data += chunk
+            out["hello"] = data
+
+        async def go():
+            async with sm.sessionManager(
+                retries=1, wait_min=0, wait_max=0, log=logging.getLogger("test")
+            ) as c:
+                port = listener.getsockname()[1]
+                async with c.requests_async(url=f"https://{host}:{port}/f"):
+                    pass
+
+        thread = threading.Thread(target=accept)
+        thread.start()
+        # the listener hangs up after the ClientHello
+        with pytest.raises(Exception):  # noqa: B017, PT011
+            asyncio.run(go())
+        thread.join(timeout=15)
+    seen = _fingerprint(out["hello"])
+    names = seen["extensions"].pop(0)
+    assert host.encode() in names
+    del seen["length"]
+    return seen
+
+
+@pytest.mark.parametrize(
+    "file_host, api_host",
+    [("cdn2.onlyfans.com", "onlyfans.com"), ("cdn3.fansly.com", "apiv3.fansly.com")],
+)
+def test_a_file_host_request_sends_the_client_hello_of_an_api_request(
+    request, ssl_verify, file_host, api_host
+):
+    # AGENTS.md rule 5. A file host's requests use the connector's SSL
+    # context, an API host's get a new one each: the same setting made both
+    _profile(request, file_host)
+    kept = _client_hello(file_host)
+    assert kept == _client_hello(api_host)
+    if ssl_verify == "custom":
+        assert kept["session_id_len"] == 0
 
 
 @pytest.mark.parametrize(
@@ -117,7 +189,12 @@ def test_api_and_onlyfans_requests_keep_a_new_connection_each(ssl_verify, host):
         ("https://fansly.com/", False),
         ("https://cdn3.fansly.com.example.org/a", False),
         ("https://cdn3.notfansly.com/a", False),
-        ("https://cdn3.onlyfans.com/a", False),
+        ("https://cdn3.onlyfans.com/files/a.jpg?Policy=x", True),
+        ("https://cdn2.onlyfans.com/a", True),
+        ("https://onlyfans.com/api2/v2/users/me", False),
+        ("https://public.onlyfans.com/a", False),
+        ("https://cdn3.onlyfans.com.example.org/a", False),
+        ("https://cdn3.notonlyfans.com/a", False),
         ("not a link", False),
         (None, False),
     ],
