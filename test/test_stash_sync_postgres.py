@@ -16,6 +16,7 @@ import sqlite3
 import subprocess
 import sys
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -284,10 +285,14 @@ def check_same_sync(database_url, data, in_stash, apply):
     assert totals["galleries_created" if apply else "galleries_to_create"] >= 6
 
 
-def to_the_second(entry):
-    """A file's entry with its dates cut to the second: PostgreSQL writes a
-    fraction of a second without its last zeros."""
-    return {**entry, "posts": [(posted[:19], post_id) for posted, post_id in entry["posts"]]}
+def with_moments(entry):
+    """An entry with its dates as the moments they name. The text differs
+    between the two and the moment doesn't: PostgreSQL writes a fraction of a
+    second without its last zeros (.25 where a file has .250000)."""
+    return {
+        **entry,
+        "posts": [(datetime.fromisoformat(posted) if posted else posted, post_id) for posted, post_id in entry["posts"]],
+    }
 
 
 def check_own_rows(database_url, data):
@@ -306,7 +311,7 @@ def check_own_rows(database_url, data):
         assert (site, username) == (file_site, file_username)
         assert [entry["path"] for entry in entries] == [entry["path"] for entry in file_entries]
         for entry, file_entry in zip(entries, file_entries):
-            assert to_the_second(entry) == to_the_second(file_entry)
+            assert with_moments(entry) == with_moments(file_entry)
     assert [(site, username) for site, (username, _) in found] == list(
         zip(["onlyfans", "onlyfans", "onlyfans", "fansly", "fansly"], PERFORMERS)
     )
@@ -390,6 +395,68 @@ def dated_file(tmp_path, posted, made):
     )
 
 
+def renamed_file(tmp_path):
+    """A creator who changed username: both are saved, the new one last."""
+    db = write_file(
+        tmp_path / ".data" / "5" / "user_data.db", 5, "Former_Name",
+        posts=[(1, "a post")],
+        medias=[(1, 1, "folder", "one.jpg", "Timeline", "Images", 1, 0, None, None)],
+    )
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute("INSERT INTO profiles (user_id, username) VALUES (5, 'Current_Name')")
+    return db
+
+
+def check_username(database_url, db):
+    """The username saved last is the creator's, from a file and from
+    PostgreSQL. Any they have had finds them, in any case."""
+    with creator_rows.in_postgres(database_url, BOTH) as creators:
+        from_database = [stash_sync.read_rows(rows)[0] for rows in creators]
+
+    assert read_model(db)[0] == "Current_Name"
+    assert from_database == ["Current_Name"]
+    for name in ("current_name", "FORMER_NAME", "5"):
+        with creator_rows.in_postgres(database_url, BOTH, [name]) as creators:
+            assert [rows.model_id for rows in creators] == [5]
+
+
+def seven_creators(tmp_path):
+    """Seven creators of one site, so that each read is run seven times:
+    (the folder, the files Stash has)."""
+    day = "2025-03-01T10:00:00+00:00"
+    in_stash = []
+    for creator in range(1, 8):
+        write_file(
+            tmp_path / ".data" / str(creator) / "user_data.db", creator, f"creator_{creator}",
+            posts=[(1, f"a post of creator {creator}")],
+            messages=[(2, "a message", None)],
+            medias=[
+                (1, 1, "folder", f"{creator}.jpg", "Timeline", "Images", 1, 0, day, day),
+                (2, 2, "folder", f"{creator}.mp4", "Messages", "Videos", 1, 0, day, day),
+            ],
+        )
+        in_stash += [("image", os.path.join("folder", f"{creator}.jpg")), ("scene", os.path.join("folder", f"{creator}.mp4"))]
+    return tmp_path / ".data", in_stash
+
+
+def check_seven_creators(database_url, data, in_stash, while_open=lambda creators: None):
+    """The seventh creator is read as the first is. Returns what
+    `while_open` found while the connection was still open."""
+    files, database = Recording(in_stash), Recording(in_stash)
+    with creator_rows.in_postgres(database_url, ["onlyfans"]) as creators:
+        read = stash_sync.read_creators(creators)
+        found = while_open(creators)
+
+    from_database = sync((), database, read=read, apply=True)
+    from_files = sync([data], files, apply=True)
+
+    assert [m["performer"] for m in from_database["models"]] == [f"creator_{n}" for n in range(1, 8)]
+    assert without_sources(from_database) == without_sources(from_files)
+    assert from_files["totals"] == {"files": 14, "updated": 14}
+    assert database.calls == files.calls
+    return found
+
+
 def check_date(database_url, db, from_a_file, from_postgresql):
     with creator_rows.in_postgres(database_url, BOTH) as creators:
         _, (from_database,) = stash_sync.read_rows(creators[0])
@@ -433,6 +500,46 @@ def test_the_two_dates_postgresql_gives_differently(tmp_path, server, posted, ma
     check_date(URL, db, from_a_file, from_postgresql)
 
 
+def test_the_username_saved_last_is_the_creators(tmp_path, server):
+    db = renamed_file(tmp_path)
+    server.bring_in(tmp_path / ".data", tmp_path / "staging")
+    # a name saved later still, for a creator with nothing else, isn't this one's
+    server.insert("onlyfans", "profiles", ["user_id", "username"], [(6, "someone_else")])
+
+    check_username(URL, db)
+
+
+def test_the_seventh_creator_of_a_site_is_read_as_the_first(tmp_path, server):
+    data, in_stash = seven_creators(tmp_path)
+    server.bring_in(data, tmp_path / "staging")
+
+    check_seven_creators(URL, data, in_stash)
+
+
+def test_files_are_closed_once_they_are_read(library, monkeypatch):
+    db, _ = library
+    opened = []
+    connect = sqlite3.connect
+
+    def keep(*args, **kwargs):
+        opened.append(connect(*args, **kwargs))
+        return opened[-1]
+
+    monkeypatch.setattr(creator_rows.sqlite3, "connect", keep)
+    try:
+        read_model(db)
+        stash_sync.site_of(db)
+        sync([db], Recording())
+
+        assert len(opened) == 3
+        for conn in opened:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                conn.execute("SELECT 1")
+    finally:
+        for conn in opened:
+            conn.close()
+
+
 def test_a_database_made_before_a_column_was_added_reads_as_a_file_from_then(tmp_path, server):
     server.make("fansly", without={("messages", "group_id"), ("posts", "purchase_type")})
     server.insert("fansly", "profiles", ["user_id", "username"], [(7, "an_old_one")])
@@ -470,6 +577,26 @@ def test_every_creator_of_both_sites_unless_told(more_creators, library, server,
     assert creators_of(wanted=["123"]) == [("onlyfans", 123), ("fansly", SAME_ID)]
     assert creators_of(["onlyfans"], wanted=["123"]) == [("onlyfans", 123)]
     assert creators_of(wanted=["creator", SAME_ID_NAME]) == [("onlyfans", 123), ("fansly", SAME_ID)]
+    # a username is its own site's: the Fansly creator numbered 123 isn't "creator"
+    assert creators_of(wanted=["creator"]) == [("onlyfans", 123)]
+    assert creators_of(wanted=[SAME_ID_NAME]) == [("fansly", SAME_ID)]
+
+
+def test_a_creator_is_found_by_an_id_or_by_any_username_it_has_had(server):
+    """So one request can find several: an id is looked for on both sites,
+    and a username may be another creator's id."""
+    server.insert("onlyfans", "models", ["model_id"], [(5,), (6,), (130,)])
+    server.insert("fansly", "models", ["model_id"], [(130,)])
+    server.insert(
+        "onlyfans", "profiles", ["user_id", "username"],
+        [(5, "Former_Name"), (5, "Current_Name"), (6, "130"), (130, "plain")],
+    )
+
+    assert creators_of(wanted=["current_name"]) == [("onlyfans", 5)]
+    assert creators_of(wanted=["CURRENT_NAME"]) == [("onlyfans", 5)]
+    assert creators_of(wanted=["former_name"]) == [("onlyfans", 5)]
+    assert creators_of(wanted=["130"]) == [("onlyfans", 130), ("onlyfans", 6), ("fansly", 130)]
+    assert creators_of(["onlyfans"], wanted=["plain", "6"]) == [("onlyfans", 130), ("onlyfans", 6)]
 
 
 def test_creators_come_in_the_order_a_data_folder_gives_them(server):
@@ -496,6 +623,32 @@ def test_a_creator_without_a_saved_username_is_named_by_its_id(server):
     assert report["models"][0]["performer"] == "77"
     # no page of its own to link to: its username isn't known
     assert ("performer", {"name": "77"}) in stash.created
+
+
+def test_a_file_is_one_performer_and_postgresql_has_one_for_each_creator(tmp_path, server):
+    """A file is taken to be one creator's, whatever its rows say (Merge
+    Databases makes files with two creators' rows). PostgreSQL tells the
+    creators apart. One with nothing but a username saved has no files in a
+    file, and isn't a creator to PostgreSQL."""
+    data = tmp_path / ".data"
+    db = write_file(
+        data / "5" / "user_data.db", 5, "the_first",
+        medias=[(1, 1, "folder", "first.jpg", "Timeline", "Images", 1, 0, None, None)],
+    )
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute("INSERT INTO profiles (user_id, username) VALUES (6, 'the_second')")
+        conn.execute(
+            "INSERT INTO medias (media_id, post_id, directory, filename, media_type, downloaded, model_id)"
+            " VALUES (2, 2, 'folder', 'second.jpg', 'Images', 1, 6)"
+        )
+    write_file(data / "7" / "user_data.db", 7, "only_a_name")
+    server.bring_in(data, tmp_path / "staging")
+
+    from_files = sync([data], Recording())
+    from_database = from_postgres(URL, Recording())
+
+    assert [(m["performer"], m["files"]) for m in from_files["models"]] == [("the_second", 2), ("only_a_name", 0)]
+    assert [(m["performer"], m["files"]) for m in from_database["models"]] == [("the_first", 1), ("the_second", 1)]
 
 
 def test_a_creator_nobody_has_is_said(more_creators, server, tmp_path, monkeypatch, capsys):
@@ -626,6 +779,8 @@ def test_only_the_commands_own_environment_is_asked(more_creators, server, stash
         (["--creator", "a_creator", "some/.data"], "--site and --creator go with --postgres"),
         ([], "the following arguments are required: paths, or --postgres"),
         (["--postgres", "--site", "another"], "invalid choice: 'another'"),
+        (["--postgres", "--creator", ""], "--creator needs a username or an id, and was given none"),
+        (["--postgres", "--creator", "a_creator", "--creator", "  "], "--creator needs a username or an id"),
     ],
 )
 def test_cli_refuses_what_it_cant_make_sense_of(monkeypatch, capsys, args, said):
@@ -691,6 +846,54 @@ def test_a_read_that_fails_stops_the_run_before_stash_is_asked(more_creators, se
         " (server closed the connection unexpectedly)\n"
     )
     assert server.events[-1] == ("close",)
+
+
+def test_a_login_that_may_not_read_a_sites_tables_is_told_so(
+    more_creators, library, server, stash_server, tmp_path, monkeypatch, capsys
+):
+    """Not given an empty report: to such a login the tables look as if
+    they weren't there."""
+    server.bring_in(tmp_path / ".data", tmp_path / "staging")
+    _, url = stash_server
+    server.forbid("fansly")
+
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--apply", "--url", url)
+
+    assert (code, out) == (1, "")
+    assert err.startswith(
+        "error: Can't read the PostgreSQL database at db.example:5433/library:"
+        " the user isn't allowed to read the fansly tables ("
+    )
+    assert ", medias, " in err and err.endswith(").\n") and err.count("\n") == 1
+    assert server.events[-1] == ("close",)
+    # the site it may read is read
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--site", "onlyfans", "--url", url)
+    assert (code, err) == (0, "")
+    assert [model["performer"] for model in json.loads(out)["models"]] == ["creator", SECOND_NAME]
+
+    # one table is enough: without it the creators would seem to have no files
+    server.forbid("onlyfans", ["medias"])
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--site", "onlyfans", "--url", url)
+    assert (code, out) == (1, "")
+    assert err == (
+        "error: Can't read the PostgreSQL database at db.example:5433/library:"
+        " the user isn't allowed to read the onlyfans tables (medias).\n"
+    )
+
+
+def test_a_read_the_server_ends_for_taking_too_long_is_one_sentence(monkeypatch, capsys):
+    psycopg = pytest.importorskip("psycopg")
+    ended = psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+    monkeypatch.setattr(psycopg, "connect", lambda url, **kwargs: Connection(fails=ended))
+    monkeypatch.setattr(stash_sync.StashClient, "call", lambda *a, **k: pytest.fail("Stash was asked"))
+
+    code, out, err = cli(monkeypatch, capsys, "--postgres", "--apply")
+
+    assert (code, out) == (1, "")
+    assert err == (
+        "error: Can't read the PostgreSQL database at db.example:5433/library."
+        " (canceling statement due to statement timeout)\n"
+    )
 
 
 def test_cli_never_repeats_the_address_or_its_password(monkeypatch, capsys):
@@ -796,9 +999,17 @@ def test_the_connection_is_read_only_and_sees_the_database_at_one_moment(monkeyp
     assert made["kwargs"]["cursor_factory"] is postgres._cursor_class()
     assert made["kwargs"]["row_factory"] is postgres.row_factory
     assert made["kwargs"]["connect_timeout"] == postgres.CONNECT_TIMEOUT
+    # a server that is gone is noticed, and no statement is kept on the server
+    assert {k: v for k, v in made["kwargs"].items() if k.startswith("keepalives")} == {
+        "keepalives_idle": 30, "keepalives_interval": 10, "keepalives_count": 3,
+    }
+    assert "prepare_threshold" in made["kwargs"] and made["kwargs"]["prepare_threshold"] is None
     assert made["conn"].did == [
         "SET TIME ZONE 'UTC'",
         "SET DateStyle TO 'ISO, YMD'",
+        # a read that waits or runs on is ended by the server
+        "SET lock_timeout = 30000",
+        "SET statement_timeout = 300000",
         "commit",
         ("read_only", True),
         ("isolation_level", psycopg.IsolationLevel.REPEATABLE_READ),

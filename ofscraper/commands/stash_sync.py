@@ -138,26 +138,28 @@ def read_model(database, site=ONLYFANS):
 
 def read_rows(rows, site=ONLYFANS):
     """read_model for a creator's rows that are open: a user_data.db's or PostgreSQL's."""
+    tables = rows.tables()
     username = None
-    if rows.columns("profiles"):
-        profiles = rows.select("profiles", ["username"])
-        username = profiles[-1][0] if profiles else None  # the one saved last
+    if "profiles" in tables:
+        # the one saved last, which has the highest id
+        profiles = rows.select("profiles", ["username", "id"])
+        username = max(profiles, key=lambda row: sqlite_order(row[1]))[0] if profiles else None
 
     # a bought message is saved in posts too, under the message's ID
     message_ids = (
-        {str(r[0]) for r in rows.select("messages", ["post_id"])} if rows.columns("messages") else set()
+        {str(r[0]) for r in rows.select("messages", ["post_id"])} if "messages" in tables else set()
     )
     texts = {}
     for table in reversed(TEXT_TABLES):  # earlier tables win
-        if rows.columns(table):
+        if table in tables:
             for post_id, text in rows.select(table, ["post_id", "text"]):
                 if text or str(post_id) not in texts:
                     texts[str(post_id)] = (table, text)
     # Newer databases record what a purchase was (posts.purchase_type, OnlyFans)
     # and a message's conversation (messages.group_id, Fansly). Databases are
     # opened read-only and not upgraded, so a missing column counts as empty.
-    purchase_types = optional_column(rows, "posts", "purchase_type")
-    group_ids = optional_column(rows, "messages", "group_id")
+    purchase_types = optional_column(rows, tables, "posts", "purchase_type")
+    group_ids = optional_column(rows, tables, "messages", "group_id")
 
     media_columns = rows.columns("medias")
     date_col = "posted_at" if "posted_at" in media_columns else "created_at"
@@ -195,9 +197,20 @@ def read_rows(rows, site=ONLYFANS):
     return username, list(files.values())
 
 
-def optional_column(rows, table, column):
+def sqlite_order(value):
+    """Where SQLite's ORDER BY puts a value: nothing, numbers, text, the rest."""
+    if value is None:
+        return (0, 0)
+    if isinstance(value, (int, float)):
+        return (1, value)
+    if isinstance(value, str):
+        return (2, value)
+    return (3, bytes(value))
+
+
+def optional_column(rows, tables, table, column):
     """{post_id: value} for the rows where this column is set; {} if it doesn't exist."""
-    if column not in rows.columns(table):
+    if table not in tables or column not in rows.columns(table):
         return {}
     return {
         str(post_id): value
@@ -693,7 +706,7 @@ def main(argv=None):
     parser.add_argument("paths", nargs="*", help="user_data.db files, or folders to search for them (e.g. <profile>/.data)")
     parser.add_argument("--postgres", action="store_true", help=f"read the PostgreSQL database ${postgres.URL_KEY} names instead of user_data.db files; give no paths with it")
     parser.add_argument("--site", choices=list(SITES), help="with --postgres, only this site's creators (default: both sites)")
-    parser.add_argument("--creator", action="append", default=[], metavar="NAME", help="with --postgres, only this creator, by username or id (default: every creator); repeatable")
+    parser.add_argument("--creator", action="append", default=[], metavar="NAME", help="with --postgres, only the creators with this id (on either site) or with this username now or before, in any case; it can match more than one (default: every creator); repeatable")
     parser.add_argument("--apply", action="store_true", help="write to Stash; without it, only report")
     parser.add_argument("--url", default=os.environ.get("STASH_URL", DEFAULT_URL), help=f"Stash GraphQL URL (default {DEFAULT_URL}, or $STASH_URL)")
     parser.add_argument("--api-key", default=os.environ.get("STASH_API_KEY"), help="Stash API key, if Stash has a password (default $STASH_API_KEY)")
@@ -717,6 +730,8 @@ def main(argv=None):
     if args.postgres:
         if args.paths:
             parser.error("give user_data.db files or --postgres, not both")
+        if not all(name.strip() for name in args.creator):
+            parser.error("--creator needs a username or an id, and was given none")
         if not database_url:
             parser.error(
                 f"--postgres needs {postgres.URL_KEY} set in the environment this is run in"

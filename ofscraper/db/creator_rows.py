@@ -8,9 +8,12 @@ per creator, FileRows or PostgresRows, and asks both the same things:
     site                  "onlyfans" or "fansly" (a file may name another)
     name                  where the rows are, for a report
     creator               what to call the creator when no username is saved
+    tables()              the names of the tables there are
     columns(table)        the table's column names; none if there is no table
     select(table, columns, where="")
-                          the creator's rows of a table, oldest first
+                          the creator's rows of a table. PostgreSQL gives
+                          them oldest first; a file gives them as SQLite
+                          does when no order is asked for
     close()
 
 `columns` and `where` are SQL that both engines take. Values come out as
@@ -61,6 +64,15 @@ class FileRows:
         ).fetchone()
         return str(row[0]).lower() if row and row[0] else sites.DEFAULT_SITE
 
+    def tables(self):
+        """Tables only: a view isn't one."""
+        return {
+            row[0]
+            for row in self._connection().execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+
     def columns(self, table):
         return {row[1] for row in self._connection().execute(f"PRAGMA table_info({table})")}
 
@@ -68,7 +80,9 @@ class FileRows:
         query = f"SELECT {', '.join(columns)} FROM {table}"
         if where:
             query += f" WHERE {where}"
-        return self._connection().execute(f"{query} ORDER BY id").fetchall()
+        # no order is asked for: a file made elsewhere may have no id column,
+        # or one that isn't the order its rows were saved in
+        return self._connection().execute(query).fetchall()
 
     def close(self):
         if self._conn is not None:
@@ -102,6 +116,9 @@ class PostgresRows:
         self._schema = postgres.schema_name(site)
         self._columns = columns
 
+    def tables(self):
+        return set(self._columns)
+
     def columns(self, table):
         return set(self._columns.get(table, ()))
 
@@ -121,13 +138,15 @@ class PostgresRows:
 def in_postgres(database_url, wanted_sites, wanted=()):
     """A PostgresRows for each creator the database holds rows for: a site at
     a time, in the order given, and by the id's text within a site. `wanted`
-    keeps only the creators with one of these usernames (any case) or ids,
-    and raises NotFound for one that no site has.
+    keeps only the creators with one of these ids, or who have had one of
+    these usernames (any case), which can be several for one of them. It
+    raises NotFound for one that no site has.
 
     One read-only connection serves them all, and every read sees the
     database as it was at the first. It is closed when the block ends, so
-    read inside the block. A server that can't be used, or a read that
-    fails, is a postgres.PostgresUnavailable."""
+    read inside the block. A server that can't be used, a read that fails,
+    or a site whose tables the login may not read, is a
+    postgres.PostgresUnavailable."""
     wanted = {str(name).lower() for name in wanted}
     reader = postgres.Reader(database_url)
     try:
@@ -142,6 +161,25 @@ def in_postgres(database_url, wanted_sites, wanted=()):
                 [schema],
             ):
                 columns.setdefault(table, set()).add(column)
+            # that lists only what the login may read, and the catalogue
+            # lists every table: one that is there and can't be read is a
+            # login without the right to, not a site with nothing saved
+            there = {
+                row[0]
+                for row in reader.rows(
+                    "SELECT c.relname FROM pg_catalog.pg_class AS c"
+                    " JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace"
+                    " WHERE n.nspname = ? AND c.relkind IN ('r', 'p')",
+                    [schema],
+                )
+            }
+            unreadable = sorted((there & set(postgres.TABLE_COLUMNS)) - set(columns))
+            if unreadable:
+                raise postgres.PostgresUnavailable(
+                    "Can't read the PostgreSQL database at"
+                    f" {postgres.describe(database_url)}: the user isn't allowed to"
+                    f" read the {site} tables ({', '.join(unreadable)})."
+                )
             # a creator is listed when a scan starts; media is what the
             # tools are after
             holders = [table for table in ("models", "medias") if table in columns]

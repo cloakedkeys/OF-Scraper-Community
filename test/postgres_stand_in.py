@@ -69,6 +69,10 @@ class Server:
             "CREATE TABLE information_schema.columns"
             " (table_schema, table_name, column_name)"
         )
+        # the catalogue, which lists every table whoever may read it
+        self.db.execute("ATTACH ':memory:' AS pg_catalog")
+        self.db.execute("CREATE TABLE pg_catalog.pg_namespace (oid INTEGER PRIMARY KEY, nspname)")
+        self.db.execute("CREATE TABLE pg_catalog.pg_class (relname, relnamespace, relkind)")
         self.schemas = set()
         # what the tool did, in order: ("connect", url), ("query", sql), ("close",)
         self.events = []
@@ -83,7 +87,13 @@ class Server:
             return
         self.schemas.add(schema)
         self.db.execute(f"ATTACH ':memory:' AS {schema}")
+        namespace = self.db.execute(
+            "INSERT INTO pg_catalog.pg_namespace (nspname) VALUES (?)", [schema]
+        ).lastrowid
         for table, columns in postgres.TABLE_COLUMNS.items():
+            self.db.execute(
+                "INSERT INTO pg_catalog.pg_class VALUES (?, ?, 'r')", [table, namespace]
+            )
             columns = [c for c in columns if (table, c) not in without]
             # no column types: a value stays as `kept` made it
             rest = ", ".join(c for c in columns if c != "id")
@@ -93,6 +103,16 @@ class Server:
                 "INSERT INTO information_schema.columns VALUES (?, ?, ?)",
                 [(schema, table, column) for column in columns],
             )
+
+    def forbid(self, site, tables=None):
+        """The login may no longer read the site's tables (or only not
+        these): information_schema stops listing them, as it does on a
+        server. The catalogue goes on listing them."""
+        some = "" if tables is None else f" AND table_name IN ({', '.join('?' for _ in tables)})"
+        self.db.execute(
+            f"DELETE FROM information_schema.columns WHERE table_schema = ?{some}",
+            [postgres.schema_name(site), *(tables or ())],
+        )
 
     def insert(self, site, table, columns, rows):
         """Rows as the import or the scraper hands them to the server."""
@@ -118,6 +138,9 @@ class Server:
         sources = importer.examine(importer.find(folder), staging)
         for source in sources:
             assert not source.problems, source.problems
+            if source.empty:
+                # a file no creator has a row in is left out
+                continue
             importer.read(
                 source,
                 lambda table, columns, rows, site=source.site: self.insert(

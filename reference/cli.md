@@ -127,7 +127,7 @@ Run `python -m ofscraper.commands.stash_sync (PATH... | --postgres) [OPTIONS]`.
 - `PATHS`: user_data.db files, or folders to search for them (e.g. <profile>/.data)
 - `--postgres`: read the PostgreSQL database $OFSC_DATABASE_URL names instead of user_data.db files; give no paths with it
 - `--site`: with --postgres, only this site's creators (default: both sites)
-- `--creator`: with --postgres, only this creator, by username or id (default: every creator); repeatable
+- `--creator`: with --postgres, only the creators with this id (on either site) or with this username now or before, in any case; it can match more than one (default: every creator); repeatable
 - `--apply`: write to Stash; without it, only report
 - `--url`: Stash GraphQL URL (default http://localhost:9999/graphql, or $STASH_URL)
 - `--api-key`: Stash API key, if Stash has a password (default $STASH_API_KEY)

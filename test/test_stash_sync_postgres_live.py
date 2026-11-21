@@ -9,6 +9,9 @@ or saved by the scraper.
 
 import json
 import os
+import threading
+import time
+import urllib.parse
 import uuid
 
 import pytest
@@ -46,6 +49,8 @@ from test.test_stash_sync_postgres import (  # noqa: E402,F401  (the fixtures)
     check_oldest_first,
     check_own_rows,
     check_same_sync,
+    check_seven_creators,
+    check_username,
     check_values,
     dated_file,
     everything,
@@ -54,7 +59,9 @@ from test.test_stash_sync_postgres import (  # noqa: E402,F401  (the fixtures)
     from_postgres,
     library,
     more_creators,
+    renamed_file,
     save_onlyfans,
+    seven_creators,
     stash_server,
     state,
     without_sources,
@@ -158,6 +165,28 @@ def test_the_two_dates_postgresql_gives_differently(tmp_path, pg, posted, made, 
     check_date(URL, db, from_a_file, from_postgresql)
 
 
+def test_the_username_saved_last_is_the_creators(tmp_path, pg):
+    db = renamed_file(tmp_path)
+    bring_in(tmp_path / ".data")
+
+    check_username(URL, db)
+
+
+def test_seven_creators_of_one_site_leave_no_statement_on_the_server(tmp_path, pg):
+    """The driver keeps a statement on the server once it has run five
+    times, unless told not to. A pooler that gives each transaction to
+    another connection can't have that."""
+    data, in_stash = seven_creators(tmp_path)
+    bring_in(data)
+
+    kept = check_seven_creators(
+        URL, data, in_stash,
+        lambda creators: creators[0]._reader.rows("SELECT name FROM pg_prepared_statements"),
+    )
+
+    assert kept == []
+
+
 def test_rows_the_scraper_saved_in_postgresql_sync_as_the_ones_it_saved_in_a_file(tmp_path, pg, monkeypatch):
     media_dir = tmp_path / "of"
     data = tmp_path / ".data"
@@ -241,6 +270,14 @@ def test_nothing_can_be_written_through_the_connection(pg):
         assert tuple(reader.rows("SHOW transaction_read_only")[0]) == ("on",)
         assert tuple(reader.rows("SHOW transaction_isolation")[0]) == ("repeatable read",)
         assert tuple(reader.rows("SHOW TimeZone")[0]) == ("UTC",)
+        # in milliseconds: how long a read may wait for a lock, and take
+        limits = reader.rows(
+            "SELECT name, setting FROM pg_settings"
+            " WHERE name IN ('lock_timeout', 'statement_timeout') ORDER BY name"
+        )
+        assert [tuple(row) for row in limits] == [
+            ("lock_timeout", "30000"), ("statement_timeout", "300000"),
+        ]
         with pytest.raises(postgres.PostgresUnavailable) as raised:
             reader.rows(f"INSERT INTO {pg['onlyfans']}.models (model_id) VALUES (?)", [1])
     finally:
@@ -285,6 +322,108 @@ def test_a_refused_login_is_one_sentence_without_the_password(pg, monkeypatch, c
     assert said.err.startswith("error: Can't use the PostgreSQL database at ")
     assert "the user name or password was refused" in said.err
     assert "not-the-password" not in said.err and said.err.count("\n") == 1
+
+
+def test_a_read_that_waits_on_another_programs_lock_gives_up(more_creators, pg, tmp_path, monkeypatch, capsys):
+    bring_in(tmp_path / ".data")
+    monkeypatch.setattr(postgres, "CHECKOUT_TIMEOUT", 1)
+    monkeypatch.setattr(stash_sync.StashClient, "call", lambda *a, **k: pytest.fail("Stash was asked"))
+    locked, done = threading.Event(), threading.Event()
+
+    def hold():
+        # as a program that is rebuilding the table would; let go in the
+        # end, so that a read without a limit fails here and doesn't hang
+        with psycopg.connect(URL) as other:
+            other.execute(f"LOCK TABLE {pg['onlyfans']}.medias IN ACCESS EXCLUSIVE MODE")
+            locked.set()
+            done.wait(20)
+            other.rollback()
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert locked.wait(20)
+        started = time.monotonic()
+        code = stash_sync.main(["--postgres", "--apply"])
+        waited = time.monotonic() - started
+    finally:
+        done.set()
+        holder.join()
+
+    said = capsys.readouterr()
+    assert (code, said.out) == (1, "")
+    assert said.err.startswith("error: Can't read the PostgreSQL database at ")
+    assert "lock timeout" in said.err and said.err.count("\n") == 1
+    assert waited < 15
+
+
+def test_a_read_that_takes_too_long_is_ended_by_the_server(monkeypatch):
+    monkeypatch.setattr(postgres, "READ_TIMEOUT", 1)
+    reader = postgres.Reader(URL)
+    started = time.monotonic()
+    try:
+        with pytest.raises(postgres.PostgresUnavailable) as raised:
+            reader.rows("SELECT pg_sleep(20)")
+    finally:
+        reader.close()
+
+    assert "statement timeout" in str(raised.value)
+    assert time.monotonic() - started < 15
+
+
+def as_login(user, password):
+    """The test URL with another login."""
+    url = urllib.parse.urlsplit(URL)
+    return urllib.parse.urlunsplit(
+        (url.scheme, f"{user}:{password}@{url.hostname}:{url.port or 5432}", url.path, "", "")
+    )
+
+
+def test_a_login_that_may_not_read_is_told_so_and_one_that_may_reads(
+    more_creators, pg, stash_server, tmp_path, monkeypatch, capsys
+):
+    """A login that was never granted anything sees no tables at all: that
+    isn't a database with nothing in it."""
+    if not server("SELECT rolsuper OR rolcreaterole FROM pg_roles WHERE rolname = current_user")[0][0]:
+        pytest.skip("the test login may not make another login")
+    bring_in(tmp_path / ".data")
+    _, url = stash_server
+    role, password = f"t_{uuid.uuid4().hex[:12]}_reader", "only-for-this-test"
+    server(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
+
+    def run(*args):
+        code = stash_sync.main(["--postgres", "--url", url, *args])
+        said = capsys.readouterr()
+        return code, said.out, said.err
+
+    try:
+        monkeypatch.setenv(postgres.URL_KEY, as_login(role, password))
+
+        code, out, err = run()
+        assert (code, out) == (1, "")
+        assert err.startswith("error: Can't read the PostgreSQL database at ")
+        assert "the user isn't allowed to read the onlyfans tables (" in err and ", medias, " in err
+        assert err.count("\n") == 1 and password not in err
+
+        # the right to read one site: that site is read, the other is said
+        server(f"GRANT USAGE ON SCHEMA {pg['onlyfans']} TO {role}")
+        server(f"GRANT SELECT ON ALL TABLES IN SCHEMA {pg['onlyfans']} TO {role}")
+        code, out, err = run()
+        assert (code, out) == (1, "")
+        assert "the user isn't allowed to read the fansly tables (" in err
+        code, out, err = run("--site", "onlyfans")
+        assert (code, err) == (0, "")
+        assert [m["performer"] for m in json.loads(out)["models"]] == [SECOND_NAME]
+
+        # the right to read both is all the command needs
+        server(f"GRANT USAGE ON SCHEMA {pg['fansly']} TO {role}")
+        server(f"GRANT SELECT ON ALL TABLES IN SCHEMA {pg['fansly']} TO {role}")
+        code, out, err = run()
+        assert (code, err) == (0, "")
+        assert [m["performer"] for m in json.loads(out)["models"]] == [SECOND_NAME, SAME_ID_NAME]
+    finally:
+        server(f"DROP OWNED BY {role}")
+        server(f"DROP ROLE {role}")
 
 
 def test_a_database_that_isnt_there_is_one_sentence(pg, monkeypatch, capsys):
