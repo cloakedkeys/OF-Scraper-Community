@@ -169,7 +169,7 @@ def recover(database, apply=False, path_root=None):
                 error,
                 f"The undo file is kept: {undo_file}. Run this with --undo and that"
                 " file, without --apply, to see whether the changes arrived.",
-                saved_to="the file",
+                saved_to="the database file",
             ) from error
         return result
 
