@@ -422,19 +422,26 @@ def test_kept_connections_to_an_address_left_later_carry_no_request(
     assert got == {REFUSES: 1, TAKES: 1 if outcome == "file" else 0}
 
 
-def test_a_refusal_alone_changes_nothing(two_addresses):
+# A connection that answered 403 isn't kept (#556), so in the next three the
+# request after the refusal goes over a new connection, which the host's
+# next address gets. No address is left.
+
+
+def test_a_refusal_alone_leaves_no_address(two_addresses):
     # the downloader didn't find the link still good (it ran out, #462)
-    outcomes, got, offered = two_addresses(FILES[:2], leave=False)
-    assert outcomes == [403, 403]
-    assert got == {REFUSES: 2, TAKES: 0}
-    assert offered == [True, True]
+    outcomes, got, offered = two_addresses(FILES[:3], leave=False)
+    assert outcomes == [403, "file", "file"]
+    assert got == {REFUSES: 1, TAKES: 2}
+    assert offered == [True]
+    assert refusing.times_left() == 0
 
 
 def test_a_link_that_is_not_signed_gets_no_way_to_leave(two_addresses):
     outcomes, got, offered = two_addresses(["/files/0.jpg", "/files/1.jpg"])
-    assert outcomes == [403, 403]
-    assert got == {REFUSES: 2, TAKES: 0}
-    assert offered == [False, False]
+    assert outcomes == [403, "file"]
+    assert got == {REFUSES: 1, TAKES: 1}
+    assert offered == [False]
+    assert refusing.times_left() == 0
 
 
 def test_fansly_is_left_to_its_own_handling(two_addresses, monkeypatch):
@@ -443,9 +450,10 @@ def test_fansly_is_left_to_its_own_handling(two_addresses, monkeypatch):
         sm.fansly_headers, "make_headers", lambda url: {}, raising=False
     )
     outcomes, got, offered = two_addresses(FILES[:2])
-    assert outcomes == [403, 403]
-    assert got == {REFUSES: 2, TAKES: 0}
-    assert offered == [False, False]
+    assert outcomes == [403, "file"]
+    assert got == {REFUSES: 1, TAKES: 1}
+    assert offered == [False]
+    assert refusing.times_left() == 0
 
 
 def _answer(status=403):

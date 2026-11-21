@@ -18,6 +18,7 @@ import struct
 import threading
 from types import SimpleNamespace
 
+import aiohttp
 import pytest
 from aiohttp import web
 
@@ -100,6 +101,65 @@ def _client_ports(host, count=3):
     asyncio.run(go())
     assert len(ports) == count
     return ports
+
+
+@pytest.mark.parametrize("body", ["with the headers", "after the headers"])
+def test_a_connection_that_answered_403_is_not_used_again(request, ssl_verify, body):
+    # it would be the next one handed out: the request made after a refusal
+    # would go back to the address that refused
+    _profile(request, "cdn2.onlyfans.com")
+    ports = []
+
+    async def go():
+        async def handle(request):
+            ports.append(request.transport.get_extra_info("peername")[1])
+            if len(ports) != 2:
+                return web.Response(body=b"x" * 100)
+            if body == "with the headers":
+                return web.Response(status=403, text="<Error/>")
+            late = web.StreamResponse(status=403)
+            await late.prepare(request)
+            await asyncio.sleep(0.05)
+            await late.write(b"<Error/>")
+            return late
+
+        app = web.Application()
+        app.router.add_get("/{path}", handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        still = sm.SessionSleep(
+            sleep=0, min_sleep=0, difmin=0, max_sleep=0,
+            decay_threshold=1000, decay_factor=2, increase_factor=2,
+        )
+        try:
+            async with sm.sessionManager(
+                retries=1, wait_min=0, wait_max=0, log=logging.getLogger("test"),
+                rate_limit_sleeper=still, forbidden_sleeper=still,
+            ) as c:
+                statuses = []
+                for i in range(5):
+                    try:
+                        async with c.requests_async(
+                            url=f"http://cdn2.onlyfans.com:{port}/f{i}",
+                            exceptions=[sm.FORBIDDEN],
+                        ) as r:
+                            await r.read_()
+                            statuses.append(r.status)
+                    except aiohttp.ClientResponseError as E:
+                        statuses.append(E.status)
+                return statuses
+        finally:
+            await runner.cleanup()
+
+    assert asyncio.run(go()) == [200, 403, 200, 200, 200]
+    first, refused, *after = ports
+    # the refusal came over the kept connection; the ones after it share
+    # another
+    assert refused == first
+    assert len(set(after)) == 1 and after[0] != refused
 
 
 def _profile(request, host):

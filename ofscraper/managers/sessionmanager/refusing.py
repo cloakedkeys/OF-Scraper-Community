@@ -47,7 +47,12 @@ class Response(aiohttp.ClientResponse):
     end. A refusal's body is short: by the time it is seen, the connection
     is back in the pool, and when its session has closed (a protected
     video's manifest is read through a session of its own), the connection
-    no longer tells its address."""
+    no longer tells its address.
+
+    A connection that answered 403 isn't kept. Where connections are used
+    again (#556) it would be the next one handed out, so the request made
+    after a refusal, and most that follow, would go to the same address
+    whether or not that address is left."""
 
     came_over = None
     came_from = None
@@ -56,7 +61,17 @@ class Response(aiohttp.ClientResponse):
         self.came_over = connection.transport
         peer = self.came_over and self.came_over.get_extra_info("peername")
         self.came_from = peer[0] if peer else None
-        return await super().start(connection)
+        protocol = connection.protocol
+        await super().start(connection)
+        if self.status == 403:
+            if self.connection is None:
+                # the whole answer is in and the connection back in the pool
+                if self.came_over is not None:
+                    self.came_over.close()
+            elif protocol is not None:
+                # closed, not kept, once the answer is read
+                protocol.force_close()
+        return self
 
 
 class Request(aiohttp.ClientRequest):
