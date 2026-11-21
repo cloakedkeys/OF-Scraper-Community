@@ -505,8 +505,8 @@ def render_cli(notes):
 # argparse tools under ofscraper/commands that aren't part of the CLI: module -> usage
 SEPARATE_COMMANDS = {
     "postgres_import": "FOLDER [OPTIONS]",
-    "recover_collisions": "DATABASE [OPTIONS]",
-    "stash_sync": "PATH... [OPTIONS]",
+    "recover_collisions": "(DATABASE | --postgres --creator NAME) [OPTIONS]",
+    "stash_sync": "(PATH... | --postgres) [OPTIONS]",
 }
 
 

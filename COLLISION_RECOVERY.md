@@ -60,3 +60,20 @@ the original downloads. Only the explicitly selected database is scanned; sharin
 between separate model databases is not detected. Run this targeted repair on old
 affected databases, not as periodic maintenance: legitimate identical downloads
 may also share a path.
+
+## With PostgreSQL
+
+If the scraper stores its data in PostgreSQL (`OFSC_DATABASE_URL`), the
+`user_data.db` files are no longer updated. Give `--postgres` and the creator in
+place of the database path:
+
+```sh
+python -m ofscraper.commands.recover_collisions --postgres --creator "<username or id>"
+python -m ofscraper.commands.recover_collisions --postgres --creator "<username or id>" --apply
+python -m ofscraper.commands.recover_collisions --postgres --creator "<username or id>" --undo "<undo-file.json>" --apply
+```
+
+The report and the changes are the same. The undo file is written to the current
+folder, or to `--undo-dir`. See "Recovering filename collisions" in
+`POSTGRESQL.md` for what differs: where to run it, the scraper running at the
+same time, and when an undo is refused.

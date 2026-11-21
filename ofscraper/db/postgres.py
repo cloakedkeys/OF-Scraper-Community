@@ -17,6 +17,7 @@ URL is set.
 import atexit
 import functools
 import logging
+import os
 import re
 import sys
 import threading
@@ -230,6 +231,32 @@ def url():
 
 def enabled():
     return bool(url())
+
+
+def sqlite_files_notice(tool):
+    """What a tool that still works on the user_data.db files tells its user
+    while PostgreSQL is on (#631). The caller knows whether it is on."""
+    return (
+        f"PostgreSQL is on ({URL_KEY} is set), but {tool} works on the"
+        " user_data.db files, not PostgreSQL. It does not see anything scraped"
+        " since PostgreSQL was turned on, and what it changes in those files"
+        " does not reach PostgreSQL. See POSTGRESQL.md."
+    )
+
+
+def warn_sqlite_files(tool):
+    """Says sqlite_files_notice on stderr (stdout may be a report that
+    another program reads), for a tool that is run on its own, without the
+    scraper: scripts/creator_names.py. (stash_sync and recover_collisions
+    can work on PostgreSQL, and have a sentence of their own for when they
+    are given files.)
+
+    Only the environment the tool is run in is looked at. A URL that is only
+    in one of the scraper's env files is not seen: these tools don't read the
+    scraper's settings, which would bring the scraper's own environment,
+    errors and start-up time into them."""
+    if os.environ.get(URL_KEY, "").strip():
+        print(f"warning: {sqlite_files_notice(tool)}", file=sys.stderr)
 
 
 def masked(text, database_url=None):
@@ -806,3 +833,125 @@ class PostgresBackend:
 
 
 POSTGRES = PostgresBackend()
+
+
+class Reader:
+    """A connection of its own for a tool that is run without the scraper
+    (see creator_rows). The scraper's settings, pool and current site aren't
+    used, so the URL is handed in and a query names its schema.
+
+    Nothing can be written through it, and every read sees the database as
+    it was at the first one. Values come out as the engine's do. What goes
+    wrong is a PostgresUnavailable: one sentence, without the login."""
+
+    def __init__(self, database_url):
+        psycopg = _driver()[0]
+        self._url = database_url
+        self._errors = (psycopg.Error,)
+        self._conn = None
+        try:
+            self._conn = psycopg.connect(
+                database_url,
+                connect_timeout=CONNECT_TIMEOUT,
+                application_name="ofscraper",
+                context=_adapters(),
+                cursor_factory=_cursor_class(),
+                row_factory=row_factory,
+            )
+            # as the pool sets a connection up (see _open_pool)
+            self._conn.execute("SET TIME ZONE 'UTC'")
+            self._conn.execute("SET DateStyle TO 'ISO, YMD'")
+            self._conn.commit()
+            # from here on: one read-only transaction, one view of the rows
+            self._conn.read_only = True
+            self._conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+        except psycopg.Error as E:
+            self.close()
+            raise POSTGRES._unavailable(E, database_url) from E
+
+    def rows(self, query, params=()):
+        """Every row of a query, written as the table modules write theirs
+        (`?` for a value)."""
+        try:
+            with self._conn.cursor() as cur:
+                return cur.execute(query, params).fetchall()
+        except self._errors as E:
+            detail = masked(" ".join(str(E).split()), self._url)[:300]
+            raise PostgresUnavailable(
+                f"Can't read the PostgreSQL database at {describe(self._url)}."
+                f" ({detail})"
+            ) from E
+
+    def close(self):
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+
+class ChangedMeanwhile(PostgresUnavailable):
+    """A change that wasn't made because another program (the scraper, still
+    running) changed or holds the same rows. Nothing was kept."""
+
+
+class Unconfirmed(PostgresUnavailable):
+    """The connection went while the changes were being kept, so it isn't
+    known whether they were."""
+
+
+class Writer(Reader):
+    """A Reader that can also change rows, for a tool that is run without
+    the scraper and changes what the scraper saved (see creator_rows).
+
+    What it reads and changes is one transaction. Nothing is kept until
+    commit(); close() without it leaves the database as it was. Every read
+    sees the database as it was at the first one, and the server refuses a
+    change to a row that another program changed after that: a
+    ChangedMeanwhile, after which nothing can be kept."""
+
+    # how long a change waits for a row another program holds, in seconds:
+    # the scraper's own writes take a moment
+    LOCK_TIMEOUT = 30
+    # another program got there first: it changed the row since the first
+    # read (40001), holds it (55P03), or each waits for the other (40P01)
+    _MEANWHILE = frozenset({"40001", "40P01", "55P03"})
+
+    def __init__(self, database_url):
+        super().__init__(database_url)
+        try:
+            self._conn.read_only = False
+            self._conn.execute(f"SET lock_timeout = {self.LOCK_TIMEOUT * 1000}")
+            self._conn.commit()
+        except self._errors as E:
+            self.close()
+            raise POSTGRES._unavailable(E, database_url) from E
+
+    def change(self, query, params=()):
+        """Run an UPDATE, written as rows() takes a query. Returns how many
+        rows it changed."""
+        try:
+            with self._conn.cursor() as cur:
+                return cur.execute(query, params).rowcount
+        except self._errors as E:
+            detail = masked(" ".join(str(E).split()), self._url)[:300]
+            if getattr(E, "sqlstate", None) in self._MEANWHILE:
+                raise ChangedMeanwhile(
+                    "Another program changed or is using the same rows of the"
+                    f" PostgreSQL database at {describe(self._url)} (is the"
+                    f" scraper running?). Nothing was changed. ({detail})"
+                ) from E
+            raise PostgresUnavailable(
+                f"Can't change the PostgreSQL database at {describe(self._url)}."
+                f" Nothing was changed. ({detail})"
+            ) from E
+
+    def commit(self):
+        """Keep what was changed."""
+        try:
+            self._conn.commit()
+        except self._errors as E:
+            detail = masked(" ".join(str(E).split()), self._url)[:300]
+            raise Unconfirmed(
+                "The connection to the PostgreSQL database at"
+                f" {describe(self._url)} was lost while the changes were being"
+                f" saved, so it isn't known whether they were. ({detail})"
+            ) from E
