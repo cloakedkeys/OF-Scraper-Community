@@ -1,15 +1,16 @@
-"""With PostgreSQL on, a tool that still reads user_data.db files says so (#631).
+"""With PostgreSQL on, a tool that still works on user_data.db files says so (#631).
 
-The sentence and how a tool run on its own finds out that PostgreSQL is on.
-Each tool's own test is beside that tool's other tests. No server is needed:
-only the setting is read.
+The sentence, and how a tool that is run on its own finds out that PostgreSQL
+is on: from the environment it is run in, and nothing else. Each tool's own
+test is beside that tool's other tests. No server is needed.
 """
 
-import json
+import os
 import sqlite3
 import subprocess
 import sys
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -17,7 +18,38 @@ import ofscraper.db.postgres as postgres
 from ofscraper.db.operations_.media import mediaCreate
 
 URL = "postgresql://scraper:s3cret-word@db.example:5433/library"
-TOOL = [sys.executable, "-m", "ofscraper.commands.recover_collisions"]
+ROOT = Path(__file__).resolve().parents[1]
+SENTENCE = (
+    "PostgreSQL is on (OFSC_DATABASE_URL is set), but {tool} works on the"
+    " user_data.db files, not PostgreSQL. It does not see anything scraped"
+    " since PostgreSQL was turned on, and what it changes in those files does"
+    " not reach PostgreSQL. See POSTGRESQL.md."
+)
+# each tool as a user starts it, given a folder that holds one empty database.
+# stash_sync gets a folder without one, and so has nothing to ask Stash about
+# (test_stash_sync has it say so during a real sync)
+TOOLS = {
+    "stash_sync": lambda folder: [
+        sys.executable,
+        "-m",
+        "ofscraper.commands.stash_sync",
+        str(folder / "empty"),
+        "--url",
+        "http://127.0.0.1:9/graphql",
+    ],
+    "recover_collisions": lambda folder: [
+        sys.executable,
+        "-m",
+        "ofscraper.commands.recover_collisions",
+        str(folder / "1" / "user_data.db"),
+    ],
+    "creator_names.py": lambda folder: [
+        sys.executable,
+        str(ROOT / "scripts" / "creator_names.py"),
+        "--data-dir",
+        str(folder),
+    ],
+}
 
 
 @pytest.fixture(autouse=True)
@@ -26,156 +58,156 @@ def no_url(monkeypatch):
 
 
 @pytest.fixture
-def home(tmp_path, monkeypatch):
-    """A home folder of the test's own, so that the tool looks for the
-    scraper's config.json there."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
-    return home
-
-
-@pytest.fixture
-def database(tmp_path):
-    db = tmp_path / "user_data.db"
+def folder(tmp_path):
+    db = tmp_path / "1" / "user_data.db"
+    db.parent.mkdir()
     with closing(sqlite3.connect(db)) as conn, conn:
         conn.execute(mediaCreate)
-    return db
+    (tmp_path / "empty").mkdir()
+    return tmp_path
 
 
-def config_json(home, env_files):
-    path = home / ".config" / "ofscraper" / "config.json"
-    path.parent.mkdir(parents=True)
-    path.write_text(
-        json.dumps({"advanced_options": {"env_files": [str(f) for f in env_files]}}),
-        encoding="utf-8",
-    )
-    return path
-
-
-def run_tool(database):
-    """The tool as a user starts it: a process of its own. No one is there
-    to answer a question."""
+def run_tool(tool, folder, **variables):
+    """The tool in a process of its own, with these environment variables
+    (None takes one away)."""
+    env = {**os.environ, "PYTHONPATH": str(ROOT), **variables}
+    env = {key: value for key, value in env.items() if value is not None}
     return subprocess.run(
-        TOOL + [str(database)],
+        TOOLS[tool](folder),
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
+        cwd=ROOT,
+        env=env,
     )
 
 
 # --- the sentence ---
 
 
-def test_nothing_is_said_while_postgresql_is_off():
-    assert postgres.sqlite_files_notice("stash_sync") == ""
-
-
-def test_the_notice_says_what_is_read_and_what_is_missed(monkeypatch):
-    monkeypatch.setenv(postgres.URL_KEY, URL)
-
-    notice = postgres.sqlite_files_notice("stash_sync")
-
-    assert notice == (
-        "PostgreSQL is on (OFSC_DATABASE_URL is set), but stash_sync still"
-        " reads the user_data.db files, not PostgreSQL. Anything scraped since"
-        " PostgreSQL was turned on is not in those files, so stash_sync will"
-        " not see it. See POSTGRESQL.md."
+def test_the_notice_says_what_the_tool_works_on_and_what_that_means():
+    assert postgres.sqlite_files_notice("stash_sync") == SENTENCE.format(
+        tool="stash_sync"
     )
 
 
-def test_the_notice_never_holds_the_address(monkeypatch):
+# --- a tool that is run on its own ---
+
+
+def test_a_tool_says_so_on_stderr_when_the_url_is_in_its_environment(monkeypatch, capsys):
     monkeypatch.setenv(postgres.URL_KEY, URL)
 
-    notice = postgres.sqlite_files_notice("stash_sync")
+    postgres.warn_sqlite_files("stash_sync")
 
-    assert "s3cret-word" not in notice
-    assert "db.example" not in notice
+    said = capsys.readouterr()
+    assert said.err == "warning: " + SENTENCE.format(tool="stash_sync") + "\n"
+    assert said.out == ""
 
 
-def test_the_notice_asks_no_server(monkeypatch):
+@pytest.mark.parametrize("value", [None, "", "   ", "\t"])
+def test_a_tool_says_nothing_without_a_url(monkeypatch, capsys, value):
+    if value is not None:
+        monkeypatch.setenv(postgres.URL_KEY, value)
+
+    postgres.warn_sqlite_files("stash_sync")
+
+    said = capsys.readouterr()
+    assert said.err == ""
+    assert said.out == ""
+
+
+def test_the_notice_never_holds_the_address(monkeypatch, capsys):
+    monkeypatch.setenv(postgres.URL_KEY, URL)
+
+    postgres.warn_sqlite_files("stash_sync")
+
+    said = capsys.readouterr().err
+    assert said
+    assert "s3cret-word" not in said
+    assert "db.example" not in said
+
+
+def test_only_the_environment_is_asked(monkeypatch, capsys):
+    """Not the scraper's settings, and not the server."""
     monkeypatch.setenv(postgres.URL_KEY, URL)
 
     def asked(*args, **kwargs):
-        raise AssertionError("the server was asked")
+        raise AssertionError("more than the environment was asked")
 
+    monkeypatch.setattr(postgres.of_env, "getattr", asked)
     monkeypatch.setattr(postgres.POSTGRES, "connect", asked)
     monkeypatch.setattr(postgres.POSTGRES, "check", asked)
 
-    assert postgres.sqlite_files_notice("stash_sync")
+    postgres.warn_sqlite_files("stash_sync")
+
+    assert capsys.readouterr().err.startswith("warning: PostgreSQL is on")
 
 
-# --- a tool run on its own ---
-
-
-def test_a_tool_sees_a_url_in_the_environment(home, database, monkeypatch):
+def test_the_tool_is_left_as_it_was(monkeypatch, capsys):
     monkeypatch.setenv(postgres.URL_KEY, URL)
+    monkeypatch.setattr(sys, "argv", ["tool", "user_data.db", "--apply"])
+    argv, environment, path = list(sys.argv), dict(os.environ), list(sys.path)
 
-    result = run_tool(database)
+    postgres.warn_sqlite_files("stash_sync")
+
+    assert capsys.readouterr().err
+    assert sys.argv == argv
+    assert dict(os.environ) == environment
+    assert sys.path == path
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_each_tool_says_so_and_still_runs(folder, tool):
+    off = run_tool(tool, folder, **{postgres.URL_KEY: None})
+    on = run_tool(tool, folder, **{postgres.URL_KEY: URL})
+
+    assert off.returncode == 0, off.stderr
+    assert off.stderr == ""
+    assert on.returncode == 0, on.stderr
+    assert on.stderr == "warning: " + SENTENCE.format(tool=tool) + "\n"
+    # what the tool reports is the same, and only that is on stdout
+    assert on.stdout == off.stdout != ""
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+@pytest.mark.parametrize("url", [None, URL])
+def test_a_setting_the_scraper_cant_read_doesnt_stop_a_tool(folder, tool, url):
+    """The scraper stops on a number it can't read; these tools don't read
+    the scraper's settings."""
+    result = run_tool(
+        tool, folder, OFSC_DOWNLOAD_SEM_DEFAULT="many", **{postgres.URL_KEY: url}
+    )
 
     assert result.returncode == 0, result.stderr
+    assert result.stdout
+    assert result.stderr == (
+        "warning: " + SENTENCE.format(tool=tool) + "\n" if url else ""
+    )
+
+
+def test_the_tools_dont_load_the_scraper(folder):
+    """Its settings and console change what a process does (the environment,
+    how stdout is written), and take most of a second to load."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "import ofscraper.commands.recover_collisions\n"
+            "import ofscraper.commands.stash_sync\n"
+            "import ofscraper.db.postgres as postgres\n"
+            "postgres.warn_sqlite_files('a tool')\n"
+            "print(sorted(name for name in sys.modules if name.split('.')[0]"
+            " in ('rich', 'dotenv', 'aiohttp')"
+            " or name.startswith(('ofscraper.utils.settings',"
+            " 'ofscraper.utils.console', 'ofscraper.utils.config'))))",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT), postgres.URL_KEY: URL},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[]"
     assert result.stderr.startswith("warning: PostgreSQL is on")
-    assert "recover_collisions still reads the user_data.db files" in result.stderr
-    # the report is still the only thing on stdout
-    assert json.loads(result.stdout)["applied"] is False
-
-
-def test_a_tool_sees_a_url_in_an_env_file_config_json_names(home, database):
-    env_file = home / "postgres.env"
-    env_file.write_text(f"{postgres.URL_KEY}={URL}\n", encoding="utf-8")
-    config = config_json(home, [env_file])
-    before = config.read_bytes()
-
-    result = run_tool(database)
-
-    assert result.returncode == 0, result.stderr
-    assert "recover_collisions still reads the user_data.db files" in result.stderr
-    assert json.loads(result.stdout)["applied"] is False
-    assert config.read_bytes() == before
-
-
-def test_a_tool_says_nothing_while_postgresql_is_off(home, database):
-    config = config_json(home, [])
-    before = config.read_bytes()
-
-    result = run_tool(database)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ""
-    assert json.loads(result.stdout)["applied"] is False
-    assert config.read_bytes() == before
-
-
-def test_a_tool_makes_no_config_json_where_there_is_none(home, database):
-    result = run_tool(database)
-
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ""
-    assert json.loads(result.stdout)["applied"] is False
-    assert list(home.iterdir()) == []
-
-
-def test_a_tool_still_runs_when_an_env_file_is_missing(home, database, monkeypatch):
-    monkeypatch.setenv(postgres.URL_KEY, URL)
-    config_json(home, [home / "not-there.env"])
-
-    result = run_tool(database)
-
-    assert result.returncode == 0, result.stderr
-    assert "recover_collisions still reads the user_data.db files" in result.stderr
-    assert json.loads(result.stdout)["applied"] is False
-
-
-@pytest.mark.parametrize("written", ["{", "[]"])
-def test_a_tool_asks_nothing_about_a_config_json_it_cant_read(home, database, written):
-    config = config_json(home, [])
-    config.write_text(written, encoding="utf-8")
-
-    result = run_tool(database)
-
-    # the scraper would ask what to do with the file; the tool leaves it
-    assert result.returncode == 0, result.stderr
-    assert result.stderr == ""
-    assert json.loads(result.stdout)["applied"] is False
-    assert config.read_text(encoding="utf-8") == written

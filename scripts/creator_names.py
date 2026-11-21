@@ -113,13 +113,18 @@ def select(data_dir, find=None, show_all=False):
 
 
 def _warn_on_postgres():
-    """With PostgreSQL on, say that the user_data.db files are what is read.
-    The scraper knows whether it is on; where it isn't installed, or is a
-    version from before it said so, nothing can be said."""
+    """With PostgreSQL on, say that this script works on the user_data.db
+    files. The sentence is the scraper's, from the checkout this script is in
+    (as scripts/reference/build_reference.py finds it). A copy of the script
+    used somewhere else may have no scraper to ask, and then says nothing."""
+    root = str(pathlib.Path(__file__).resolve().parents[1])
+    sys.path.insert(0, root)
     try:
         from ofscraper.db.postgres import warn_sqlite_files
     except ImportError:
         return
+    finally:
+        sys.path.remove(root)
     warn_sqlite_files("creator_names.py")
 
 

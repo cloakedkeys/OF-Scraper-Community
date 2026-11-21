@@ -16,8 +16,8 @@ URL is set.
 
 import atexit
 import functools
-import json
 import logging
+import os
 import re
 import sys
 import threading
@@ -234,49 +234,27 @@ def enabled():
 
 
 def sqlite_files_notice(tool):
-    """What a tool that still reads the user_data.db files tells its user
-    while PostgreSQL is on (#631), or "" while it is off. Only the setting is
-    read: no server is asked."""
-    if not enabled():
-        return ""
+    """What a tool that still works on the user_data.db files tells its user
+    while PostgreSQL is on (#631). The caller knows whether it is on."""
     return (
-        f"PostgreSQL is on ({URL_KEY} is set), but {tool} still reads the"
-        " user_data.db files, not PostgreSQL. Anything scraped since"
-        f" PostgreSQL was turned on is not in those files, so {tool} will not"
-        " see it. See POSTGRESQL.md."
+        f"PostgreSQL is on ({URL_KEY} is set), but {tool} works on the"
+        " user_data.db files, not PostgreSQL. It does not see anything scraped"
+        " since PostgreSQL was turned on, and what it changes in those files"
+        " does not reach PostgreSQL. See POSTGRESQL.md."
     )
 
 
 def warn_sqlite_files(tool):
-    """Says sqlite_files_notice on stderr, for a tool that is run on its own
-    (its stdout may be a report that another program reads).
+    """Says sqlite_files_notice on stderr (stdout may be a report that
+    another program reads), for a tool that is run on its own, without the
+    scraper: stash_sync, recover_collisions, scripts/creator_names.py.
 
-    The scraper's settings are read first, as postgres_import reads them: the
-    URL may be in an env file that config.json names. These tools are also run
-    where the scraper never was, so settings that can't be read don't stop
-    the tool."""
-    try:
-        # the app reads the command line the first time its settings are
-        # read, and the tool has its own
-        sys.argv = sys.argv[:1]
-        import ofscraper.main.open.load  # noqa: F401  (import order)
-        import ofscraper.utils.config.file as config_file
-        import ofscraper.utils.paths.common as common_paths
-        import ofscraper.utils.settings as settings
-
-        # reading the settings makes a config.json where there is none, and
-        # asks what to do with one that can't be read. A tool does neither:
-        # the file is checked first, the way the settings check it
-        with open(common_paths.get_config_path()) as f:
-            config_file.unwrap(json.load(f))
-        settings.get_settings()
-    except Exception as E:  # noqa: BLE001
-        # whatever is wrong with the settings, the tool still runs, and the
-        # environment is still asked below
-        log.debug(f"{tool} couldn't read the scraper's settings ({masked(E)})")
-    notice = sqlite_files_notice(tool)
-    if notice:
-        print(f"warning: {notice}", file=sys.stderr)
+    Only the environment the tool is run in is looked at. A URL that is only
+    in one of the scraper's env files is not seen: these tools don't read the
+    scraper's settings, which would bring the scraper's own environment,
+    errors and start-up time into them."""
+    if os.environ.get(URL_KEY, "").strip():
+        print(f"warning: {sqlite_files_notice(tool)}", file=sys.stderr)
 
 
 def masked(text, database_url=None):

@@ -12,16 +12,6 @@ from ofscraper.commands.recover_collisions import main, recover, undo
 from ofscraper.db.operations_.media import mediaCreate
 
 
-@pytest.fixture(autouse=True)
-def own_home(tmp_path_factory, monkeypatch):
-    """The command looks for the scraper's config.json when it starts (to say so
-    when PostgreSQL is on): a home folder without one, and PostgreSQL off."""
-    home = tmp_path_factory.mktemp("home")
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
-    monkeypatch.delenv(postgres.URL_KEY, raising=False)
-
-
 @pytest.fixture(params=["DELETE", "WAL"])
 def database(tmp_path, request):
     db = tmp_path / "user_data.db"
@@ -164,20 +154,21 @@ def test_cli_defaults_to_preview_and_never_creates_missing_db(database, tmp_path
     assert result.returncode != 0 and not missing.exists()
 
 
-def test_cli_says_it_reads_sqlite_files_while_postgresql_is_on(database, tmp_path, monkeypatch, capsys):
+def test_cli_says_it_works_on_sqlite_files_while_postgresql_is_on(database, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv(postgres.URL_KEY, "postgresql://user:password@localhost/db")
     add(database, 1, tmp_path / "same.jpg")
     add(database, 2, tmp_path / "same.jpg")
     main([str(database)])
     said = capsys.readouterr()
     assert said.err.startswith("warning: PostgreSQL is on (OFSC_DATABASE_URL is set)")
-    assert "recover_collisions still reads the user_data.db files" in said.err
+    assert "recover_collisions works on the user_data.db files" in said.err
     assert "password" not in said.err
     # the report still comes, and is all there is on stdout
     assert json.loads(said.out)["media_to_mark"] == 2
 
 
-def test_cli_says_nothing_about_postgresql_while_it_is_off(database, tmp_path, capsys):
+def test_cli_says_nothing_about_postgresql_while_it_is_off(database, tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
     add(database, 1, tmp_path / "same.jpg")
     add(database, 2, tmp_path / "same.jpg")
     main([str(database)])
