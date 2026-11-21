@@ -842,6 +842,73 @@ def test_a_column_that_is_missing_alone_is_added_alone():
     ]
 
 
+class TablesCursor(ColumnsCursor):
+    """A cursor of a server that has the tables it is told, as a start of
+    the scraper uses one."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *error):
+        return False
+
+    def execute(self, query, params=None):
+        super().execute(query, params)
+        if "pg_namespace" in query:
+            self.found = [(1,)]
+        elif "information_schema.tables" in query:
+            self.found = [(1,)] if params[0] in self.columns else []
+        return self
+
+    def executemany(self, query, rows):
+        self.asked.append((" ".join(query.split()), list(rows)))
+
+
+def started(monkeypatch, columns):
+    """What a start asks of a server whose tables have these columns."""
+    cur = TablesCursor(columns)
+    engine = postgres.PostgresBackend()
+    conn = SimpleNamespace(cursor=lambda: cur, commit=lambda: cur.asked.append("commit"))
+    monkeypatch.setattr(engine, "connect", lambda schema, read_only, timeout: conn)
+    monkeypatch.setattr(engine, "close", lambda conn: None)
+    monkeypatch.setattr(engine, "_pool", lambda schema, timeout: SimpleNamespace())
+
+    engine.create_tables(ALL_FLAGS, schema="onlyfans")
+
+    return [asked for asked in cur.asked if "CREATE " not in asked[0]]
+
+
+def test_a_start_brings_tables_made_before_up_to_date(monkeypatch):
+    asked = started(
+        monkeypatch,
+        {"schema_flags": ["flag_name"], "profiles": ["id", "user_id", "username"]},
+    )
+
+    assert asked[-5:] == [
+        ASK_FOR_COLUMNS,
+        ("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ", None),
+        ("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ", None),
+        STEP_DONE,
+        # all of it kept, or none
+        "commit",
+    ]
+    # under the lock that lets one program at a time make the tables, and
+    # without marking any other step as done
+    assert "pg_advisory_xact_lock" in asked[0][0]
+    assert [query for query, _ in asked[:-1] if "schema_flags (" in query] == [STEP_DONE[0]]
+
+
+def test_a_start_on_a_new_database_makes_the_tables_with_the_columns(monkeypatch):
+    asked = started(monkeypatch, {})
+
+    # made at today's layout, with every step marked as done: nothing to add
+    assert not [query for query, _ in asked[:-1] if "ALTER TABLE" in query]
+    assert ASK_FOR_COLUMNS not in asked
+    assert asked[-2][1] == [(flag,) for flag in sorted(ALL_FLAGS)]
+    assert "first_seen_at TIMESTAMPTZ" in postgres.TABLES["profiles"]
+    assert "last_seen_at TIMESTAMPTZ" in postgres.TABLES["profiles"]
+
+
 def test_sqlite_files_are_still_prepared_the_old_way(sqlite_file):
     assert wrapper.SQLITE.born_current is False
 

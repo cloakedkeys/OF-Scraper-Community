@@ -375,11 +375,18 @@ def test_another_creators_names_do_not_move_a_date(db, clock):
 
 
 def test_a_date_is_never_moved_back(db, clock):
+    # the computer's clock was set back, or a date was written by hand
     start("a_name")
     clock.later(days=-3)
     start("a_name")
 
     assert names(db) == [("a_name", at(), at())]
+
+    # nor to come before another name's again
+    record(db, ("b_name", at(days=1), at(days=1)))
+    start("a_name")
+
+    assert names(db) == [("a_name", at(), at()), ("b_name", at(days=1), at(days=1))]
 
 
 def test_a_name_recorded_before_the_dates_gets_only_when_it_was_last_seen(db, clock):
