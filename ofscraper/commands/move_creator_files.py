@@ -12,11 +12,15 @@ Only the paths the database records are used, never the scraper's settings.
 - The scraper writes a name into a folder path in small letters and cleans
   nothing out of it. So a recorded folder is cut at its separators, and each
   piece is compared, exactly, with the creator's recorded names.
-- A folder is moved if exactly one piece is one of the creator's names, and
-  it isn't the name the files go to. That piece becomes the new name, and
-  nothing else in the path changes. No piece is a name (a library laid out
-  by id): nothing to do. Two are: left and listed. `Posts` is not the
-  creator `posts`: the layout's own folders start with a capital letter.
+- A folder is moved if exactly one piece is one of the creator's names, it
+  isn't the name the files go to, and it is followed by one or two of the
+  layout's own folders (`{responsetype}`, `{mediatype}`: Posts, Images).
+  That piece becomes the new name, and nothing else in the path changes.
+  No piece is a name: nothing to do. Two are, or the name is followed by
+  something else (a folder above the library that has the same name), or
+  the piece above it is the name's first letter ({first_letter}) and the
+  new name has another: left and listed. `Posts` is not the creator
+  `posts`: the layout's own folders start with a capital letter.
 - With --apply each recorded file is handled on its own, by where it is:
       at the old place, new place free    moved (a rename), rows changed
       only at the new place               rows changed ("already there")
@@ -62,6 +66,11 @@ TAKEN = "something is already at the new place"
 NOT_FOUND = "not at the old place, and not at the new one"
 OTHER_SIZE = "not at the old place; the file at the new place doesn't have the size the row records"
 TWICE = "more than one folder in its path is one of the creator's names"
+LEFT = {
+    "twice": TWICE,
+    "layout": "the folder with the name isn't followed by one or two of the scraper's own folders (Posts, Images)",
+    "letter": "the folder above the name is its first letter ({first_letter}), and the new name has another",
+}
 MEANWHILE = (
     "A row was changed by another program while this ran (is the scraper"
     " running?). No row was changed. Close the scraper and run this again."
@@ -151,8 +160,8 @@ def current_name(names, model_id, to=None):
 def _under(directory, names, target, separators):
     """Where a recorded folder names the creator: (what, the folder with the
     target name in that place, the folder up to and with the old name).
-    `what` is "none", "target", "twice" or "former"; only "former" comes
-    with folders."""
+    `what` is "none", "target", a reason it is left (LEFT), or "former";
+    only "former" comes with folders."""
     pieces = separators.split(directory)
     named = [place for place in range(0, len(pieces), 2) if pieces[place] in names]
     if len(named) != 1:
@@ -160,6 +169,16 @@ def _under(directory, names, target, separators):
     place = named[0]
     if pieces[place] == target:
         return "target", None, None
+    # the name's folder is the one {model_username} makes: below it come one
+    # or two of the layout's own folders, which the scraper writes with
+    # str.capitalize() (Posts, Images). Anything else may be a folder above
+    # the library that only has the same name (a user's own folder)
+    below = [piece for piece in pieces[place + 2 :: 2] if piece]
+    if not 1 <= len(below) <= 2 or any(not piece[0].isupper() or piece != piece.capitalize() for piece in below):
+        return "layout", None, None
+    letter = pieces[place - 2] if place >= 2 else ""
+    if letter == pieces[place][0].upper() and letter != target[0].upper():
+        return "letter", None, None
     top = "".join(pieces[: place + 1])
     pieces[place] = target
     return "former", "".join(pieces), top
@@ -221,8 +240,8 @@ def move(rows, model_id, apply=False, to=None, path_root=None):
         # one that names the creator is refused (_full) and not passed over
         foreign = os.name != "nt" and sibling._from_another_system(Path(directory))
         what, new_directory, top = _under(directory, folders, target, EITHER if foreign else SEPARATORS)
-        if what == "twice":
-            left.append({"file": str(Path(directory, filename)), "why": TWICE})
+        if what in LEFT:
+            left.append({"file": str(Path(directory, filename)), "why": LEFT[what]})
         if what != "former" or not filename:
             continue
         old, new = _full(Path(directory, filename), path_root), _full(Path(new_directory, filename), path_root)
@@ -259,13 +278,15 @@ def move(rows, model_id, apply=False, to=None, path_root=None):
                     left.append({"file": old, "why": f"it could not be moved ({error.strerror or error})"})
                     continue
                 result["moved"] += 1
-            elif not there:
+            elif not there or os.path.normcase(new) in claimed:
+                # a file this run moved or took there is another row's
                 left.append({"file": old, "why": NOT_FOUND})
                 continue
             elif {size for *_row, size in recorded if size is not None} - {os.lstat(new).st_size}:
-                left.append({"file": old, "why": OTHER_SIZE})
+                left.append({"file": old, "why": OTHER_SIZE, "new_place": new})
                 continue
             else:
+                claimed.add(os.path.normcase(new))
                 result["already_there"] += 1
             if not apply:
                 continue

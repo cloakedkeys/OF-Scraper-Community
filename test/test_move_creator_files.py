@@ -322,7 +322,7 @@ def test_a_file_already_at_the_new_place_only_gets_its_row_changed_if_its_size_f
         assert (preview["already_there"], report["already_there"], report["rows_changed"]) == (1, 1, 1)
         assert library.recorded() == [str(new)] and report["left"] == []
     else:
-        assert preview["left"] == report["left"] == [{"file": str(old), "why": tool.OTHER_SIZE}]
+        assert preview["left"] == report["left"] == [{"file": str(old), "why": tool.OTHER_SIZE, "new_place": str(new)}]
         assert (report["already_there"], report["rows_changed"]) == (0, 0)
         assert library.everything() == before
 
@@ -457,6 +457,50 @@ def test_a_name_that_is_also_another_folder_of_the_path_is_told_apart_by_its_let
 
     assert (report["moved"], report["left"]) == (1, [])
     assert library.recorded() == [str(library.root / NEW / "Posts" / "Images" / "a.jpg")]
+
+
+def test_a_folder_above_the_library_with_an_old_name_is_left_and_listed(library):
+    # a library laid out by id, and one by name and id, under a folder that
+    # only has the old name (a user's own folder, say)
+    by_id = library.add(f"{OLD}/OF/{CREATOR}/Posts", "a.jpg")
+    by_both = library.add(f"{OLD}/OF/{OLD}_{CREATOR}/Posts", "b.jpg")
+    before = library.everything()
+
+    for apply in (False, True):
+        report = tool.on_file(library.db, apply=apply)
+
+        assert report["left"] == [{"file": str(path), "why": tool.LEFT["layout"]} for path in (by_id, by_both)]
+        assert (report["to_move"], report["rows_changed"], report["folders_removed"]) == (0, 0, [])
+        assert library.everything() == before
+
+
+@pytest.mark.parametrize("to, moves", [(NEW, False), ("other_name", True)])
+def test_a_first_letter_folder_above_the_name_is_left_when_the_letter_would_change(tmp_path, to, moves):
+    library = Library(tmp_path, names=[(OLD, SEEN[OLD]), (to, SEEN[NEW])])
+    old = library.add(f"OF/{OLD[0].upper()}/{OLD}/Posts", "a.jpg")
+    before = library.everything()
+
+    report = tool.on_file(library.db, apply=True)
+
+    if moves:
+        assert (report["moved"], report["left"]) == (1, [])
+        assert library.recorded() == [str(library.root / "OF" / "O" / to / "Posts" / "a.jpg")]
+    else:
+        assert report["left"] == [{"file": str(old), "why": tool.LEFT["letter"]}]
+        assert library.everything() == before
+
+
+def test_a_missing_file_isnt_pointed_at_a_file_this_run_moved_for_another_row(tmp_path):
+    library = Library(tmp_path, names=[(FIRST, SEEN[FIRST]), (OLD, SEEN[OLD]), (NEW, SEEN[NEW])])
+    library.add(f"{FIRST}/Posts", "x.jpg")
+    missing = library.add(f"{OLD}/Posts", "x.jpg", on_disk=False, size=None)
+
+    preview = tool.on_file(library.db)
+    report = tool.on_file(library.db, apply=True)
+
+    assert preview["left"] == report["left"] == [{"file": str(missing), "why": tool.NOT_FOUND}]
+    assert (report["moved"], report["already_there"], report["rows_changed"]) == (1, 0, 1)
+    assert library.recorded() == [str(library.root / NEW / "Posts" / "x.jpg"), str(missing)]
 
 
 def test_a_path_with_two_of_the_creators_names_is_left_and_listed(library):

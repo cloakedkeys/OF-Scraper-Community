@@ -24,8 +24,15 @@ go to and why (`to`, `why`), each folder that would be moved and how many files
   name the database records for the creator.
 - **Which folders.** A recorded folder is moved when exactly one part of its
   path is one of the creator's other names, in small letters as the scraper
-  writes it. That part becomes the new name. A library laid out by id has no
-  name in its paths, so there is nothing to do.
+  writes it, and is followed by one or two of the scraper's own folders
+  (`Posts`, `Images`). That part becomes the new name. A library laid out by
+  id has no name in its paths, so there is nothing to do. A folder above the
+  library that only has the same name (your own user folder, say) is not
+  followed by those folders: its files are left and listed.
+- **Not handled:** a layout with the name inside a folder's name
+  (`{model_username}_{model_id}`) shows as nothing to do. A layout with
+  `{first_letter}` above the name is left and listed when the new name starts
+  with another letter.
 - **Each file on its own.** A file at its old place is moved if its new place
   is free. A file that is at the new place already (moved by hand) only gets
   its row updated, if its size is the one recorded. If both places hold a
