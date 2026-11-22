@@ -52,7 +52,7 @@ Subscribers get these keyword arguments:
 
 - `item_downloaded` is sent before `after_download_script` runs, and a stop during the script still counts the item as downloaded.
 - It's sent for normal files, DRM videos and Fansly HLS/DASH streams.
-- The Fansly check of videos saved without sound runs after a run's downloads. When it saves a video again with sound, it sends `item_downloaded` again, with no `item_finished` after it.
+- The Fansly check of videos saved without sound runs after a run's downloads. When it saves a video again with sound, it also sends `item_downloaded`, with no `item_finished` after it.
 - An item a stop ended before it started gets no `item_finished`.
 
 `item_finished`'s `result` and `reason`:
