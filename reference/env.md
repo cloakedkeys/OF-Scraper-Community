@@ -12,7 +12,7 @@ Two kinds of environment variable override a default:
 Before the app reads either kind, it loads these into the environment. Each one overrides variables that are already set (`ofscraper/utils/of_env/load.py`):
 
 1. A `.env` file found by python-dotenv. It searches upward from `ofscraper/utils/of_env/`. It searches from the working folder only in the standalone binaries, the REPL or a debugger.
-2. The env files named in `advanced_options.env_files`.
+2. The env files given with `--env-files`, or the ones named in `advanced_options.env_files` when the option isn't used. They load in order, and later files win.
 
 The values shown are the defaults with no environment variables set. Paths under your home directory appear as `{home_directory}`. Each description comes from the comment above the value in the source, where there is one.
 

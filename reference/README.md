@@ -36,9 +36,7 @@ Environment variables come from these sources, each overriding the one before:
 
 1. The process environment.
 2. A `.env` file found by `python-dotenv`. It searches upward from `ofscraper/utils/of_env/`, and searches from the working folder only in standalone binaries, the REPL, or a debugger.
-3. The files in `advanced_options.env_files`.
-
-The `--env-files` option is not loaded at present.
+3. The files given with `--env-files`, or the files in `advanced_options.env_files` when the option isn't used. They load in order, and later files win.
 
 ### Site selection
 
