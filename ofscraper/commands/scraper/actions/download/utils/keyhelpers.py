@@ -251,7 +251,7 @@ def cdrm_retired(url):
     """True when url points at cdrm-project.com, which no longer works.
     It isn't sent the headers and cookies; a self-hosted server set in
     OFSC_CDRM_URL still is (#677)."""
-    host = (urlsplit(str(url or "")).hostname or "").lower()
+    host = (urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
     return host == "cdrm-project.com" or host.endswith(".cdrm-project.com")
 
 

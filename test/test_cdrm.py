@@ -141,3 +141,21 @@ def test_cdrm_headers_are_a_python_literal(monkeypatch):
         "cookie": "a=1; b=2",
         "sign": "s",
     }
+
+
+@pytest.mark.parametrize(
+    "url, retired",
+    [
+        ("https://cdrm-project.com/api/decrypt", True),
+        ("https://CDRM-Project.com:443/api/decrypt", True),
+        ("https://cdrm-project.com./api/decrypt", True),
+        ("https://x.cdrm-project.com/api/decrypt", True),
+        ("https://evilcdrm-project.com/api/decrypt", False),
+        ("https://cdrm-project.com.example.test/api/decrypt", False),
+        ("https://cdrm.example.test/api/decrypt", False),
+        (None, False),
+        ("", False),
+    ],
+)
+def test_cdrm_retired_matches_only_the_retired_host(url, retired):
+    assert keyhelpers.cdrm_retired(url) is retired
