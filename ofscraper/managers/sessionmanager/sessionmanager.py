@@ -7,6 +7,7 @@ import time
 import ssl
 import contextlib
 import traceback
+import weakref
 from typing import Optional, Dict, Union, AsyncGenerator, Any, Generator
 from urllib.parse import parse_qs, urlsplit
 
@@ -47,6 +48,31 @@ BACKOFF_FLOOR = 0.5
 # httpx request extension holding a request's redirect guard; httpx copies a
 # request's extensions to each redirect it follows
 LOGIN_GUARD = "ofscraper_login_guard"
+
+# A kept connection whose network path died (a VPN reconnected) takes a
+# request and never answers. On a connection used before, the answer must
+# start within this many seconds, not the whole read timeout (#636)
+KEPT_ANSWER_TIMEOUT = 10
+
+# connections that have answered before
+_answered = weakref.WeakSet()
+
+
+class _Response(refusing.Response):
+    async def start(self, connection):
+        protocol = connection.protocol
+        if protocol in _answered and protocol.read_timeout:
+            try:
+                async with asyncio.timeout(KEPT_ANSWER_TIMEOUT):
+                    await super().start(connection)
+            except TimeoutError:
+                raise aiohttp.SocketTimeoutError(
+                    "Timeout on reading data from socket"
+                ) from None
+        else:
+            await super().start(connection)
+        _answered.add(protocol)
+        return self
 
 
 def _run_login_guard(request):
@@ -581,7 +607,8 @@ class sessionManager:
             )
             self._session = aiohttp.ClientSession(
                 # which connection a refusal came over (#620)
-                response_class=refusing.Response,
+                # and the answer on a kept connection doesn't wait (#636)
+                response_class=_Response,
                 connector=aiohttp.TCPConnector(
                     limit=self._connect_limit,
                     **idle,
