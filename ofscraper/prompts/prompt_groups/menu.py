@@ -16,7 +16,6 @@ from prompt_toolkit.shortcuts import prompt as prompt
 
 import ofscraper.db.postgres as postgres
 import ofscraper.prompts.promptConvert as promptClasses
-import ofscraper.utils.config.data as data
 import ofscraper.utils.of_env.of_env as of_env
 
 
@@ -32,7 +31,7 @@ def main_prompt() -> int:
         instruction=(
             f"(Database: PostgreSQL, {postgres.describe()})"
             if postgres.enabled()
-            else f"(Database: user_data.db files under {data.get_metadata()})"
+            else "(Database: user_data.db files, see the metadata setting)"
         ),
     )
     return of_env.getattr("mainPromptChoices")[answer]

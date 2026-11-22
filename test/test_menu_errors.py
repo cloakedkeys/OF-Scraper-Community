@@ -156,14 +156,16 @@ def test_main_menu_names_the_postgresql_server_without_the_login(monkeypatch):
     assert "s3cret-word" not in instruction and "scraper:" not in instruction
 
 
-def test_main_menu_names_the_metadata_folder_on_sqlite(monkeypatch):
+def test_main_menu_points_to_the_metadata_setting_on_sqlite(monkeypatch):
     import ofscraper.db.postgres as postgres
-    import ofscraper.prompts.prompt_groups.menu as menu_prompts
+    import ofscraper.utils.config.data as data
+
+    def unreadable(*args, **kwargs):
+        raise AssertionError("the config was read")
 
     monkeypatch.setattr(postgres, "url", lambda: "")
-    monkeypatch.setattr(
-        menu_prompts.data, "get_metadata", lambda: "{configpath}/{profile}/.data/{model_id}"
-    )
+    # the menu doesn't read the config, which may not be readable
+    monkeypatch.setattr(data, "get_metadata", unreadable)
     assert _main_menu_instruction(monkeypatch) == (
-        "(Database: user_data.db files under {configpath}/{profile}/.data/{model_id})"
+        "(Database: user_data.db files, see the metadata setting)"
     )

@@ -459,9 +459,9 @@ def general_config():
                 "name": "metadata",
                 "message": "metadata: ",
                 "option_instruction": (
-                    "The scraper keeps its database in PostgreSQL. This folder"
-                    " is only used for the user_data.db files that Merge"
-                    " Databases, import and export work on"
+                    "With PostgreSQL on, the scraper doesn't use this folder."
+                    " It's where the user_data.db files go if PostgreSQL is"
+                    " turned off"
                     if postgres.enabled()
                     else "Where should metadata files be saved"
                 ),

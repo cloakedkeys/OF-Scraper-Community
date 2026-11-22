@@ -40,6 +40,8 @@ def postgres_profiles_notice():
             "All profiles use the same PostgreSQL database, so switching"
             " profiles doesn't switch the scraper's data."
         )
+
+
 def delete_profile():
     tools.print_profiles()
     profile = prompts.get_profile_prompt(profile_data.get_profile_names())

@@ -261,9 +261,8 @@ def test_download_menu_saves_free_space_in_bytes(monkeypatch, saved):
     [
         (
             True,
-            "The scraper keeps its database in PostgreSQL. This folder is only"
-            " used for the user_data.db files that Merge Databases, import and"
-            " export work on",
+            "With PostgreSQL on, the scraper doesn't use this folder. It's"
+            " where the user_data.db files go if PostgreSQL is turned off",
         ),
         (False, "Where should metadata files be saved"),
     ],
