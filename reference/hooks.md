@@ -14,7 +14,7 @@ This file is written by hand. Check an entry against the code before relying on 
 
 ### Download events
 
-`ofscraper/utils/events.py` has `subscribe(name, fn)` and `unsubscribe(name, fn)`. Subscribing the same function again does nothing. An unknown name raises `ValueError`. Subscribers get keyword arguments:
+`ofscraper/utils/events.py` has `subscribe(name, fn)` and `unsubscribe(name, fn)`. Subscribing the same function again does nothing. `subscribe` raises `ValueError` for an unknown name; `unsubscribe` ignores a name or function it doesn't know. Subscribers get keyword arguments:
 
 - **`item_downloaded(ele, path)`:** a media file has been saved at `path` (a `pathlib.Path`) and recorded in the database. It's sent before `after_download_script` runs, and a stop during the script still counts the item as downloaded. Sent for normal files, DRM videos and Fansly HLS/DASH streams. The Fansly check of videos saved without sound, which runs after a run's downloads, also sends it when it saves a video again with sound, with no `item_finished` after it.
 - **`item_finished(ele, username, result, reason)`:** the download loop has counted one item. `result` is `downloaded`, `failed`, `skipped` or `stopped`. An item a stop ended before it started gets no event. `reason` is None unless the item failed or was skipped:
@@ -40,7 +40,9 @@ Both functions are in `ofscraper/commands/check.py`. They are sync and use `@run
 
 Runs a check command's scan and returns the rows its table would show, without opening the Textual table or starting the table's download thread. `command` is `post_check`, `msg_check`, `paid_check` or `story_check`; anything else raises `ValueError`. The creators and areas come from the settings, as for the command.
 
-- It checks the auth first, so it can raise `AuthCheckUnavailable` or `AuthCheckLeft` (see [Auth](#auth)).
+- It sets `force_all` to True and `after` to 0 in the settings, as the check commands do. They stay that way for the rest of the process, so a scrape run after it in the same process gets them too.
+- It checks the auth first with `check_auth()` (see [Auth](#auth)), so it can raise `AuthCheckUnavailable` or `AuthCheckLeft`. When the auth is rejected, `check_auth()` opens the terminal's auth prompt (`make.make_auth`; on Fansly its login prompt), and choosing quit there raises `SystemExit(0)`. The GUI patch's copy of `checkers.py` skips that prompt in GUI mode; the core doesn't.
+- It doesn't clear a stop. Call `stop.clear()` first (see [Stopping downloads](#stopping-downloads)): after a `stop.request()` the scan raises `stop.DownloadsStopped`, which is a `BaseException`, so `except Exception` doesn't catch it.
 - `story_check` on Fansly logs an error and returns `[]`.
 - Rows add to the last scan's. Call `reset_table_data()` first for a new table.
 - The check commands call it and then open the table, so a row is the same dict the table gets.
@@ -70,8 +72,8 @@ They are added up over both passes. Each `process_dicts` call starts its own cou
 In `ofscraper/data/api/init.py`. Sync. Checks the auth and returns `(status, message)`:
 
 - `UP`: the auth works (always, for an anonymous run).
-- `DOWN`: the auth was rejected.
-- `UNAVAILABLE`: the auth couldn't be checked, because of the network, a server error or the dynamic rule. `message` says why, for a caller with no log to point to.
+- `DOWN`: the auth was rejected. Also for any error that `unavailable_message` doesn't recognise.
+- `UNAVAILABLE`: the auth couldn't be checked: a network or proxy failure, a server error, a reply that isn't JSON, or no usable dynamic rule (the cases `unavailable_message` lists below). `message` says why, for a caller with no log to point to.
 
 `message` is None for `UP` and `DOWN`. `getstatus()` returns only the status.
 
@@ -91,7 +93,7 @@ In `ofscraper/data/api/init.py`. Sync. `unavailable_message(e: Exception) -> str
 - `DynamicRuleUnavailable` (see below);
 - a reply that isn't JSON. A 4xx reply that isn't JSON is left to the auth check.
 
-**Replaces in the GUI patch:** its copy of the function in `data/api/init.py`, which lacks the certificate and aiohttp total-timeout cases. The patch's `gui/utils/auth_errors.py` already imports it from `ofscraper.data.api.init`.
+**Replaces in the GUI patch:** its copy of the function in `data/api/init.py`, which lacks the proxy refusal (`aiohttp.ClientHttpProxyError`), certificate, aiohttp total-timeout, `aiohttp.ClientPayloadError` and `aiohttp.ContentTypeError` cases. The patch's `gui/utils/auth_errors.py` already imports it from `ofscraper.data.api.init`.
 
 ### Dynamic rule fallback
 
@@ -105,14 +107,14 @@ If no source gives a usable rule, it raises `DynamicRuleUnavailable`. Its messag
 
 ### `resolve_paid_username(model_id)`
 
-In `ofscraper/data/posts/post.py`. `async`, not wrapped in `@run`. Returns the username for a creator in the purchased-content list. For a deleted account it returns the name the database recorded, else `DELETED_MODEL_PLACEHOLDER_<model_id>`. `process_all_paid` uses it.
+In `ofscraper/data/posts/post.py`. `async`, not wrapped in `@run`. Returns the username for a creator in the purchased-content list. For a deleted account it returns the name the database recorded, else the `DELETED_MODEL_PLACEHOLDER` environment default (`modeldeleted` unless changed) followed by `_<model_id>`. `process_all_paid` uses it.
 
 - **PostgreSQL:** the recorded name is read through the database operations, so it comes from PostgreSQL when it's on.
 - **Replaces in the GUI patch:** the same function in its copy of `data/posts/post.py`.
 
 ## Database reads
 
-These are in `ofscraper/db/operations_/media.py`. Call them with keyword arguments: `model_id=` and `username=` for the creator. Don't pass `conn=`: the wrapper opens the connection itself and raises `TypeError` if one is given.
+These are in `ofscraper/db/operations_/media.py`. Call them with keyword arguments: `model_id=` and `username=` for the creator. Pass both: on SQLite the `metadata` path is built from them. Don't pass `conn=`: the wrapper opens the connection itself and raises `TypeError` if one is given.
 
 | Function | Sync | Returns |
 |---|---|---|
@@ -120,7 +122,7 @@ These are in `ofscraper/db/operations_/media.py`. Call them with keyword argumen
 | `get_all_medias_sync(model_id, username)` | sync | the same rows, from the same query |
 | `get_post_info(model_id, username)` | sync | `{post_id: {"price": ..., "text": ...}}` for the creator's posts, messages and stories. An empty value is None. Where a post, a message and a story share an id, the first of those three tables keeps it. |
 | `get_media_post_files_downloaded(model_id, username, media_id=None)` | sync | `{(media_id, post_id): (directory, filename)}` for downloaded media. Directory and filename are None when no file was recorded. `media_id` limits it to one media. |
-| `get_media_ids_downloaded_model_sync(model_id, without_permanent_skips=False)` | sync | the set of the creator's downloaded media ids. `without_permanent_skips` leaves out the permanent `skip_download_script` skips. |
+| `get_media_ids_downloaded_model_sync(model_id, username, without_permanent_skips=False)` | sync | the set of the creator's downloaded media ids. `without_permanent_skips` leaves out the permanent `skip_download_script` skips. |
 
 - **Which database:** `backend_for` in `ofscraper/db/operations_/wrapper.py` picks it for each call. With PostgreSQL on, the call reads the current site's schema and only that creator's rows. With it off, it opens the creator's `user_data.db` at the `metadata` path. A call given `db_path=` always opens that SQLite file, whichever is on.
 - **`read_only=True`** opens the database read-only. A creator with no `user_data.db` then raises `DatabaseMissing` (`ofscraper/db/operations_/wrapper.py`) instead of getting a new file. With PostgreSQL on, tables that aren't there yet raise it too.
