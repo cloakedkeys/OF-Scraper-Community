@@ -146,8 +146,8 @@ Defined in `ofscraper/utils/of_env/values/action/metadata.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="remove_unviewable_metadata"></a>`REMOVE_UNVIEWABLE_METADATA` | `REMOVE_UNVIEWABLE_METADATA` | `False` | Flag to determine if unviewable metadata should be removed (boolean) |
-| <a id="quality_unknown_default"></a>`QUALITY_UNKNOWN_DEFAULT` | `QUALITY_UNKNOWN_DEFAULT` | `'source'` | Default quality setting for unknown metadata |
+| <a id="remove_unviewable_metadata"></a>`REMOVE_UNVIEWABLE_METADATA` | `REMOVE_UNVIEWABLE_METADATA` | `False` | Defined but not read anywhere. |
+| <a id="quality_unknown_default"></a>`QUALITY_UNKNOWN_DEFAULT` | `QUALITY_UNKNOWN_DEFAULT` | `'source'` | Fallback value for the `{quality}` placeholder when a media item's quality isn't known (such as non-videos or text files). |
 | <a id="alt_force_key"></a>`ALT_FORCE_KEY` | `OFSC_ALT_FORCE_KEY` | `True` | When on, the `metadata` command signs its request for protected (MPD) media (`commands/metadata/manager.py`). |
 
 ## Connections, proxies and concurrency
