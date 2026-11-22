@@ -30,7 +30,11 @@ def merge_runner():
                 return
         completed, skipped, failed = merge_loop(curr_folder, new_db)
         if postgres.enabled() and completed:
-            folder = merge.MergeDatabase().get_new_db(new_db).parent
+            folder = str(merge.MergeDatabase().get_new_db(new_db).parent)
+            # a backslash right before the closing quote would escape it on
+            # Windows ("D:\" reads as D:"), so it is doubled
+            if folder.endswith("\\"):
+                folder += "\\"
             console.print("To bring the merged file into PostgreSQL, run:")
             # on one line and as written, so that it can be copied
             console.print(

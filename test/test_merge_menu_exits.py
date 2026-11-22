@@ -6,7 +6,7 @@ merge runs.
 """
 
 import io
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import ofscraper.__main__  # noqa: F401  (import order avoids a circular import)
 
@@ -154,6 +154,22 @@ def test_the_import_command_is_one_line_with_the_folder_the_merge_used(monkeypat
     )
     assert len(command) > 60
     assert command in printed.getvalue().splitlines()
+
+
+def test_a_drive_root_keeps_its_closing_quote(monkeypatch, screen):
+    monkeypatch.setattr(postgres, "enabled", lambda: True)
+
+    class AtDriveRoot:
+        def get_new_db(self, new_db):
+            return PureWindowsPath("D:/user_data.db")
+
+    monkeypatch.setattr(merge_utils.merge, "MergeDatabase", AtDriveRoot)
+    run_screen(monkeypatch, backup=[True], confirm=[True], another=[False])
+    # "D:\" would read as D:" on Windows; "D:\\" reads as D:\
+    assert (
+        r'python -m ofscraper.commands.postgres_import "D:\\"'
+        in screen.getvalue().splitlines()
+    )
 
 
 def test_the_screen_says_nothing_about_postgresql_while_it_is_off(monkeypatch, screen):
