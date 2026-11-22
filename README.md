@@ -148,8 +148,10 @@ These shortcuts work when both sidebars are closed:
 | `c` / `Shift+C` | This page / everything the filters show |
 | `x` | Everything |
 
-- **Mouse:** click a row's **Download Cart** cell to add or remove it, or click the **Download Cart** header to add the page. Locked media can't be added.
+- **Mouse:** click a row's **Download Cart** cell to add or remove it, or click the **Download Cart** header to add the page.
 - **Cart tab:** click `[added]` to remove a row, press `c` to remove the page, or press `x` / `Shift+C` to empty the cart.
+
+Locked media can't be added, by key or by mouse.
 
 ### Downloading
 
