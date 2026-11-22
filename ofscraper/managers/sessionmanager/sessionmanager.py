@@ -49,23 +49,30 @@ BACKOFF_FLOOR = 0.5
 # request's extensions to each redirect it follows
 LOGIN_GUARD = "ofscraper_login_guard"
 
-# A kept connection whose network path died (a VPN reconnected) takes a
-# request and never answers. On a connection used before, the answer must
-# start within this many seconds, not the whole read timeout (#636)
-KEPT_ANSWER_TIMEOUT = 10
-
 # connections that have answered before
 _answered = weakref.WeakSet()
 
 
 class _Response(refusing.Response):
+    """A kept connection whose network path died (a VPN reconnected) takes a
+    request and never answers. On a connection used before, a GET's answer
+    must start within a third of the read timeout, not all of it (#636).
+    Other methods aren't capped: they may not be safe to send twice."""
+
     async def start(self, connection):
         protocol = connection.protocol
-        if protocol in _answered and protocol.read_timeout:
+        if (
+            self.method == "GET"
+            and protocol in _answered
+            and protocol.read_timeout
+        ):
+            cap = asyncio.timeout(protocol.read_timeout / 3)
             try:
-                async with asyncio.timeout(KEPT_ANSWER_TIMEOUT):
+                async with cap:
                     await super().start(connection)
             except TimeoutError:
+                if not cap.expired():
+                    raise
                 raise aiohttp.SocketTimeoutError(
                     "Timeout on reading data from socket"
                 ) from None
