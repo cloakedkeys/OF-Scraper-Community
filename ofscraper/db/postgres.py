@@ -328,21 +328,22 @@ def _secrets(database_url, values=False):
     itself, and its password as PostgreSQL reads it, as written and
     %-encoded. Nothing else: libpq doesn't quote the password, and an
     address it can't read gets a sentence of its own (see _unavailable).
-    With `values`, for messages only, every value of the host=... spelling
-    too: an unquoted password ends at a space, and the rest is read as more
-    settings, which errors quote (#654)."""
+    With `values`, for messages only, every value PostgreSQL read from the
+    host=... spelling too: an unquoted password ends at a space, and the
+    rest is read as more settings, which errors quote (#654)."""
     database_url = str(database_url or "")
     parts = _reading(database_url) or {}
     password = parts.get("password")
     if not password:
         return []
     secrets = {database_url, password, urllib.parse.quote(password, safe="")}
-    if values and "://" not in database_url:
-        secrets.update(str(value) for value in parts.values())
-        # each value as written, without its quotes and \ escapes
-        for value in re.findall(r"=\s*('(?:[^'\\]|\\.)*'|\S+)", database_url):
-            secrets.add(re.sub(r"\\(.)", r"\1", value[1:-1] if value.startswith("'") else value))
-        secrets.discard("")
+    # libpq reads a URL only when it starts like one
+    if values and not database_url.startswith(("postgresql://", "postgres://")):
+        for value in map(str, parts.values()):
+            # each value, and each part of a list (host=a,b), which errors
+            # quote one by one; not one character: connect_timeout=1 would
+            # hide every 1
+            secrets.update(part for part in {value, *value.split(",")} if len(part) > 1)
     return sorted(secrets, key=len, reverse=True)
 
 
