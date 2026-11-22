@@ -758,11 +758,19 @@ def get_all_medias(model_id=None, username=None, conn=None, **kwargs) -> list:
         return [dict(row) for row in cur.fetchall()]
 
 
-@wrapper.operation_wrapper_async
+@wrapper.operation_wrapper
+def get_all_medias_sync(model_id=None, username=None, conn=None, **kwargs) -> list:
+    """get_all_medias, for a caller that can't await (the GUI)."""
+    with contextlib.closing(conn.cursor()) as cur:
+        execute_area_media(cur, getAllMedia, model_id, mediaSelectTransition)
+        return [dict(row) for row in cur.fetchall()]
+
+
+@wrapper.operation_wrapper
 def get_post_info(model_id=None, username=None, conn=None, **kwargs) -> dict:
     """{post_id: {"price": ..., "text": ...}} for one creator's posts,
     messages and stories, as saved (an empty one is None), for the GUI's
-    table of get_all_medias rows.
+    table of get_all_medias_sync rows. Not async: the GUI can't await.
 
     A post id is unique per creator within a table only, so a post, a
     message and a story may share one. The tables are read in that order

@@ -154,7 +154,12 @@ python -m ofscraper.commands.recover_collisions --postgres --creator <username o
 - **Existing libraries start empty** until you bring your `user_data.db` files in (see above). Until then the scraper treats everything as new.
 - **Tools that read `user_data.db` files** keep reading those files and don't see PostgreSQL: Merge Databases and parts of the GUI patch. Nothing scraped since you turned PostgreSQL on is in those files, and what a tool changes in them does not reach PostgreSQL.
   - Merge Databases says so on its screen.
-  - In the GUI patch, scraping, downloads, metadata updates and the check tables go through the scraper and use PostgreSQL. What the GUI opens `user_data.db` files for itself reads or changes the old files, and doesn't say so: its results table, the purge that deletes downloaded files, showing only what is new since the last run, Merge Databases, and the download paths it updates when it moves the OnlyFans folder. That lasts until the GUI reads them through the scraper's database functions (`get_all_medias`, `get_post_info` and `get_media_post_files_downloaded`).
+  - In the GUI patch, scraping, downloads, metadata updates and the check tables go through the scraper, so they use PostgreSQL.
+  - Other parts of the GUI read the `user_data.db` files themselves, so they see only the old files, and the GUI doesn't say so. Each can use PostgreSQL once the GUI reads through the scraper's database functions instead:
+    - **Results table:** `get_all_medias_sync` for the media, `get_post_info` for each post's price and text.
+    - **Purge, which deletes the downloaded files:** `get_media_post_files_downloaded`.
+    - **Showing only what is new since the last run:** the GUI takes the newest `posted_at` in the file's media. The newest `posted_at` of the `get_all_medias_sync` rows is the same date.
+  - The GUI's Merge Databases and the download paths it updates when it moves the OnlyFans folder work on `user_data.db` files by design. With PostgreSQL on they change only those files.
   - The tools that are run on their own (`stash_sync`, `recover_collisions`, `move_creator_files` and `scripts/creator_names.py`) all work on PostgreSQL when you tell them to with `--postgres`: see "Syncing to Stash", "Recovering filename collisions" and "Moving a creator's files" above, and for `scripts/creator_names.py`, `python scripts/creator_names.py --postgres [--site onlyfans|fansly]` with its usual options (`--all`, `--find`, `--csv`, `--add MODEL_ID NAME [--seen DATE] [--force]`). Each one finds PostgreSQL only through `OFSC_DATABASE_URL` in the environment it is run in, not the scraper's settings. Given files while PostgreSQL is on, each says that it works on the files.
 
 ## Developing
