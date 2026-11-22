@@ -664,7 +664,7 @@ def comment_description(key, lines):
     """The text of the `# KEY: ...` comment in `lines`, with the comment lines
     that follow it joined on, up to a blank comment, `# Default:`,
     `# Environment variable:`, another `# NAME:` or a line that isn't a
-    comment"""
+    comment."""
     for i, line in enumerate(lines):
         m = re.match(r"\s*#\s*" + re.escape(key) + r"\s*:\s*(.+)", line)
         if not m:

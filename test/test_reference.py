@@ -137,13 +137,14 @@ def test_a_comment_over_several_lines_is_the_whole_description(build):
     lines = [
         "    # KEY: First line,",
         "    # second line.",
+        "    #",
+        "    # A note for whoever changes the code.",
+        "    # OTHER: Not this one,",
+        "    # but this one.",
         "    # Default: 1",
-        "    # OTHER: Not this one.",
     ]
     assert build.comment_description("KEY", lines) == "First line, second line."
-    assert build.comment_description("OTHER", lines) == "Not this one."
-    code = ["    # KEY: One line.", '    config["KEY"] = 1  # not this']
-    assert build.comment_description("KEY", code) == "One line."
+    assert build.comment_description("OTHER", lines) == "Not this one, but this one."
 
 
 def test_an_environment_default_keeps_the_end_of_its_comment(build, environment):

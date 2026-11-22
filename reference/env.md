@@ -160,7 +160,7 @@ Defined in `ofscraper/utils/of_env/values/req/req.py`.
 |---|---|---|---|
 | <a id="connect_timeout"></a>`CONNECT_TIMEOUT` | `OFSC_CONNECT_TIMEOUT` | `15` | Connection timeout for general network operations (seconds). |
 | <a id="pool_connect_timeout"></a>`POOL_CONNECT_TIMEOUT` | `OFSC_POOL_CONNECT_TIMEOUT` | `15` | Connection timeout for pooled connections (seconds). |
-| <a id="of_read_timeout"></a>`OF_READ_TIMEOUT` | `OFSC_READ_TIMEOUT` | `60` | Longest wait for the next piece of a response (seconds), for requests that don't pass their own read timeout. It isn't a limit on the whole response: a slow response that keeps sending is fine. On a kept connection that has answered before, a GET's answer must start within a third of this, or the request is retried on a new one. 0 means no limit (the session manager turns it into None). |
+| <a id="of_read_timeout"></a>`OF_READ_TIMEOUT` | `OFSC_READ_TIMEOUT` | `60` | Longest wait for the next piece of a response (seconds), for requests that don't pass their own read timeout. It isn't a limit on the whole response: a slow response that keeps sending is fine. On a kept connection that has answered before, a GET's answer must start within a third of this, or that connection is dropped and the request is retried. 0 means no limit (the session manager turns it into None). |
 | <a id="max_connections"></a>`MAX_CONNECTIONS` | `OFSC_MAX_CONNECTIONS` | `200` | Maximum number of simultaneous network connections. |
 | <a id="api_max_connection"></a>`API_MAX_CONNECTION` | `OFSC_API_MAX_CONNECTION` | `100` | Maximum number of API connections. |
 | <a id="total_timeout"></a>`TOTAL_TIMEOUT` | `OFSC_TOTAL_TIMEOUT` | `None` | Total timeout for operations (seconds). Defaults to None. |
@@ -445,7 +445,7 @@ Defined in `ofscraper/utils/of_env/values/req/mpd.py`.
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
 | <a id="mpd_connect_timeout"></a>`MPD_CONNECT_TIMEOUT` | `OFSC_MPD_CONNECT_TIMEOUT` | `45` | Connection timeout for MPD operations (seconds). |
-| <a id="mpd_total_timeout"></a>`MPD_TOTAL_TIMEOUT` | `OFSC_MPD_TOTAL_TIMEOUT` | `None` | Total timeout for MPD operations (seconds). Defaults to None. If set via environment, it will be an integer; otherwise, it remains None. |
+| <a id="mpd_total_timeout"></a>`MPD_TOTAL_TIMEOUT` | `OFSC_MPD_TOTAL_TIMEOUT` | `None` | Total timeout for MPD operations (seconds). Defaults to None. |
 | <a id="mpd_read_timeout"></a>`MPD_READ_TIMEOUT` | `OFSC_MPD_READ_TIMEOUT` | `200` | Read timeout for MPD operations (seconds). |
 | <a id="mpd_pool_connect_timeout"></a>`MPD_POOL_CONNECT_TIMEOUT` | `OFSC_MPD_POOL_CONNECT_TIMEOUT` | `45` | Pool connection timeout for MPD operations (seconds). |
 | <a id="mpd_max_sems"></a>`MPD_MAX_SEMS` | `OFSC_MPD_MAX_SEMS` | `10` | Maximum semaphores for MPD operations. |
@@ -488,7 +488,7 @@ Defined in `ofscraper/utils/of_env/values/req/discord.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="discord_total_timeout"></a>`DISCORD_TOTAL_TIMEOUT` | `OFSC_DISCORD_TOTAL_TIMEOUT` | `None` | Total timeout for Discord operations (seconds). Defaults to None. If set via environment, it will be an integer; otherwise, it remains None. |
+| <a id="discord_total_timeout"></a>`DISCORD_TOTAL_TIMEOUT` | `OFSC_DISCORD_TOTAL_TIMEOUT` | `None` | Total timeout for Discord operations (seconds). Defaults to None. |
 | <a id="discord_min_wait"></a>`DISCORD_MIN_WAIT` | `OFSC_DISCORD_MIN_WAIT` | `1.0` | Minimum wait time for Discord operations (seconds). |
 | <a id="discord_max_wait"></a>`DISCORD_MAX_WAIT` | `OFSC_DISCORD_MAX_WAIT` | `5.0` | Maximum wait time for Discord operations (seconds). |
 | <a id="discord_num_tries"></a>`DISCORD_NUM_TRIES` | `OFSC_DISCORD_NUM_TRIES` | `3` | Number of retries for Discord operations. |
@@ -646,7 +646,7 @@ Defined in `ofscraper/utils/of_env/values/dynamic.py`.
 |---|---|---|---|
 | <a id="dynamic_rule_manual"></a>`DYNAMIC_RULE_MANUAL` | `OFSC_DYNAMIC_RULE_MANUAL` | `None` | The specific manual dynamic rule to use. Defaults to None. |
 | <a id="dynamic_options"></a>`DYNAMIC_OPTIONS` | `OFSC_DYNAMIC_OPTIONS` | `['digitalcriminals', 'manual', 'generic', 'xagler', 'rafa']` | List of available dynamic rule options. |
-| <a id="dynamic_options_all"></a>`DYNAMIC_OPTIONS_ALL` | `OFSC_DYNAMIC_OPTIONS_ALL` | a list of 12 items (see the source) | Comprehensive list of all dynamic rule options including aliases. This list is derived from DYNAMIC_OPTIONS, so it should be built after DYNAMIC_OPTIONS is set. |
+| <a id="dynamic_options_all"></a>`DYNAMIC_OPTIONS_ALL` | `OFSC_DYNAMIC_OPTIONS_ALL` | a list of 12 items (see the source) | Comprehensive list of all dynamic rule options including aliases. |
 | <a id="dynamic_rule_default"></a>`DYNAMIC_RULE_DEFAULT` | `OFSC_DYNAMIC_RULE_DEFAULT` | `'digital'` | The default dynamic rule when none is specified. |
 
 ## List names
@@ -800,7 +800,7 @@ Defined in `ofscraper/utils/of_env/values/path/bytes.py`.
 | <a id="special_char_size_windows"></a>`SPECIAL_CHAR_SIZE_WINDOWS` | `SPECIAL_CHAR_SIZE_WINDOWS` | `4` | Byte size for special characters on Windows |
 | <a id="special_char_size_unix"></a>`SPECIAL_CHAR_SIZE_UNIX` | `SPECIAL_CHAR_SIZE_UNIX` | `4` | Byte size for special characters on Unix-like systems |
 | <a id="normal_char_size_unix"></a>`NORMAL_CHAR_SIZE_UNIX` | `NORMAL_CHAR_SIZE_UNIX` | `2` | Byte size for normal characters on Unix-like systems |
-| <a id="utf"></a>`UTF` | `UTF` | `None` | UTF encoding setting (e.g., "utf-8", "utf-16"). Defaults to None. If set via environment, it will be a string; otherwise, it remains None. |
+| <a id="utf"></a>`UTF` | `UTF` | `None` | UTF encoding setting (e.g., "utf-8", "utf-16"). Defaults to None. |
 
 ## OnlyFans API addresses
 
