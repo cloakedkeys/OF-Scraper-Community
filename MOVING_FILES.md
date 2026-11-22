@@ -2,7 +2,7 @@
 
 When a creator changes their username, the scraper saves new files in a folder named after the new name while earlier files stay in the old folder. This command moves those earlier files to the current name's folder and updates the folders recorded in the database.
 
-Close the scraper first. The command is offline: it does not contact OnlyFans or Fansly, and it does not read the scraper's settings (`config.json`). It goes only by the paths the database records.
+The command is offline: it does not contact OnlyFans or Fansly, and it does not read the scraper's settings (`config.json`). It goes only by the paths the database records.
 
 ## Run it
 
@@ -21,7 +21,7 @@ The JSON report includes:
 | Field | Meaning |
 |---|---|
 | `to`, `why` | The name the files go to and why |
-| `folders` | Each folder that would be moved and how many files it holds |
+| `folders` | Each folder that would be moved and how many of its files would move |
 | `left` | Every recorded file that would stay, with the reason |
 
 ## How it decides what to move
@@ -45,10 +45,10 @@ Each file is handled on its own:
 | At both places | Both files stay where they are and the row is left unchanged. |
 | At neither place | Listed in the report. |
 
-- **No files replaced or deleted:** The command only renames files within one disk, and touches only the files the database records for that creator. Everything else in the old folder stays. An old folder is removed only when the move left it empty.
+- **No files replaced or deleted:** It only renames (within one disk), and touches only the files the database records for that creator. Everything else in the old folder stays. An old folder is removed only when the move left it empty.
 - **Filenames stay the same:** A file's own name is not changed, even when the old username is part of it. Stash and similar tools need a rescan afterwards.
 - **Stopped partway through:** Run the same command again. A file that was moved already just gets its row updated. There is no undo file.
-- **Going back:** Run it with `--to <old name> --apply`. That gathers all of the creator's files under the old name, including the ones that were under the new name before, so it is a way back rather than an exact undo.
+- **Going back:** Run it with `--to <old name> --apply`. That gathers all of the creator's files under the old name, including the ones that were under the new name before, so it is the way back, not an exact undo.
 
 ## Other environments and options
 
