@@ -91,43 +91,43 @@ Defined in `ofscraper/utils/of_env/values/action/download.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="maxfile_semaphore"></a>`MAXFILE_SEMAPHORE` | `MAXFILE_SEMAPHORE` | `None` | If not set in environment, defaults to None |
-| <a id="path_str_max"></a>`PATH_STR_MAX` | `PATH_STR_MAX` | `200` | Maximum length for path strings |
-| <a id="table_str_max"></a>`TABLE_STR_MAX` | `TABLE_STR_MAX` | `100` | Maximum length for table strings |
+| <a id="maxfile_semaphore"></a>`MAXFILE_SEMAPHORE` | `MAXFILE_SEMAPHORE` | `None` | Overrides `performance_options.download_sems` as the maximum number of concurrent downloads. When unset, `download_sems` is used. |
+| <a id="path_str_max"></a>`PATH_STR_MAX` | `PATH_STR_MAX` | `200` | Maximum length of file paths shown in download log messages before they are truncated. |
+| <a id="table_str_max"></a>`TABLE_STR_MAX` | `TABLE_STR_MAX` | `100` | Maximum length of post text shown in the check table before it is truncated. |
 
 ### Download
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="space_download_message"></a>`SPACE_DOWNLOAD_MESSAGE` | `SPACE_DOWNLOAD_MESSAGE` | `'Skipping download because space min has been reached'` | Message for skipping download due to low space |
-| <a id="download_thread_min"></a>`DOWNLOAD_THREAD_MIN` | `DOWNLOAD_THREAD_MIN` | `35` | Minimum number of download threads |
-| <a id="download_num_tries"></a>`DOWNLOAD_NUM_TRIES` | `DOWNLOAD_NUM_TRIES` | `3` | Number of times to retry a download |
-| <a id="download_num_tries_check"></a>`DOWNLOAD_NUM_TRIES_CHECK` | `DOWNLOAD_NUM_TRIES_CHECK` | `3` | Number of times to check download status |
+| <a id="space_download_message"></a>`SPACE_DOWNLOAD_MESSAGE` | `SPACE_DOWNLOAD_MESSAGE` | `'Skipping download because space min has been reached'` | Error message raised when free disk space drops below `system_free_min`. The retry handler also matches this string so the download isn't retried. |
+| <a id="download_thread_min"></a>`DOWNLOAD_THREAD_MIN` | `DOWNLOAD_THREAD_MIN` | `35` | Defined but not read anywhere. |
+| <a id="download_num_tries"></a>`DOWNLOAD_NUM_TRIES` | `DOWNLOAD_NUM_TRIES` | `3` | Maximum number of download attempts outside check mode. |
+| <a id="download_num_tries_check"></a>`DOWNLOAD_NUM_TRIES_CHECK` | `DOWNLOAD_NUM_TRIES_CHECK` | `3` | Maximum number of download attempts in check mode (`*_check` commands). |
 
 ### Progress Bar
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="max_progress_bars"></a>`MAX_PROGRESS_BARS` | `MAX_PROGRESS_BARS` | `60` | Maximum number of progress bars to display |
-| <a id="min_add_progress_bars"></a>`MIN_ADD_PROGRESS_BARS` | `MIN_ADD_PROGRESS_BARS` | `40` | Minimum number of progress bars to add |
-| <a id="show_dl_chunks"></a>`SHOW_DL_CHUNKS` | `SHOW_DL_CHUNKS` | `False` | Show download chunks in progress bars (boolean) |
-| <a id="show_dl_chunks_level"></a>`SHOW_DL_CHUNKS_LEVEL` | `SHOW_DL_CHUNKS_LEVEL` | `'Warning'` | Level for showing download chunks messages |
-| <a id="multiprogress_job_update_freq"></a>`MULTIPROGRESS_JOB_UPDATE_FREQ` | `MULTIPROGRESS_JOB_UPDATE_FREQ` | `1.5` | Update frequency for multiprogress jobs (seconds) |
-| <a id="progress_job_update_freq"></a>`PROGRESS_JOB_UPDATE_FREQ` | `PROGRESS_JOB_UPDATE_FREQ` | `2.5` | Update frequency for single progress jobs (seconds) |
-| <a id="overall_multi_progress_thread_sleep"></a>`OVERALL_MULTI_PROGRESS_THREAD_SLEEP` | `OVERALL_MULTI_PROGRESS_THREAD_SLEEP` | `0.1` | Sleep time for overall multi-progress thread (seconds) |
-| <a id="job_multi_progress_thread_sleep"></a>`JOB_MULTI_PROGRESS_THREAD_SLEEP` | `JOB_MULTI_PROGRESS_THREAD_SLEEP` | `0.1` | Sleep time for individual job multi-progress thread (seconds) |
+| <a id="max_progress_bars"></a>`MAX_PROGRESS_BARS` | `MAX_PROGRESS_BARS` | `60` | Defined but not read anywhere. |
+| <a id="min_add_progress_bars"></a>`MIN_ADD_PROGRESS_BARS` | `MIN_ADD_PROGRESS_BARS` | `40` | Defined but not read anywhere. |
+| <a id="show_dl_chunks"></a>`SHOW_DL_CHUNKS` | `SHOW_DL_CHUNKS` | `False` | When on, logs download chunk progress at `SHOW_DL_CHUNKS_LEVEL` instead of `TRACE`. |
+| <a id="show_dl_chunks_level"></a>`SHOW_DL_CHUNKS_LEVEL` | `SHOW_DL_CHUNKS_LEVEL` | `'Warning'` | Log level used for download chunk progress messages when `SHOW_DL_CHUNKS` is on. |
+| <a id="multiprogress_job_update_freq"></a>`MULTIPROGRESS_JOB_UPDATE_FREQ` | `MULTIPROGRESS_JOB_UPDATE_FREQ` | `1.5` | Defined but not read anywhere. |
+| <a id="progress_job_update_freq"></a>`PROGRESS_JOB_UPDATE_FREQ` | `PROGRESS_JOB_UPDATE_FREQ` | `2.5` | Defined but not read anywhere. |
+| <a id="overall_multi_progress_thread_sleep"></a>`OVERALL_MULTI_PROGRESS_THREAD_SLEEP` | `OVERALL_MULTI_PROGRESS_THREAD_SLEEP` | `0.1` | Defined but not read anywhere. |
+| <a id="job_multi_progress_thread_sleep"></a>`JOB_MULTI_PROGRESS_THREAD_SLEEP` | `JOB_MULTI_PROGRESS_THREAD_SLEEP` | `0.1` | Defined but not read anywhere. |
 
 ### Forced keys
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="cdm_force_key"></a>`CDM_FORCE_KEY` | `CDM_FORCE_KEY` | `True` | Force CDM Key |
-| <a id="meta_force_key"></a>`META_FORCE_KEY` | `META_FORCE_KEY` | `True` | Force Meta Key |
-| <a id="download_force_key"></a>`DOWNLOAD_FORCE_KEY` | `DOWNLOAD_FORCE_KEY` | `True` | Force Download Key |
-| <a id="mpd_force_key"></a>`MPD_FORCE_KEY` | `MPD_FORCE_KEY` | `True` | Force MPD Key |
-| <a id="api_force_key"></a>`API_FORCE_KEY` | `API_FORCE_KEY` | `False` | Force API Key |
-| <a id="profile_force_key"></a>`PROFILE_FORCE_KEY` | `PROFILE_FORCE_KEY` | `False` | Force Profile Key |
-| <a id="verify_all_integrity"></a>`VERIFY_ALL_INTEGRITY` | `OFSC_VERIFY_ALL_INTEGRITY` | `False` | Verify duration of all downloaded videos using ffprobe |
+| <a id="cdm_force_key"></a>`CDM_FORCE_KEY` | `CDM_FORCE_KEY` | `True` | Defined but not read anywhere. |
+| <a id="meta_force_key"></a>`META_FORCE_KEY` | `META_FORCE_KEY` | `True` | Defined but not read anywhere. |
+| <a id="download_force_key"></a>`DOWNLOAD_FORCE_KEY` | `DOWNLOAD_FORCE_KEY` | `True` | Defined but not read anywhere. |
+| <a id="mpd_force_key"></a>`MPD_FORCE_KEY` | `MPD_FORCE_KEY` | `True` | Defined but not read anywhere. |
+| <a id="api_force_key"></a>`API_FORCE_KEY` | `API_FORCE_KEY` | `False` | When on, forces a fresh session (`FORCED_NEW`) on OnlyFans API, download and metadata requests. |
+| <a id="profile_force_key"></a>`PROFILE_FORCE_KEY` | `PROFILE_FORCE_KEY` | `False` | Defined but not read anywhere. |
+| <a id="verify_all_integrity"></a>`VERIFY_ALL_INTEGRITY` | `OFSC_VERIFY_ALL_INTEGRITY` | `False` | Default for `download_options.verify_all_integrity` (checks non-DRM video/audio downloads and Fansly streams with `ffprobe`). |
 
 ## Likes
 
