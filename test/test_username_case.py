@@ -201,16 +201,19 @@ def test_old_and_new_name_both_select_the_account(monkeypatch, daemon):
     assert warnings == []
 
 
-def _subscription_list(monkeypatch, usernames):
+def _subscription_list(monkeypatch, usernames, black_list=()):
     async def subs(count, account="active"):
         return [{"id": 111, "username": "newname"}] if account == "active" else []
 
     async def none():
         return []
 
+    async def blacklist():
+        return black_list
+
     monkeypatch.setattr(retriver.subscriptions, "get_subscriptions", subs)
     monkeypatch.setattr(retriver.lists, "get_otherlist", none)
-    monkeypatch.setattr(retriver.lists, "get_blacklist", none)
+    monkeypatch.setattr(retriver.lists, "get_blacklist", blacklist)
     monkeypatch.setattr(retriver.console, "get_shared_console", MagicMock)
     monkeypatch.setattr(
         retriver.settings,
@@ -227,8 +230,23 @@ def test_old_name_not_in_the_list_is_looked_up(monkeypatch, daemon):
     selected, warnings = _select_warnings(monkeypatch, "oldname", daemon, found)
 
     assert looked_up == ["oldname"]
+    # the listed account takes the old name, no second copy
+    assert [(m.name, m.id) for m in found] == [("newname", 111)]
     assert selected == ["newname"]
     assert warnings == []
+
+
+@pytest.mark.parametrize(
+    "usernames, looked_up_names",
+    [("newname", []), ("oldname", ["oldname"])],
+    ids=["current name", "old name"],
+)
+def test_blacklisted_account_stays_out(monkeypatch, usernames, looked_up_names):
+    looked_up = _renamed_creator(monkeypatch)
+    found = _subscription_list(monkeypatch, usernames, black_list={111})
+
+    assert looked_up == looked_up_names
+    assert found == []
 
 
 @pytest.mark.parametrize("usernames", ["newname", "111", "ALL"])
