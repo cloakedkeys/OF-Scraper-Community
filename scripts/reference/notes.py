@@ -127,7 +127,7 @@ NOT_MERGED = {"env_files"}
 
 # descriptions for keys whose source has no comment naming them
 ENV = {
-    "ALT_FORCE_KEY": "When on, the `metadata` command fetches a fresh DRM key for protected (MPD) media instead of reusing one (`commands/metadata/manager.py`).",
+    "ALT_FORCE_KEY": "When on, the `metadata` command signs its request for protected (MPD) media (`commands/metadata/manager.py`).",
     "KEY_OPTIONS": "The allowed `cdm_options.key-mode-default` values, taken from `ofscraper/utils/const.py`. Not read from the environment.",
     "SSL_VALIDATION_DEFAULT": "The default for `advanced_options.ssl_verify`, used when the config has no usable value.",
     "mainPromptChoices": "Menu entries of the interactive main menu. Not read from the environment.",

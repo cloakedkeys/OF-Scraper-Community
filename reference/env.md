@@ -92,8 +92,8 @@ Defined in `ofscraper/utils/of_env/values/action/download.py`.
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
 | <a id="maxfile_semaphore"></a>`MAXFILE_SEMAPHORE` | `MAXFILE_SEMAPHORE` | `None` | Overrides `performance_options.download_sems` as the maximum number of concurrent downloads. When unset, `download_sems` is used. |
-| <a id="path_str_max"></a>`PATH_STR_MAX` | `PATH_STR_MAX` | `200` | Maximum length of file paths shown in download log messages before they are truncated. |
-| <a id="table_str_max"></a>`TABLE_STR_MAX` | `TABLE_STR_MAX` | `100` | Maximum length of post text shown in the check table before it is truncated. |
+| <a id="path_str_max"></a>`PATH_STR_MAX` | `PATH_STR_MAX` | `200` | Maximum length of the file path shown on each download's progress bar before it is shortened (with `....`). |
+| <a id="table_str_max"></a>`TABLE_STR_MAX` | `TABLE_STR_MAX` | `100` | Read only by `texthelper()` in `commands/check.py`, which nothing calls, so it has no effect. |
 
 ### Download
 
@@ -125,7 +125,7 @@ Defined in `ofscraper/utils/of_env/values/action/download.py`.
 | <a id="meta_force_key"></a>`META_FORCE_KEY` | `META_FORCE_KEY` | `True` | Defined but not read anywhere. |
 | <a id="download_force_key"></a>`DOWNLOAD_FORCE_KEY` | `DOWNLOAD_FORCE_KEY` | `True` | Defined but not read anywhere. |
 | <a id="mpd_force_key"></a>`MPD_FORCE_KEY` | `MPD_FORCE_KEY` | `True` | Defined but not read anywhere. |
-| <a id="api_force_key"></a>`API_FORCE_KEY` | `API_FORCE_KEY` | `False` | When on, forces a fresh session (`FORCED_NEW`) on OnlyFans API, download and metadata requests. |
+| <a id="api_force_key"></a>`API_FORCE_KEY` | `API_FORCE_KEY` | `False` | Adds the `FORCED_NEW` action to OnlyFans API, download and metadata requests. Currently has no effect: request signing ignores that action. |
 | <a id="profile_force_key"></a>`PROFILE_FORCE_KEY` | `PROFILE_FORCE_KEY` | `False` | Defined but not read anywhere. |
 | <a id="verify_all_integrity"></a>`VERIFY_ALL_INTEGRITY` | `OFSC_VERIFY_ALL_INTEGRITY` | `False` | Default for `download_options.verify_all_integrity` (checks non-DRM video/audio downloads and Fansly streams with `ffprobe`). |
 
@@ -148,7 +148,7 @@ Defined in `ofscraper/utils/of_env/values/action/metadata.py`.
 |---|---|---|---|
 | <a id="remove_unviewable_metadata"></a>`REMOVE_UNVIEWABLE_METADATA` | `REMOVE_UNVIEWABLE_METADATA` | `False` | Flag to determine if unviewable metadata should be removed (boolean) |
 | <a id="quality_unknown_default"></a>`QUALITY_UNKNOWN_DEFAULT` | `QUALITY_UNKNOWN_DEFAULT` | `'source'` | Default quality setting for unknown metadata |
-| <a id="alt_force_key"></a>`ALT_FORCE_KEY` | `OFSC_ALT_FORCE_KEY` | `True` | When on, the `metadata` command fetches a fresh DRM key for protected (MPD) media instead of reusing one (`commands/metadata/manager.py`). |
+| <a id="alt_force_key"></a>`ALT_FORCE_KEY` | `OFSC_ALT_FORCE_KEY` | `True` | When on, the `metadata` command signs its request for protected (MPD) media (`commands/metadata/manager.py`). |
 
 ## Connections, proxies and concurrency
 

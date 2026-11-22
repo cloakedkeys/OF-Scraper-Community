@@ -22,11 +22,11 @@ def load_download_config():
             )
             config["MAXFILE_SEMAPHORE"] = None
 
-    # PATH_STR_MAX: Maximum length of file paths shown in download log messages before they are truncated.
+    # PATH_STR_MAX: Maximum length of the file path shown on each download's progress bar before it is shortened (with `....`).
     # Default: 200
     config["PATH_STR_MAX"] = int(os.getenv("PATH_STR_MAX", "200"))
 
-    # TABLE_STR_MAX: Maximum length of post text shown in the check table before it is truncated.
+    # TABLE_STR_MAX: Read only by `texthelper()` in `commands/check.py`, which nothing calls, so it has no effect.
     # Default: 100
     config["TABLE_STR_MAX"] = int(os.getenv("TABLE_STR_MAX", "100"))
 
@@ -109,7 +109,7 @@ def load_download_config():
     # Default: True
     config["MPD_FORCE_KEY"] = os.getenv("MPD_FORCE_KEY", "True").lower() == "true"
 
-    # API_FORCE_KEY: When on, forces a fresh session (`FORCED_NEW`) on OnlyFans API, download and metadata requests.
+    # API_FORCE_KEY: Adds the `FORCED_NEW` action to OnlyFans API, download and metadata requests. Currently has no effect: request signing ignores that action.
     # Default: False
     config["API_FORCE_KEY"] = os.getenv("API_FORCE_KEY", "False").lower() == "true"
 
