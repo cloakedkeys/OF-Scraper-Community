@@ -232,11 +232,12 @@ class Post(base.base):
                 return "Messages"
             return res_type
 
-        # Check boolean flags
-        if self.pinned:
-            return "Pinned"
+        # Check boolean flags; archived before pinned, as the folder
+        # (modified_responsetype) does
         if self.archived:
             return "Archived"
+        if self.pinned:
+            return "Pinned"
         if self.stream:
             return "Streams"
 
