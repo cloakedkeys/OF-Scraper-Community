@@ -132,7 +132,7 @@ Exported files contain what the scraper reads from PostgreSQL. For files you pre
 python -m ofscraper.commands.stash_sync --postgres
 ```
 
-**Note:** `stash_sync` is a separate tool and doesn't read the scraper's settings. Set `OFSC_DATABASE_URL` in the environment where you run the command; an address listed only in a `.env` file referenced by `config.json` is not seen. In Docker, a variable set under `environment:` is already set for commands run in the container. The PostgreSQL driver is also required.
+**Note:** `stash_sync` is a separate tool and doesn't read the scraper's settings (`config.json`). Set `OFSC_DATABASE_URL` in the environment where you run the command; an address listed only in a `.env` file referenced by `config.json` is not seen. In Docker, a variable set under `environment:` is already set for commands run in the container. The PostgreSQL driver is also required.
 
 - **Filtering creators.** Every creator on both sites is synced by default. Narrow the run with:
   - `--site onlyfans` or `--site fansly` to sync one site.
