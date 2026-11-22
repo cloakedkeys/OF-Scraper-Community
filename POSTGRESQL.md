@@ -2,7 +2,7 @@
 
 By default the scraper keeps one SQLite file (`user_data.db`) per creator. Nothing needs installing, and that stays the default.
 
-As an option, it can keep every creator's rows in one PostgreSQL database instead. That is useful if you want one place to query and back up, or you run the scraper from more than one machine against the same library.
+As an option, it can keep every creator's rows in one PostgreSQL database instead. That is useful if you want one place to query and back up, or you run the scraper from more than one machine against the same library. When two runs save the same post, message, media, story or label at once, the second keeps the first one's row and goes on.
 
 ## What you need
 
@@ -143,7 +143,6 @@ python -m ofscraper.commands.recover_collisions --postgres --creator <username o
 
 - **One database for every creator.** Each site gets its own schema (`onlyfans`, `fansly`), holding the same tables a `user_data.db` has. Every row carries its creator's `model_id`.
 - **One database for every profile too.** The schemas are per site, not per profile, so switching profiles doesn't switch the data. The scraper says so when you switch.
-- **Two runs can save the same row.** When a scan saves a post, message, media, story or label that another run saved first, it keeps that run's row and goes on, without an error. Merging and rebuilding still stop on a duplicate.
 - **Real column types.** Ids are 64-bit numbers (media, post and label ids are text: a few of them are words or hashes), yes/no columns are booleans and dates are timestamps, so other tools can query the database directly.
 - **Already-downloaded media is still judged per creator.** A run skips media the database says is downloaded. A SQLite file is one creator's, so media was never skipped because another creator had it, and it isn't with PostgreSQL either: only the creator's own rows count. (`--force-model-unique` therefore changes nothing here.)
 - **No automatic backup copies.** The scraper copies a SQLite file before it upgrades it. For PostgreSQL, back up with `pg_dump`.
@@ -160,6 +159,6 @@ python -m ofscraper.commands.recover_collisions --postgres --creator <username o
 
 ## Developing
 
-`test/test_db_postgres_live.py` runs the engine against a real server, and `test/test_postgres_import_live.py` and `test/test_postgres_export_live.py` the two commands above. They are skipped unless `OFSC_TEST_POSTGRES_URL` names a server the tests may use; each test works in schemas of its own and drops them. CI runs them against PostgreSQL 15, 16, 17, 18 and 19. `test/test_stash_sync_postgres_live.py` does the same for `stash_sync --postgres`, `test/test_collision_recovery_postgres_live.py` for `recover_collisions --postgres`, `test/test_move_creator_files_postgres_live.py` for `move_creator_files --postgres`, `test/test_creator_names_postgres_live.py` for `scripts/creator_names.py --postgres`, and `test/test_postgres_server_checks_live.py` for two runs writing at once and for `remove_hash_match`.
+`test/test_db_postgres_live.py` runs the engine against a real server, and `test/test_postgres_import_live.py` and `test/test_postgres_export_live.py` the two commands above. They are skipped unless `OFSC_TEST_POSTGRES_URL` names a server the tests may use; each test works in schemas of its own and drops them. CI runs them against PostgreSQL 15 to 19. `test/test_stash_sync_postgres_live.py` does the same for `stash_sync --postgres`, `test/test_collision_recovery_postgres_live.py` for `recover_collisions --postgres`, `test/test_move_creator_files_postgres_live.py` for `move_creator_files --postgres`, `test/test_creator_names_postgres_live.py` for `scripts/creator_names.py --postgres`, and `test/test_postgres_server_checks_live.py` for two runs writing at once and for `remove_hash_match`.
 
 A column added to a SQLite table also needs adding to `TABLES` in `ofscraper/db/postgres.py`, with the step that adds it to PostgreSQL databases made before: an entry in `ADDED_COLUMNS` there. At each start `create_tables` asks which of those columns the tables have and adds the ones that are missing. `test/test_db_postgres.py` fails until the two match.
