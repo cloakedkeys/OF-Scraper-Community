@@ -218,7 +218,7 @@ Put the full path to the ffmpeg program in `binary_options` → `ffmpeg` in your
 <details>
 <summary><b>It says to update to 3.14.7</b></summary>
 
-That's upstream's PyPI version, which is older than this fork. Version 3.15.0 and later no longer show that message.
+3.14.7 is the last of upstream's old `ofscraper` releases on PyPI, and it's older than this fork's code. Version 3.15.0 and later no longer show that message. From 3.16.2 the update check looks up `ofscraper-community`; from 3.17.0 it looks up the package you installed (`ofscraper-community`, or `ofscraper`, which `datawhores/OF-Scraper` now publishes from the same code).
 
 </details>
 
