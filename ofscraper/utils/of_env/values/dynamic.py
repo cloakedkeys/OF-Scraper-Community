@@ -44,7 +44,7 @@ def load_dynamic_rules_config():
         ]
 
     # DYNAMIC_RULE_DEFAULT: The default dynamic rule when none is specified.
-    # Default: "rafa"
+    # Default: "digital"
     config["DYNAMIC_RULE_DEFAULT"] = os.getenv("OFSC_DYNAMIC_RULE_DEFAULT", "digital")
 
     return config
