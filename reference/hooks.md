@@ -14,7 +14,7 @@ This file is written by hand. Check an entry against the code before relying on 
 | [`reset_table_data()`](#gather_rowscommand) | `ofscraper.commands.check` | sync code | forget the last scan's rows |
 | [`process_user_batch(...)`](#process_user_batchusername-model_id-media_list-post_list-row_list) | `ofscraper.commands.check` | worker thread with no running loop | download one creator's check-table rows |
 | [`auth_status()`](#auth_status) | `ofscraper.data.api.init` | sync code | check the auth and say why it couldn't be checked |
-| [`check_auth()`](#check_auth) | `ofscraper.utils.checkers` | sync code | check the auth, prompting when it's rejected |
+| [`check_auth(include_main_menu=False)`](#check_authinclude_main_menufalse) | `ofscraper.utils.checkers` | sync code | check the auth, prompting when it's rejected |
 | [`unavailable_message(e)`](#unavailable_messagee) | `ofscraper.data.api.init` | sync code | tell a network or server failure from an auth failure |
 | [`get_request_auth()`](#dynamic-rule-fallback) | `ofscraper.utils.auth.request` | sync code | get a dynamic rule, falling back to other sources |
 | [`resolve_paid_username(model_id)`](#resolve_paid_usernamemodel_id) | `ofscraper.data.posts.post` | async code | username for a purchased-content creator |
@@ -83,13 +83,13 @@ stop.request()  # from any thread
 stop.clear()    # before the next scan
 ```
 
-> ⚠️ **`stop.DownloadsStopped` is a `BaseException`.** After a `stop.request()`, a check scan raises it, and `except Exception` doesn't catch it.
+> ⚠️ **`stop.DownloadsStopped` is a `BaseException`.** After a `stop.request()`, post fetches raise it (a scrape's and a check scan's), and a scrape raises it once a creator's downloads have stopped. `except Exception` doesn't catch it.
 
 ## Check tables
 
 ### `gather_rows(command)`
 
-**Module:** `ofscraper.commands.check` · **Execution:** sync, runs `@run` functions inside (call from a worker thread with no running event loop) · **Returns:** a list of row dicts
+**Module:** `ofscraper.commands.check` · **Execution:** sync, uses `@run` inside · **Returns:** a list of row dicts
 
 Runs a check command's scan and returns the rows its table would show, without opening the Textual table or starting the table's download thread. The creators and areas come from the settings, as for the command. The check commands call it and then open the table, so a row is the same dict the table gets.
 
@@ -108,21 +108,19 @@ rows = gather_rows("post_check")
 | `story_check` on Fansly | logs an error and returns `[]` |
 | anything else | raises `ValueError` |
 
-It checks the auth first with [`check_auth()`](#check_auth), so it can raise `AuthCheckUnavailable` or `AuthCheckLeft`.
+- Call it from a worker thread with no running event loop: it runs `@run` functions inside.
+- It checks the auth first with [`check_auth()`](#check_authinclude_main_menufalse), without arguments, so it can raise `AuthCheckUnavailable`, and a rejected auth opens the terminal's auth prompt.
+- It doesn't clear a stop. Call `stop.clear()` first (see [Stopping downloads](#stopping-downloads)).
 
 > ⚠️ **It changes settings for the whole process.** It sets `force_all` to True and `after` to 0 in the settings, as the check commands do. They stay that way for the rest of the process, so a scrape run after it in the same process gets them too.
 
 > ⚠️ **Rows add to the last scan's.** Call `reset_table_data()` first for a new table.
 
-> ⚠️ **It doesn't clear a stop.** Call `stop.clear()` first (see [Stopping downloads](#stopping-downloads)): after a `stop.request()` the scan raises `stop.DownloadsStopped`, which is a `BaseException`, so `except Exception` doesn't catch it.
-
-> ⚠️ **A rejected auth opens a terminal prompt.** `check_auth()` opens the terminal's auth prompt, also in GUI mode. See [`check_auth()`](#check_auth).
-
 **PostgreSQL:** the downloaded state and file names come from `get_media_post_files_downloaded`, so they come from PostgreSQL when it's on.
 
 ### `process_user_batch(username, model_id, media_list, post_list, row_list)`
 
-**Module:** `ofscraper.commands.check` · **Execution:** sync, runs `@run` functions inside (call from a worker thread with no running event loop) · **Returns:** a dict of the batch's totals
+**Module:** `ofscraper.commands.check` · **Execution:** sync, uses `@run` inside · **Returns:** a dict of the batch's totals
 
 Downloads one creator's rows from a check table, retries the failed ones once after refreshing their posts, and returns the batch's totals.
 
@@ -143,6 +141,7 @@ totals = process_user_batch(username, model_id, media_list, post_list, row_list)
 
 The totals are added up over both passes. Each `process_dicts` call starts its own counts again, so a caller can't read them afterwards.
 
+- Call it from a worker thread with no running event loop: it runs `@run` functions inside.
 - `row_list` holds `(key, row)` pairs. Each row's state is reported through `ofscraper.classes.table.app.app.update_cell_state(key, state, style)`, with `state` one of `[downloaded]`, `[skipped]`, `[failed]`, `[stopped]` or `[added]`. A GUI without the Textual table sets `app.app` to an object with that method.
 - `_process_user_batch` is the same function under its old name, kept for the GUI patch.
 
@@ -174,25 +173,31 @@ if status == "UNAVAILABLE":
 
 **PostgreSQL:** not involved.
 
-### `check_auth()`
+### `check_auth(include_main_menu=False)`
 
 **Module:** `ofscraper.utils.checkers` · **Execution:** sync · **Returns:** None once the auth is `UP`
 
-Checks the auth with `auth_status()`. [`gather_rows`](#gather_rowscommand) calls it.
+Checks the auth with `auth_status()`, and asks for new auth until it's `UP`. `include_main_menu=True` adds a "Go to Main Menu" choice to the auth prompt. [`gather_rows`](#gather_rowscommand) calls it without arguments.
 
 ```python
-from ofscraper.utils.checkers import AuthCheckLeft, AuthCheckUnavailable, check_auth
+from ofscraper.utils.checkers import AuthCheckUnavailable, check_auth
 
-check_auth()
+try:
+    check_auth()
+except AuthCheckUnavailable as e:
+    print(e)
 ```
 
 | Raises | When |
 |---|---|
 | `AuthCheckUnavailable("Couldn't check the auth: <message>")` | `auth_status()` returned `UNAVAILABLE` |
-| `AuthCheckLeft` | the user picked "Go to Main Menu" in the auth prompt |
+| `AuthCheckLeft` | only with `include_main_menu=True`: the user picked "Go to Main Menu" in the auth prompt |
 | `SystemExit(0)` | the user picked quit in the auth prompt |
+| `SystemExit` (no code) | the auth was rejected with the `auth_fail` setting on: it quits without prompting, on OnlyFans and Fansly |
 
-> ⚠️ **A rejected auth opens a terminal prompt.** When the auth is rejected, `check_auth()` opens the terminal's auth prompt (`make.make_auth`; on Fansly its login prompt). The core does this in GUI mode too.
+On Fansly the login prompt has no quit choice, so `check_auth()` asks again until the auth is `UP`.
+
+> ⚠️ **A rejected auth opens a terminal prompt.** When the auth is rejected and `auth_fail` is off, `check_auth()` opens the terminal's auth prompt (`make.make_auth`; on Fansly its login prompt). The core does this in GUI mode too.
 
 **PostgreSQL:** not involved.
 
@@ -208,7 +213,7 @@ from ofscraper.data.api.init import unavailable_message
 try:
     ...
 except Exception as e:
-    message = unavailable_message(e)  # None: not a network or server failure
+    message = unavailable_message(e)  # None: not a failure it recognises
 ```
 
 | Failure it recognises | Note |
@@ -283,7 +288,7 @@ except DatabaseMissing:
 
 ### PostgreSQL helpers
 
-**Module:** `ofscraper.db.postgres`, `ofscraper.utils.profiles.manage` · **Execution:** sync
+**Module:** `ofscraper.db.postgres`, `ofscraper.utils.profiles.manage` · **Execution:** sync · **Returns:** see the table
 
 ```python
 from ofscraper.db import postgres
@@ -292,12 +297,12 @@ if postgres.enabled():
     print(postgres.sqlite_files_notice("Merge Databases"))
 ```
 
-| Function | What it does |
-|---|---|
-| `ofscraper.db.postgres.enabled()` | True when `OFSC_DATABASE_URL` is set. It's read through `of_env.getattr`, so an env file named in `config.json` counts. |
-| `ofscraper.db.postgres.describe(database_url=None)` | the server and database the URL names, without the login (`host:port/dbname`), for messages. It gives `the configured database` when it can't read the URL for certain. |
-| `ofscraper.db.postgres.sqlite_files_notice(tool)` | the sentence a tool that still works on `user_data.db` files shows while PostgreSQL is on. The caller checks `enabled()` first. Merge Databases shows it. |
-| `ofscraper.utils.profiles.manage.postgres_profiles_notice()` | with PostgreSQL on, prints that every profile uses the same database. The profile menu calls it after switching the active or default profile. |
+| Function | Returns | What it does |
+|---|---|---|
+| `ofscraper.db.postgres.enabled()` | bool | True when `OFSC_DATABASE_URL` is set. It's read through `of_env.getattr`, so an env file named in `config.json` counts. |
+| `ofscraper.db.postgres.describe(database_url=None)` | str | the server and database the URL names, without the login (`host:port/dbname`), for messages. It gives `the configured database` when it can't read the URL for certain. |
+| `ofscraper.db.postgres.sqlite_files_notice(tool)` | str | the sentence a tool that still works on `user_data.db` files shows while PostgreSQL is on. The caller checks `enabled()` first. Merge Databases shows it. |
+| `ofscraper.utils.profiles.manage.postgres_profiles_notice()` | None | with PostgreSQL on, prints that every profile uses the same database. The profile menu calls it after switching the active or default profile. |
 
 ## GUI patch migration map
 
