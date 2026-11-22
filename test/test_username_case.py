@@ -139,3 +139,28 @@ def test_excluded_account_id_drops_creator(monkeypatch):
     assert other.is_excluded_username("SomeCreator", 111)
     assert not other.is_excluded_username("SomeCreator", 222)
     assert not other.is_excluded_username("SomeCreator")
+
+
+@pytest.mark.parametrize("daemon", [False, True], ids=["interactive", "daemon"])
+def test_old_name_selects_the_account_it_leads_to(monkeypatch, daemon):
+    # a creator renamed: OnlyFans answers the old name with the current one (#662)
+    import asyncio
+
+    import ofscraper.data.api.subscriptions.individual as individual
+
+    async def profile(c, account):
+        if account == "oldname":
+            return {"id": 111, "username": "newname"}
+
+    monkeypatch.setattr(individual.profile, "scrape_profile_helper_async", profile)
+    found = asyncio.run(individual.get_subscription_helper(None, ["oldname", "nosuchcreator"]))
+    warnings = []
+    monkeypatch.setattr(model_manager.log, "warning", lambda msg, *a, **k: warnings.append(msg))
+    mm = _manager(
+        monkeypatch, _parsed("oldname,nosuchcreator"), daemon, [Model(x) for x in found]
+    )
+
+    assert [m.name for m in mm._select_models_scraper()] == ["newname"]
+    assert len(warnings) == 1
+    assert "nosuchcreator" in warnings[0]
+    assert "oldname" not in warnings[0]

@@ -30,8 +30,11 @@ def matches_account(name, account_id, keys) -> bool:
 
 
 def model_matches(model, keys) -> bool:
-    """True if a model's username or account id is one of ``keys``."""
-    return matches_account(model.name, model.id, keys)
+    """True if a model's username, account id, or the name it was looked up
+    with (a creator's old name) is one of ``keys``."""
+    return matches_account(model.name, model.id, keys) or matches_username(
+        model.model.get("looked_up_as"), keys
+    )
 
 
 def select_models(models, names):
@@ -41,9 +44,9 @@ def select_models(models, names):
     """
     keys = username_keys(names)
     selected = [m for m in models if model_matches(m, keys)]
-    found = set()
-    for m in selected:
-        found.add(username_key(m.name))
-        found.add(str(m.id))
-    unmatched = [x for x in (names or []) if x and username_key(x) not in found]
+    unmatched = [
+        x
+        for x in (names or [])
+        if x and not any(model_matches(m, username_keys([x])) for m in selected)
+    ]
     return selected, unmatched

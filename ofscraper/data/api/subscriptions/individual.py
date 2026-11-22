@@ -58,7 +58,9 @@ async def get_subscription_helper(c, accounts):
             # because scrape_profile_helper_async returns a dict, not a generator
             result = await profile.scrape_profile_helper_async(c, account)
             if result:
-                await queue.put(result)
+                # a renamed creator comes back under the current name, so -u
+                # matches the name it was looked up with too (#662)
+                await queue.put({**result, "looked_up_as": account})
         except Exception as E:
             log.traceback_(E)
             log.traceback_(traceback.format_exc())
