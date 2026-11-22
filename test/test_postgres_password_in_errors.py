@@ -25,6 +25,8 @@ READABLE = [
     ("postgresql://scraper@db.example/library?password=hunter2", "hunter2"),
     ("host=db.example dbname=library user=scraper password=Hg@Lm?k#9", "Hg@Lm?k#9"),
     ("host=db.example dbname=library password='Rf Yt@Ou'", "Rf Yt@Ou"),
+    # a quoted password with a space, followed by another setting (#654)
+    ("password='a b' host=db.example dbname=library", "a b"),
 ]
 
 # addresses it can't read, or reads another way than meant
@@ -140,6 +142,25 @@ def test_the_words_around_the_password_stay(psycopg, password):
     for word in ("only", "for", "this", "the", "password", "read-only"):
         assert word in shown
     assert postgres.describe(address) == "db.example:5432/library"
+
+
+# #654: an unquoted password ends at the space, and the rest is read as
+# another setting, which the driver's errors quote
+@pytest.mark.parametrize("setting", ["host", "hostaddr", "sslmode", "dbname", "user"])
+def test_a_keyword_password_split_at_a_space_is_refused(psycopg, monkeypatch, setting):
+    address = f"host=db.example dbname=library user=scraper password=Xy7 {setting}=Zebra9"
+
+    def quotes_it(*args, **kwargs):
+        raise psycopg.OperationalError(f'invalid {setting} value: "Zebra9"')
+
+    monkeypatch.setattr(psycopg, "connect", quotes_it)
+    monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
+    monkeypatch.setattr(postgres, "url", lambda: address)
+    for start in (lambda: postgres.Reader(address), lambda: postgres.POSTGRES._open_pool("onlyfans", 30)):
+        with pytest.raises(postgres.PostgresUnavailable) as raised:
+            start()
+        assert str(raised.value) == str(postgres.Unreadable())
+        assert "Xy7" not in str(raised.value) and "Zebra9" not in str(raised.value)
 
 
 def test_a_one_character_password_is_not_hidden_from_every_log_line(psycopg, monkeypatch):

@@ -297,7 +297,8 @@ def _reading(database_url):
     driver): host, port, dbname, user, password... Or None when the driver
     isn't installed, or it can't read the address, or what it read isn't
     what was meant: an @ outside the password (one in the password that
-    isn't written as %40), a port that isn't a number. libpq never quotes
+    isn't written as %40), a port that isn't a number, an unquoted
+    password=... followed by another setting. libpq never quotes
     the password in its errors once it has read the address."""
     database_url = str(database_url or "")
     try:
@@ -316,6 +317,9 @@ def _reading(database_url):
         "\x00" in database_url
         # an @ after the login part of a URL was meant for the password
         or (sep and "@" in rest.partition("/")[2])
+        # host=... spelling: an unquoted password ends at a space, so a
+        # setting after it may be the rest of the password (#654)
+        or (not sep and re.search(r"(?:^|\s)password\s*=\s*[^'\s]\S*\s+\w+\s*=", database_url))
         or any("@" in value or not value.isprintable() for value in others)
         or not re.fullmatch(r"[0-9,]*", str(parts.get("port") or ""))
     ):
