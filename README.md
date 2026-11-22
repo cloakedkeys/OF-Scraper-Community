@@ -116,7 +116,7 @@ The check table lists a creator's media so you can filter it, pick what you want
 ### Opening it
 
 - **From the menu:** run `ofscraper`, choose **Perform Action(s)**, then **Browse and pick media (check table)**. Pick the creators, then the table: **Posts**, **Messages**, **Paid**, or **Stories**. When you close the table, any downloads you sent from it finish, then you're back at the menu.
-- **From the command line:** run `ofscraper post_check`, `msg_check`, `paid_check`, or `story_check`, with `-u` (usernames, or links for `post_check` and `msg_check`) or `-f` (a file with one per line).
+- **From the command line:** run `ofscraper post_check`, `msg_check`, `paid_check`, or `story_check`, with `-u` (usernames, or links for `post_check` and `msg_check`) or `-f` (a file with one entry per line).
 
 The menu uses the commands' defaults: a creator's saved post list when there is one, and for Posts the Timeline, Pinned, Archived, and Streams areas. To fetch a fresh list or pick other areas, use the command with `--force` or `--check-area`.
 
@@ -128,7 +128,7 @@ The menu uses the commands' defaults: a creator's saved post list when there is 
 
 ### Sidebars (DataTable tab)
 
-- **Ctrl+S** opens the options sidebar with filters for: text, media ID, post ID, post media count, price, post date, length, downloaded, unlocked, media type, response type, download type, and username. Press **Filter** to apply them, or **Clear Filters** / **Reset Filters** to clear them.
+- **Ctrl+S** opens the options sidebar with filters for: text, media ID, post ID, post media count, price, post date, length, downloaded, unlocked, media type, response type, download type, and username. Press **Filter** to apply them. **Clear Filters**, or the **Reset Filters** button, clears them.
 - **Ctrl+D** opens the download sidebar to set the minimum and maximum file size to download. Changes apply right away.
 - Press the same key again to close a sidebar.
 - With a cell highlighted, press `;` or `'` to copy its value into that column's filter, then press **Filter** to apply it.
