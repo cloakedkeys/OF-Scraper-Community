@@ -287,7 +287,7 @@ def masked(text, database_url=None):
     """`text` with the address and its password hidden. The password is
     hidden as a whole, wherever it isn't part of a longer word."""
     text = str(text)
-    for secret in _secrets(database_url if database_url is not None else url()):
+    for secret in _secrets(database_url if database_url is not None else url(), values=True):
         text = re.sub(_hiding(secret), "{hidden}", text)
     return text
 
@@ -323,21 +323,21 @@ def _reading(database_url):
     return parts
 
 
-def _secrets(database_url):
+def _secrets(database_url, values=False):
     """What to keep out of messages and logs, longest first: the address
     itself, and its password as PostgreSQL reads it, as written and
     %-encoded. Nothing else: libpq doesn't quote the password, and an
     address it can't read gets a sentence of its own (see _unavailable).
-    For the host=... spelling, every value too: an unquoted password ends
-    at a space, and the rest is read as more settings, which errors quote
-    (#654)."""
+    With `values`, for messages only, every value of the host=... spelling
+    too: an unquoted password ends at a space, and the rest is read as more
+    settings, which errors quote (#654)."""
     database_url = str(database_url or "")
     parts = _reading(database_url) or {}
     password = parts.get("password")
     if not password:
         return []
     secrets = {database_url, password, urllib.parse.quote(password, safe="")}
-    if "://" not in database_url:
+    if values and "://" not in database_url:
         secrets.update(str(value) for value in parts.values())
         # each value as written, without its quotes and \ escapes
         for value in re.findall(r"=\s*('(?:[^'\\]|\\.)*'|\S+)", database_url):

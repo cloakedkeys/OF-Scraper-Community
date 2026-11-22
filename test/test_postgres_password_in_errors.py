@@ -156,6 +156,19 @@ def test_every_value_of_a_keyword_address_is_hidden(psycopg, setting):
     assert shown == f'connection to server failed: invalid {setting} value: "{{hidden}}" (given {{hidden}})'
 
 
+def test_the_values_of_a_keyword_address_are_hidden_from_messages_only(psycopg, monkeypatch):
+    monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
+    address = "host=db.example sslmode=require user=scraper password=Xy7 host=Zebra9"
+    postgres.POSTGRES._hide_password(address)
+    line = "sslmode is require (Xy7)"
+    for pattern, replacement in sensitive._USER_ADDED_PATTERNS.items():
+        line = re.sub(pattern, replacement, line)
+    assert line == "sslmode is require ({hidden})"
+    assert postgres.masked('could not translate host name "Zebra9"', address) == (
+        'could not translate host name "{hidden}"'
+    )
+
+
 def test_a_one_character_password_is_not_hidden_from_every_log_line(psycopg, monkeypatch):
     monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
     address = "postgresql://scraper:!@db.example/library"
