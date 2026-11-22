@@ -83,7 +83,7 @@ stop.request()  # from any thread
 stop.clear()    # before the next scan
 ```
 
-> ⚠️ **`stop.DownloadsStopped` is a `BaseException`.** After a `stop.request()`, post fetches raise it (a scrape's and a check scan's), and a scrape raises it once a creator's downloads have stopped. `except Exception` doesn't catch it.
+> ⚠️ **`stop.DownloadsStopped` is a `BaseException`.** After a `stop.request()`, post fetches raise it (a scrape's and a check scan's), and a scrape raises it once a creator's downloads have stopped. `except Exception` doesn't catch it. A whole scrape run through `scraperManager.runner` catches it and, outside the menu, exits with `SystemExit(130)` instead.
 
 ## Check tables
 
@@ -109,7 +109,7 @@ rows = gather_rows("post_check")
 | anything else | raises `ValueError` |
 
 - Call it from a worker thread with no running event loop: it runs `@run` functions inside.
-- It checks the auth first with [`check_auth()`](#check_authinclude_main_menufalse), without arguments, so it can raise `AuthCheckUnavailable`, and a rejected auth opens the terminal's auth prompt.
+- It checks the auth first with [`check_auth()`](#check_authinclude_main_menufalse), without arguments, so it can raise `AuthCheckUnavailable` or `SystemExit` (see its table), and a rejected auth opens the terminal's auth prompt.
 - It doesn't clear a stop. Call `stop.clear()` first (see [Stopping downloads](#stopping-downloads)).
 
 > ⚠️ **It changes settings for the whole process.** It sets `force_all` to True and `after` to 0 in the settings, as the check commands do. They stay that way for the rest of the process, so a scrape run after it in the same process gets them too.
