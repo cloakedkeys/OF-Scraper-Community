@@ -126,6 +126,10 @@ def test_the_screen_says_it_works_on_sqlite_files_while_postgresql_is_on(monkeyp
         " on the user_data.db files, not PostgreSQL. It does not see anything"
         " scraped since PostgreSQL was turned on, and what it changes in those"
         " files does not reach PostgreSQL. See POSTGRESQL.md.\n"
+        # after the merge, the next step, with the merge folder that was used
+        "To bring the merged file into PostgreSQL, run: python -m"
+        ' ofscraper.commands.postgres_import "merged". It only reports what it'
+        " would do. Then run it again with --apply to bring the file in.\n"
     )
     # the merge still runs
     assert merges == [("source", "merged")]

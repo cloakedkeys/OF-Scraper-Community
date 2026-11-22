@@ -18,6 +18,7 @@ from ofscraper.prompts.promptConvert import prompt
 from rich.console import Console
 
 
+import ofscraper.db.postgres as postgres
 import ofscraper.prompts.prompt_strings as prompt_strings
 import ofscraper.prompts.prompt_validators as prompt_validators
 import ofscraper.prompts.promptConvert as promptClasses
@@ -457,7 +458,13 @@ def general_config():
                 "type": "input",
                 "name": "metadata",
                 "message": "metadata: ",
-                "option_instruction": "Where should metadata files be saved",
+                "option_instruction": (
+                    "The scraper keeps its database in PostgreSQL. This folder"
+                    " is only used for the user_data.db files that Merge"
+                    " Databases, import and export work on"
+                    if postgres.enabled()
+                    else "Where should metadata files be saved"
+                ),
                 "default": data.get_metadata(),
             },
             {

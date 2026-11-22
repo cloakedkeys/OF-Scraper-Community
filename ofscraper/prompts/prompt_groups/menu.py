@@ -14,7 +14,9 @@ r"""
 from InquirerPy.separator import Separator
 from prompt_toolkit.shortcuts import prompt as prompt
 
+import ofscraper.db.postgres as postgres
 import ofscraper.prompts.promptConvert as promptClasses
+import ofscraper.utils.config.data as data
 import ofscraper.utils.of_env.of_env as of_env
 
 
@@ -24,7 +26,14 @@ def main_prompt() -> int:
     main_prompt_choices.insert(1, Separator())
     main_prompt_choices.insert(6, Separator())
     answer = promptClasses.getChecklistSelection(
-        message="Main Menu: What would you like to do?", choices=[*main_prompt_choices]
+        message="Main Menu: What would you like to do?",
+        choices=[*main_prompt_choices],
+        # which database the scraper uses; describe() leaves out the login
+        instruction=(
+            f"(Database: PostgreSQL, {postgres.describe()})"
+            if postgres.enabled()
+            else f"(Database: user_data.db files under {data.get_metadata()})"
+        ),
     )
     return of_env.getattr("mainPromptChoices")[answer]
 

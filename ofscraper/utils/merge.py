@@ -1,4 +1,5 @@
 from rich.console import Console
+from rich.markup import escape
 
 import ofscraper.db.merge as merge
 import ofscraper.db.postgres as postgres
@@ -29,6 +30,14 @@ def merge_runner():
             else:
                 return
         completed, skipped, failed = merge_loop(curr_folder, new_db)
+        if postgres.enabled() and completed:
+            folder = merge.MergeDatabase().get_new_db(new_db).parent
+            console.print(
+                "To bring the merged file into PostgreSQL, run: python -m"
+                f' ofscraper.commands.postgres_import "{escape(str(folder))}".'
+                " It only reports what it would do. Then run it again with"
+                " --apply to bring the file in."
+            )
         if not prompts.confirm_db_continue(completed, skipped, failed):
             break
 
