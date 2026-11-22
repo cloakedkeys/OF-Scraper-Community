@@ -28,7 +28,7 @@ For a run, the app resolves each setting in this order. The first source that pr
    - Two variable forms work: the listed variable (usually `OFSC_<NAME>`) is read when defaults load, and the bare key name is read on every lookup.
    - Environment variables change only defaults; they do not override a value set in `config.json`.
 
-Some settings have no `config.json` key (such as backoff values, timeouts, API URLs, and most of [env.md](env.md)). Only the environment can change them.
+Some settings have no `config.json` key. These are the backoff values, the timeouts, the API URLs and most of [env.md](env.md). Only the environment can change them.
 
 ### Environment variable sources
 
