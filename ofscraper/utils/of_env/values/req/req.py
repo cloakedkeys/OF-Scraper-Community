@@ -63,10 +63,10 @@ def load_network_config():
     # PROXY: Proxy URL. Defaults to None.
     config["PROXY"] = os.getenv("OFSC_PROXY", None)
 
-    # PROXY_MOUNTS: Proxy mounts configuration (string, specific format expected by application). Defaults to None.
+    # PROXY_MOUNTS: Unused at present. Defaults to None.
     config["PROXY_MOUNTS"] = os.getenv("OFSC_PROXY_MOUNTS", None)
 
-    # PROXY_AUTH: Proxy authentication credentials (string, specific format expected by application). Defaults to None.
+    # PROXY_AUTH: Unused at present. Defaults to None.
     config["PROXY_AUTH"] = os.getenv("OFSC_PROXY_AUTH", None)
 
     # --- Chunking Configuration ---

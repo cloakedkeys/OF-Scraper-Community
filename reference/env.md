@@ -172,8 +172,8 @@ Defined in `ofscraper/utils/of_env/values/req/req.py`.
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
 | <a id="proxy"></a>`PROXY` | `OFSC_PROXY` | `None` | Proxy URL. Defaults to None. |
-| <a id="proxy_mounts"></a>`PROXY_MOUNTS` | `OFSC_PROXY_MOUNTS` | `None` | Proxy mounts configuration (string, specific format expected by application). Defaults to None. |
-| <a id="proxy_auth"></a>`PROXY_AUTH` | `OFSC_PROXY_AUTH` | `None` | Proxy authentication credentials (string, specific format expected by application). Defaults to None. |
+| <a id="proxy_mounts"></a>`PROXY_MOUNTS` | `OFSC_PROXY_MOUNTS` | `None` | Unused at present. Defaults to None. |
+| <a id="proxy_auth"></a>`PROXY_AUTH` | `OFSC_PROXY_AUTH` | `None` | Unused at present. Defaults to None. |
 
 ### Chunking
 
