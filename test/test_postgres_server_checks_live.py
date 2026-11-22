@@ -8,9 +8,12 @@ them.
 """
 
 import asyncio
+import contextlib
 import multiprocessing
 import os
+import queue
 import sys
+import time
 import traceback
 
 import pytest
@@ -71,7 +74,8 @@ async def one_scraper(writer, barrier=None):
     await operations.table_init_create(**CREATOR)
     for round in range(ROUNDS):
         if barrier:
-            barrier.wait()
+            # the first wait also covers the other program's start
+            barrier.wait(timeout=120 if round == 0 else None)
         ids = range(round * 100 + writer * 3, round * 100 + writer * 3 + 6)
         await posts.make_post_table_changes([post(i) for i in ids], from_api=True, **CREATOR)
         found = [item(i * 10 + n, i) for i in ids for n in (0, 1)]
@@ -99,6 +103,34 @@ def scraper_process(writer, schema, barrier, results):
         postgres.POSTGRES.shutdown()
 
 
+def reports(programs, results):
+    """{writer: its error or None}. A program that ended without saying
+    (a crash, a failed import) fails the test with its exit code."""
+    found = {}
+    deadline = time.monotonic() + 180
+    while len(found) < len(programs):
+        try:
+            writer, error = results.get(timeout=5)
+            found[writer] = error
+            continue
+        except queue.Empty:
+            pass
+        for writer, program in enumerate(programs):
+            if writer not in found and program.exitcode is not None:
+                # a report sent just before it ended may still be on its way
+                with contextlib.suppress(queue.Empty):
+                    late, error = results.get(timeout=1)
+                    found[late] = error
+                if writer not in found:
+                    pytest.fail(
+                        f"writer {writer} ended with exit code {program.exitcode}"
+                        " without reporting"
+                    )
+        if len(found) < len(programs) and time.monotonic() > deadline:
+            pytest.fail(f"no report from writers {set(range(len(programs))) - set(found)}")
+    return found
+
+
 def everything():
     return {
         "medias": rows("medias"),
@@ -122,7 +154,7 @@ def test_two_scrapers_writing_at_once_save_what_one_after_the_other_saves(
     try:
         for program in programs:
             program.start()
-        errors = dict(results.get(timeout=120) for _ in programs)
+        errors = reports(programs, results)
     finally:
         for program in programs:
             if program.pid is None:
