@@ -135,10 +135,10 @@ Defined in `ofscraper/utils/of_env/values/action/like.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="max_sleep_duration_like"></a>`MAX_SLEEP_DURATION_LIKE` | `MAX_SLEEP_DURATION_LIKE` | `3.5` | Maximum sleep duration for like operations (seconds) |
-| <a id="min_sleep_duration_like"></a>`MIN_SLEEP_DURATION_LIKE` | `MIN_SLEEP_DURATION_LIKE` | `0.9` | Minimum sleep duration for like operations (seconds) |
-| <a id="like_max_retries"></a>`LIKE_MAX_RETRIES` | `LIKE_MAX_RETRIES` | `5` | Maximum number of retries for failed like operations |
-| <a id="double_toggle_sleep_duration_like"></a>`DOUBLE_TOGGLE_SLEEP_DURATION_LIKE` | `DOUBLE_TOGGLE_SLEEP_DURATION_LIKE` | `5` | Sleep duration in seconds for double toggle like operations |
+| <a id="max_sleep_duration_like"></a>`MAX_SLEEP_DURATION_LIKE` | `MAX_SLEEP_DURATION_LIKE` | `3.5` | Upper bound, in seconds, of the random pause between like or unlike requests (and before retrying an already-liked post). |
+| <a id="min_sleep_duration_like"></a>`MIN_SLEEP_DURATION_LIKE` | `MIN_SLEEP_DURATION_LIKE` | `0.9` | Lower bound, in seconds, of the random pause between like or unlike requests (and before retrying an already-liked post). |
+| <a id="like_max_retries"></a>`LIKE_MAX_RETRIES` | `LIKE_MAX_RETRIES` | `5` | Maximum number of attempts for a failed like or unlike request. |
+| <a id="double_toggle_sleep_duration_like"></a>`DOUBLE_TOGGLE_SLEEP_DURATION_LIKE` | `DOUBLE_TOGGLE_SLEEP_DURATION_LIKE` | `5` | Pause, in seconds, before sending a second unlike request when a post was already unliked and toggled to liked. |
 
 ## Metadata
 
