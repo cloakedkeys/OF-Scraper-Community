@@ -43,6 +43,9 @@ async def get_subscription(accounts=None):
         lambda x: x["username"] != of_env.getattr("DELETED_MODEL_PLACEHOLDER"),
         out,
     ):
+        # -u oldname,newname: keep both names the account was looked up as
+        if ele["id"] in outdict:
+            ele["looked_up_as"] = outdict[ele["id"]]["looked_up_as"] + ele["looked_up_as"]
         outdict[ele["id"]] = ele
     log.debug(f"Total subscriptions found {len(outdict.values())}")
     return list(outdict.values())
@@ -60,7 +63,7 @@ async def get_subscription_helper(c, accounts):
             if result:
                 # a renamed creator comes back under the current name, so -u
                 # matches the name it was looked up with too (#662)
-                await queue.put({**result, "looked_up_as": account})
+                await queue.put({**result, "looked_up_as": [account]})
         except Exception as E:
             log.traceback_(E)
             log.traceback_(traceback.format_exc())

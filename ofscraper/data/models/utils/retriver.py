@@ -11,6 +11,7 @@ import ofscraper.utils.console as console
 import ofscraper.utils.me as me_util
 from ofscraper.utils.live.updater import activity
 import ofscraper.utils.settings as settings
+import ofscraper.utils.username_match as username_match
 
 
 async def get_models(all_main_models: bool = False) -> list:
@@ -81,11 +82,18 @@ async def get_via_list(count):
     black_list = await lists.get_blacklist()
     out = list(filter(lambda x: x.get("id") not in black_list, out))
     models_objects = list(map(lambda x: models.Model(x), out))
+    # -u names the list doesn't have, such as a creator's old name, are
+    # looked up one by one (#662)
+    usernames = settings.get_settings().usernames
+    if usernames and "ALL" not in usernames:
+        _, missing = username_match.select_models(models_objects, usernames)
+        if missing:
+            models_objects.extend(await get_via_individual(missing))
     return models_objects
 
 
-async def get_via_individual():
-    out = await individual.get_subscription()
+async def get_via_individual(accounts=None):
+    out = await individual.get_subscription(accounts)
     console.get_shared_console().print(
         "[yellow]Warning: Numbering on OF site can be iffy\nExample Including deactived accounts in expired\nSee: https://cloakedkeys.gitbook.io/ofsc/faq[/yellow]"
     )
