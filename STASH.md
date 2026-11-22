@@ -18,11 +18,11 @@
 - **Custom studio and tags:** `--studio` and `--tag-prefix` replace the studio and tag prefix for every site, and `--no-tags` turns off all of these tags. A `--studio` used for both sites in one run is created without a site link.
 - **Existing Stash data is kept:** The command only fills in empty fields and adds performers, the studio, tags, and galleries. Anything you already set in Stash is kept, so running it again changes nothing that is already there.
   - *One exception:* earlier versions linked a Fansly message as `https://fansly.com/messages/<conversation>/<id>`, which is not a Fansly page. That exact link is replaced by the conversation's link; any other link is kept.
-- **Offline database read:** The command reads OF-Scraper's databases offline and never contacts OnlyFans or Fansly. A Fansly database is recognized by the site OF-Scraper records in it; Fansly runs keep their databases in a `Fansly` folder under `.data` by default. It can also read a PostgreSQL database (see [With PostgreSQL](#with-postgresql) below).
+- **Offline database read:** The command reads OF-Scraper's databases offline and never contacts OnlyFans or Fansly. A Fansly database is recognised by the site OF-Scraper records in it; Fansly runs keep their databases in a `Fansly` folder under `.data` by default. It can also read a PostgreSQL database (see [With PostgreSQL](#with-postgresql) below).
 
 ## Run it
 
-1. Make sure Stash is running and has already scanned your download folders, or add `--scan` to have Stash scan them first.
+1. Make sure Stash is running and has already scanned your download folders (or add `--scan` when running with `--apply` below to have Stash scan them first).
 2. Preview what would change:
    ```sh
    python -m ofscraper.commands.stash_sync "<profile>/.data"
@@ -71,7 +71,7 @@ The same rows produce the same results as from files, with these differences:
 | **Dates in another time zone** | PostgreSQL stores dates as moments and returns them in UTC. A date saved with another time zone can land on the previous or next day. For a file in two posts, this can also change which post's text is used. |
 | **Empty dates** | An empty posted date in a file leaves the item without a date. PostgreSQL uses the day the media was made. |
 | **Creator with no saved username** | Named by ID. From a file, named by the file's folder. |
-| **File with two creators' rows** | A file holding two creators (for example, from Merge Databases) becomes one performer. PostgreSQL gives each creator their own performer. |
+| **File with two creators' rows** | From a file holding two creators (for example, from Merge Databases): both creators become one performer. PostgreSQL gives each creator their own performer. |
 | **Creator with only a username saved** | Listed with no files when reading from a file, and left out when reading from PostgreSQL. |
 
 ## Options
@@ -106,4 +106,4 @@ A Windows `LOCAL` path ignores case and accepts `/` or `\` (`d:/onlyfans` works 
 - **Performer matching:** The creator's performer is matched by name (their username). Names are matched as Stash matches them: ignoring case and checking aliases, so a performer whose alias is the username is used for that creator. A performer you created under another name without that alias gets a second performer; merge them in Stash if so. The same goes for @mentioned Fansly creators.
 - **Fansly @mentions:** Mentions come from `@name` in the caption. OF-Scraper also saves the post's list of tagged accounts, but this command doesn't read it yet: no real tagged post has been checked to see which field holds the username.
 - **Wildcard characters (`_` and `%`) in names:** Stash reads `_` and `%` as wildcards when checking a new performer or studio, so it would take `pal_one` for an existing `Pal One`. Such a performer is created with the disambiguation `OnlyFans` or `Fansly`, and found again by its name on later runs. A studio has no disambiguation, so a `--studio` name like that stops the run with a message before anything in Stash is changed, in preview too; pick another name.
-- **Fansly galleries:** A Fansly gallery is found again by its code (the post or message ID) in any studio, so you can move it to another studio. Only a gallery with no links or a `fansly.com` link is taken; one with the same code but another site's link is left alone and a Fansly gallery is created beside it. Changing a gallery's code makes the next run create a new one.
+- **Finding Fansly galleries again:** A Fansly gallery is found again by its code (the post or message ID) in any studio, so you can move it to another studio. Only a gallery with no links or a `fansly.com` link is taken; one with the same code but another site's link is left alone and a Fansly gallery is created beside it. Changing a gallery's code makes the next run create a new one.
