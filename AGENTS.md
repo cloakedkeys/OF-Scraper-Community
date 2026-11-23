@@ -26,7 +26,10 @@ Community fixes for the GUI patch go to `cjb900/OF-Scraper-GUI`.
 - **Parallel work:** use git worktrees, one per branch (e.g. `../ofs-wt/<name>`). Run code from a worktree with `PYTHONPATH=.` and the main checkout's venv.
 
 ## Tests
-- **Run:** `python -m pytest -n auto test` (`test/legacy` is excluded by config; add `-m "not slow"` for a fast local loop that skips heavy integration tests). Every fix needs a test that fails without it; check that by running the test against the previous commit.
+- **Run:** `python -m pytest -n auto test` runs everything (`test/legacy` is excluded by config). CI runs it on every PR, on Python 3.11 and 3.15.
+- **How much to test locally:**
+  - **Most changes:** run only the test files for the area you touched (`python -m pytest test/test_<area>*.py`), push, and let CI run the full suite. A bug fix gets a test, usually added to an existing file. Wording, help text and small UI tweaks don't need one.
+  - **High-risk areas:** the database (migrations, merges, PostgreSQL), file writes and moves (`.part` resume, collision recovery), and auth, DRM, the TLS fingerprint and log redaction. A mistake there can lose data or leak secrets. Show that the new test fails without the fix (run it against the previous commit), and run `python -m pytest -n auto -m "not slow" test` before pushing.
 - **Warnings are errors** (`filterwarnings` in `pyproject.toml`), so invalid escape sequences, unclosed files or sqlite connections, and exceptions in background threads fail the run. Fix the cause: use raw strings for Windows paths and `closing()` for sqlite connections (`with sqlite3.connect(...)` only commits, it doesn't close). Add a filter only for a third-party warning you can't fix, with a comment explaining why.
 - **`test/conftest.py` handles two quirks you'll hit in scripts too:**
   - `ofscraper` parses `sys.argv` the first time settings are read, so clear it (`sys.argv = sys.argv[:1]`) before importing the app in a script, and never pass your script's own arguments on the command line. Use environment variables instead.
