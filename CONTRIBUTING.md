@@ -1,6 +1,6 @@
 # Contributing to OF-Scraper-Community
 
-Thanks for helping. This is a community-maintained fork of [datawhores/OF-Scraper](https://github.com/datawhores/OF-Scraper), which is no longer updated.
+Thanks for helping. This is a community-maintained fork of [datawhores/OF-Scraper](https://github.com/datawhores/OF-Scraper). Fixes are made here first, and each one is then copied to `datawhores/OF-Scraper`.
 
 ## Which branch should I use?
 
