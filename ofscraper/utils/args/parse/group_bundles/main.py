@@ -1,6 +1,7 @@
 import functools
 
 import cloup as click
+from click.exceptions import UsageError
 
 from ofscraper.utils.args.parse.groups.advanced_processing import (
     advanced_processing_options,
@@ -18,6 +19,20 @@ from ofscraper.utils.args.parse.group_bundles.common import common_args
 # import click
 
 
+def check_dry_run(params):
+    """--dry-run goes with one download run, nothing else that changes things."""
+    if not params.get("dry_run"):
+        return
+    if params.get("daemon"):
+        raise UsageError("--dry-run can't be used with --daemon")
+    if params.get("live") or params.get("live_watch"):
+        raise UsageError("--dry-run can't be used with --live or --live-watch")
+    if "download" not in (params.get("actions") or []) and not params.get("scrape_paid"):
+        raise UsageError(
+            "--dry-run needs --action download; like and unlike aren't run in a dry run"
+        )
+
+
 def main_program_args(func):
     @common_args
     @post_filter_options
@@ -30,6 +45,7 @@ def main_program_args(func):
     @functools.wraps(func)
     @click.pass_context
     def wrapper(ctx, *args, **kwargs):
+        check_dry_run(ctx.params)
         return func(ctx, *args, **kwargs)
 
     return wrapper

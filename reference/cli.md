@@ -36,7 +36,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 
 | Command | Summary |
 |---|---|
-| [Main program (no command)](#main-program-no-command) (103 options) | OF-Scraper Options |
+| [Main program (no command)](#main-program-no-command) (104 options) | OF-Scraper Options |
 | [`manual`](#manual) (52 options) | Manually download media by providing a list of URLs or IDs |
 | [`msg_check`](#msg_check) (52 options) | Produces a media table from messages with filterable entries and quick downloads |
 | [`story_check`](#story_check) (50 options) | Produces a media table from stories and highlights with filterable entries and quick downloads |
@@ -56,7 +56,7 @@ Run `OF-Scraper [OPTIONS] [COMMAND] [COMMAND OPTIONS]`.
 
 ### Main program (no command)
 
-**Options:** 103 · **`--help` summary:** OF-Scraper Options
+**Options:** 104 · **`--help` summary:** OF-Scraper Options
 
 Runs when no subcommand is given. The entry point is `ofscraper/__main__.py`. Then `Manager.pick()` calls `commands/scraper/scraper.main()`, which cleans temp files and the database and checks the CDM. After that, the run goes one of these ways:
 
@@ -687,6 +687,14 @@ Flag for enabling/disabling mass content or promos [select one --mass-only or --
 Select batch action(s) to perform [like,unlike,download]. Accepts space or comma-separated list. Like and unlike cannot be combined.
 
 **Dest:** `actions` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
+
+#### `--dry-run`
+
+**Type:** flag · **Default:** off · **Commands:** main program
+
+Scan as usual and report how many files a download would attempt, without downloading or changing anything; needs --action download
+
+**Dest:** `dry_run` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
 
 #### `--daemon`
 

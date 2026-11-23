@@ -17,6 +17,11 @@ def getcachepath():
     path = profile / f"{name}"
     path = pathlib.Path(os.path.normpath(path))
     path.parent.mkdir(parents=True, exist_ok=True)
+    import ofscraper.utils.dry_run as dry_run
+
+    if dry_run.active():
+        # a dry run reads and writes a throwaway copy (utils/dry_run.py)
+        return dry_run.redirect(path, folder=True)
     return path
 
 

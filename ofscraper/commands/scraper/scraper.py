@@ -33,6 +33,7 @@ import ofscraper.utils.menu as menu
 from ofscraper.commands.scraper.utils.jobqueue import jobqueue
 from ofscraper.__version__ import __version__
 import ofscraper.utils.settings as settings
+import ofscraper.utils.dry_run as dry_run
 from ofscraper.scripts.after_download_action_script import after_download_action_script
 from ofscraper.scripts.after_like_action_script import after_like_action_script
 from ofscraper.managers.postcollection import PostCollection
@@ -159,6 +160,9 @@ class scraperManager(CommandManager):
                         )
                         if stop.requested.is_set():
                             raise stop.DownloadsStopped
+                    elif action in {"like", "unlike"} and dry_run.active():
+                        log.info(f"Dry run: not {action}ing posts for {username}")
+                        continue
                     elif action == "like":
                         like_action.process_like(
                             ele=ele,
@@ -206,11 +210,19 @@ def main():
     with progress_utils.stop_live_screen(clear="all"):
         try:
             print_start()
+            if dry_run.active() and dry_run.refuse_reason():
+                log.error(dry_run.refuse_reason())
+                raise SystemExit(2)
             paths.temp_cleanup()
             paths.cleanDB()
             network.check_cdm()
 
-            scrapper()
+            try:
+                scrapper()
+            finally:
+                if dry_run.active():
+                    log.warning(dry_run.report())
+                    dry_run.cleanup()
             paths.temp_cleanup()
             paths.cleanDB()
         except KeyboardInterrupt:

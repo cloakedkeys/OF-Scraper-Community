@@ -15,6 +15,7 @@ import ofscraper.utils.paths.common as common_paths
 import ofscraper.utils.paths.paths as paths
 import ofscraper.utils.profiles.data as profile_data
 import ofscraper.utils.settings as settings
+import ofscraper.utils.dry_run as dry_run
 from ofscraper.utils.string import parse_safe
 import ofscraper.managers.manager as manager
 from ofscraper.scripts.naming_script import naming_script
@@ -213,6 +214,9 @@ class databasePlaceholder(basePlaceholder):
             formatStr = pathlib.Path(formatStr, sites.site_name())
         data_path = pathlib.Path(formatStr, "user_data.db")
         data_path = pathlib.Path(os.path.normpath(data_path))
+        if dry_run.active():
+            # a dry run reads and writes a throwaway copy (utils/dry_run.py)
+            data_path = dry_run.redirect(data_path)
         self._metadata = data_path
         # a read-only read makes no folder (#373)
         if self._create:

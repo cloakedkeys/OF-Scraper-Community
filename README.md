@@ -246,6 +246,12 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
 - **Organize downloads in Stash:** copy each download's creator, date, caption and source into [Stash](https://stashapp.cc). See [Stash](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/STASH.md).
 - **Keep the database in PostgreSQL:** as an option, one PostgreSQL database can replace the per-creator SQLite files. See [PostgreSQL](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/POSTGRESQL.md).
 - **Record OnlyFans livestreams:** `--live` records the selected creators who are live now, and `--live-watch` keeps checking and records them as they go live. OnlyFans streams are recorded in a Chromium browser, so install the optional extra first: `pip install "ofscraper-community[live]"`, then `playwright install chromium`. Recordings are saved as `.webm` under `OnlyFans/{username}/Livestreams/`. Based on [cjb900](https://github.com/cjb900)'s Live Stream Monitor plugin.
+- **See what a run would download first:** `--dry-run` with `--action download` scans as usual and reports how many files a download would attempt, without downloading anything or changing the database, the cache or your files. It's handy for trying a filter or checking a new creator. It doesn't work with PostgreSQL yet, or with `--daemon`, `--live` or `--live-watch`.
+
+  ```sh
+  ofscraper --action download -u modelname --dry-run
+  ```
+
 - **Move a creator's files after a rename:** move the files saved under a creator's old name to their current name's folder, and update the database to match. See [Moving files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/MOVING_FILES.md).
 
 ## Reporting a problem

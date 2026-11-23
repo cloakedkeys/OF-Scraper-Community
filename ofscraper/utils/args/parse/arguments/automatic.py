@@ -31,6 +31,14 @@ action_option = click.option(
     callback=StringSplitParse,
 )
 
+dry_run_option = click.option(
+    "--dry-run",
+    "dry_run",
+    help="Scan as usual and report how many files a download would attempt, without downloading or changing anything; needs --action download",
+    is_flag=True,
+    default=False,
+)
+
 # Livestream recording (Fansly, and OnlyFans with the optional "live" extra).
 live_option = click.option(
     "--live",
