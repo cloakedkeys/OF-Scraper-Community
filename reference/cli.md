@@ -218,14 +218,14 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `profile` · **Type:** text · **Default:** none
 - **Commands:** all
 - **Defined in:** `ofscraper/utils/args/parse/arguments/program.py`
-- Change which profile you want to use If not set then the default profile is used, based on the config.json file Profiles are always within the config.json file parent directory
+- Change which profile to use. If not set, the default profile from config.json is used. Profiles are always inside the config.json parent directory.
 
 #### `--site`
 
 - **Dest:** `site` · **Type:** one of `onlyfans`, `fansly` · **Default:** none
 - **Commands:** all
 - **Defined in:** `ofscraper/utils/args/parse/arguments/program.py`
-- Site to use for this run: onlyfans or fansly If not set, the profile's site.json decides, and OnlyFans is the default
+- Site to use for this run: onlyfans or fansly. If not set, the profile's site.json decides, and OnlyFans is the default.
 
 #### `--env-files`
 
@@ -252,7 +252,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `no_rich` · **Type:** flag · **Default:** off
 - **Commands:** all
 - **Defined in:** `ofscraper/utils/args/parse/arguments/logging.py`
-- Turn off rich ui live display features
+- Turn off Rich UI live display features
 
 #### `--discord`
 
@@ -261,7 +261,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** all
 - **Config fallback:** `discord`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/logging.py`
-- Set discord log level
+- Set Discord log level
 
 #### `--log`
 
@@ -280,7 +280,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `download_options.auto_resume`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/download.py`
-- Cleanup temp .part files (removes resume ability)
+- Clean up temp .part files (removes resume ability)
 - **Note:** Turns `download_options.auto_resume` off for the run.
 
 #### `--downloadbars`
@@ -308,7 +308,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `performance_options.download_limit`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/download.py`
-- Maximum download speed per second can parse Human readable string '10MB' or int representing bytes per second
+- Maximum download speed per second. Accepts a human-readable size ('10MB') or bytes per second.
 - **Note:** Values below 1024 bytes per second are raised to 1024. All downloads in the run share the limit.
 
 #### `--allow-dupes`
@@ -492,7 +492,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `file_options.space_replacer`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/file.py`
-- character to replace spaces with
+- Character to replace spaces with
 
 #### `--textlength`
 
@@ -501,7 +501,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `file_options.textlength`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/file.py`
-- max length of text
+- Max length of text
 
 #### `--text-type`
 
@@ -510,7 +510,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `file_options.text_type_default`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/file.py`
-- set length based on word or letter
+- Measure text length by word or letter
 
 ### Posts Filters Options
 
@@ -983,7 +983,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`
 - **Config fallback:** `script_options.after_action_script`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/scripts.py`
-- Runs a script after an action for a model has completed.
+- Runs a script after an action for a model completes.
 
 #### `--naming-script`
 
@@ -992,7 +992,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`
 - **Config fallback:** `script_options.naming_script`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/scripts.py`
-- Runs a script to dynamically generate the final filename or path for a media item.
+- Runs a script to generate the final filename or path for a media item.
 
 #### `--post-script`
 
@@ -1001,7 +1001,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`
 - **Config fallback:** `script_options.post_script`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/scripts.py`
-- Runs a script after processing all users (e.g., after a full scrape operation)
+- Runs a script after processing all users (e.g. after a full scrape).
 
 #### `--after-download-script`
 
@@ -1010,7 +1010,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`
 - **Config fallback:** `script_options.after_download_script`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/scripts.py`
-- Runs script after download has completed
+- Runs a script after a download completes.
 
 #### `--skip-download-script`
 
@@ -1019,7 +1019,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`
 - **Config fallback:** `script_options.skip_download_script`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/scripts.py`
-- Runs a script to dynamically skip a download
+- Runs a script to decide whether to skip a download.
 
 #### `--retry-permanent-skips`
 
@@ -1037,7 +1037,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `no_cache` · **Type:** flag · **Default:** off
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
-- Disable cache and forces consecutive api scan
+- Disable cache and force a fresh sequential API scan
 - **Note:** Disables both the general cache and the API cache for the run, and turns off incremental downloads. Setting `advanced_options.cache-mode` to `disabled` in `config.json` does the same.
 
 #### `--no-api-cache`
@@ -1046,7 +1046,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `no_api_cache` · **Type:** flag · **Default:** off
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
-- Forces consecutive api scan
+- Force a fresh sequential API scan
 - **Note:** Disables only the API response cache. Setting `advanced_options.cache-mode` to `api_disabled` does the same.
 
 #### `--key-mode`
@@ -1066,7 +1066,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `cdm_options.private-key`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
-- private key path for manual cdrm
+- Private key path for manual key mode
 
 #### `--client-id`
 
@@ -1075,7 +1075,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `cdm_options.client-id`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
-- client id path for manual cdrm
+- Client ID path for manual key mode
 
 #### `--dynamic-rules`
 
@@ -1084,7 +1084,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `advanced_options.dynamic-mode-default`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
-- Dynamic signing
+- Dynamic signing rule source
 
 #### `--update-profile`
 
@@ -1100,7 +1100,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `auth_fail` · **Type:** flag · **Default:** off
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
-- quit on authentication failure, rather then prompting
+- Quit on authentication failure rather than prompting
 
 ### Other options
 

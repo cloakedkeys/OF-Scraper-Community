@@ -21,9 +21,9 @@ profile_option = click.option(
     "-r",
     "--profile",
     help="""
-Change which profile you want to use
-If not set then the default profile is used, based on the config.json file
-Profiles are always within the config.json file parent directory
+Change which profile to use.
+If not set, the default profile from config.json is used.
+Profiles are always inside the config.json parent directory.
 """,
     default=None,
     callback=lambda ctx, param, value: (
@@ -33,8 +33,8 @@ Profiles are always within the config.json file parent directory
 site_option = click.option(
     "--site",
     help="""
-Site to use for this run: onlyfans or fansly
-If not set, the profile's site.json decides, and OnlyFans is the default
+Site to use for this run: onlyfans or fansly.
+If not set, the profile's site.json decides, and OnlyFans is the default.
 """,
     type=click.Choice(["onlyfans", "fansly"], case_sensitive=False),
     default=None,
