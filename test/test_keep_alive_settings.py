@@ -27,8 +27,6 @@ import ofscraper.sites.fansly.address as fansly_address
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 
-pytestmark = pytest.mark.slow
-
 
 class _Log:
     def __getattr__(self, name):
@@ -141,6 +139,7 @@ def test_the_default_is_ten_seconds():
         assert of_env.getattr("KEEP_ALIVE_EXP") == 10
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("seconds", [0, -5])
 def test_kept_for_no_time_means_closed_after_use(seconds):
     """Given 0, aiohttp never closed an idle connection: it only cleans up

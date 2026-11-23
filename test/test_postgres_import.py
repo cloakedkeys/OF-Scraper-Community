@@ -30,8 +30,6 @@ from test.import_files import (
     without_the_dates,
 )
 
-pytestmark = pytest.mark.slow
-
 # a name recorded before its dates were kept (#643), or added by hand
 NO_DATES = {"first_seen_at": None, "last_seen_at": None}
 

@@ -21,8 +21,6 @@ import ofscraper.utils.settings as settings
 from ofscraper.managers.sessionmanager.sessionmanager import sessionManager
 from ofscraper.utils.of_env.values.req.req import load_network_config
 
-pytestmark = pytest.mark.slow
-
 
 @pytest.fixture(autouse=True)
 def plain_settings(monkeypatch):
@@ -142,6 +140,7 @@ def test_default_read_timeout_is_set():
     assert sessionManager()._read_timeout > 0
 
 
+@pytest.mark.slow
 def test_async_request_to_a_silent_server_times_out_and_retries(one_second_default):
     def fetch(url):
         async def go():
@@ -160,6 +159,7 @@ def test_async_request_to_a_silent_server_times_out_and_retries(one_second_defau
     assert result["seconds"] < 6
 
 
+@pytest.mark.slow
 def test_sync_request_to_a_silent_server_times_out_and_retries(one_second_default):
     def fetch(url):
         with sessionManager(retries=2, wait_min=0, wait_max=0, log=QUIET) as c:
@@ -209,6 +209,7 @@ def test_zero_means_no_limit_on_the_async_path(no_limit_default):
     assert body["text"] == "ok"
 
 
+@pytest.mark.slow
 def test_zero_means_no_limit_on_the_sync_path(no_limit_default):
     body = {}
 

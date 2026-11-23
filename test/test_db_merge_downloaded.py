@@ -17,8 +17,6 @@ from ofscraper.db.operations_.media import write_media_table_transition
 from ofscraper.db.operations_.profile import write_models_table, write_profile_table
 from ofscraper.db.transition import modify_tables
 
-pytestmark = pytest.mark.slow
-
 MODEL_ID = 12345
 USERNAME = "dbmodel"
 MEDIA_ID = 1201
@@ -114,6 +112,7 @@ def test_downloaded_copy_in_a_later_database_is_kept(merge_dbs):
     ]
 
 
+@pytest.mark.slow
 def test_merge_result_does_not_depend_on_source_order(merge_dbs):
     forward = merge_dbs([[NOT_DOWNLOADED], [DOWNLOADED_B]], name="forward")
     backward = merge_dbs([[DOWNLOADED_B], [NOT_DOWNLOADED]], name="backward")
@@ -124,6 +123,7 @@ def test_target_row_not_downloaded_is_updated(merge_dbs):
     assert merge_dbs([[DOWNLOADED_B]], target=[NOT_DOWNLOADED]) == EXPECTED_B
 
 
+@pytest.mark.slow
 def test_first_downloaded_copy_is_kept(merge_dbs):
     assert merge_dbs([[NOT_DOWNLOADED], [DOWNLOADED_B], [DOWNLOADED_C]]) == EXPECTED_B
 
@@ -155,6 +155,7 @@ def both_orders(merge_dbs, first, second, target=None):
     return forward
 
 
+@pytest.mark.slow
 def test_extra_post_link_is_kept_in_either_order(merge_dbs):
     result = both_orders(merge_dbs, [NOT_DOWNLOADED], [on_post(NOT_DOWNLOADED)])
     assert result == [
@@ -169,6 +170,7 @@ def test_extra_post_link_in_target_is_kept(merge_dbs):
     assert [row[0] for row in result] == [1001, OTHER_POST]
 
 
+@pytest.mark.slow
 def test_same_post_in_both_gives_one_row(merge_dbs):
     result = both_orders(merge_dbs, [NOT_DOWNLOADED], [NOT_DOWNLOADED])
     assert result == [(1001, MEDIA_ID, None, None, None, 0, None)]
@@ -180,6 +182,7 @@ EXPECTED_B_BOTH_POSTS = [
 ]
 
 
+@pytest.mark.slow
 def test_extra_post_row_of_downloaded_item_is_downloaded(merge_dbs):
     # downloaded under one post, not downloaded under another: every row of
     # the item carries the download, whichever database is read first

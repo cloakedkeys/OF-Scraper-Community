@@ -42,8 +42,6 @@ from ofscraper.classes.of.media import Media
 from ofscraper.managers.sessionmanager.sessionmanager import sessionManager
 from ofscraper.scripts.skip_download_script import SKIP_PERMANENT
 
-pytestmark = pytest.mark.slow
-
 AUDIO = bytes(i % 251 for i in range(1_000))
 VIDEO = bytes(i % 241 for i in range(5_000))
 WHOLE = len(AUDIO) + len(VIDEO)
