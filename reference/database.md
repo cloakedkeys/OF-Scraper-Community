@@ -376,4 +376,4 @@ Each creator has one SQLite file, `user_data.db`. It sits in the folder given by
   - All three go through `ofscraper/db/creator_rows.py`. Given a SQLite file while PostgreSQL is on, each says it's working on the file.
   - `scripts/creator_names.py` reads and adds names in PostgreSQL with `--postgres`, and prints a notice on stderr (`sqlite_files_notice`) when given SQLite files while PostgreSQL is on.
   - Merge Databases works on SQLite files only and says so on its screen.
-  - Standalone tools (`stash_sync`, `recover_collisions`, `move_creator_files`, `scripts/creator_names.py`) read `OFSC_DATABASE_URL` only from the environment they are run in, not from scraper env files. See `POSTGRESQL.md`.
+  - Standalone tools (`stash_sync`, `recover_collisions`, `move_creator_files`, `verify`, `scripts/creator_names.py`) read `OFSC_DATABASE_URL` only from the environment they are run in, not from scraper env files. See `POSTGRESQL.md`.

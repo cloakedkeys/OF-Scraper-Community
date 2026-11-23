@@ -50,6 +50,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 | [`postgres_import`](#postgres_import-separate-entry-point) (argparse) | Import per-creator `user_data.db` files into PostgreSQL. |
 | [`recover_collisions`](#recover_collisions-separate-entry-point) (argparse) | Find recorded paths shared by different media and reset downloaded flags to re-download. |
 | [`stash_sync`](#stash_sync-separate-entry-point) (argparse) | Sync downloaded media metadata from OF-Scraper databases into Stash. |
+| [`verify`](#verify-separate-entry-point) (argparse) | Check downloaded files against the database, offline. |
 
 ## Commands
 
@@ -211,6 +212,27 @@ Run `ofscraper stash_sync (PATH... | --postgres) [OPTIONS]` (or `python -m ofscr
 - `--organized`: also mark items as organized
 - `--path-map`: rewrite a path prefix when Stash sees the files elsewhere (e.g. in Docker); repeatable
 - `--scan`: with --apply, have Stash scan the download folders first and wait for it
+
+### `verify` (separate entry point)
+
+`ofscraper verify (PATH... | --postgres --creator NAME [--site SITE]) [--path-map RECORDED=HERE] [--path-root DIR] [--sample N]` (or `python -m ofscraper.commands.verify`). Offline tool using argparse. Checks every media marked downloaded against the file its rows record, without logging in or reading the scraper's settings, and prints a JSON report. Changes nothing. A path is a `user_data.db` or a folder (such as a profile's `.data`) searched for them.
+
+- **Findings, per media:** `missing` (no file at the recorded path), `empty` (0 bytes), `size_differs` (not the recorded `size`), `no_file_recorded` (marked downloaded with no path, which the scraper does when it gives up on an item for good; rows with `skip_permanent` are also counted as `skip_permanent`), and `ok`. A media whose rows record several paths takes the worst finding among them.
+- **Not recoverable:** a finding is marked `not_recoverable`, with the reason, when downloading it again can't work: stories and highlights expire, the post was deleted (`posts.is_deleted`), the item is locked (`unlocked = 0`), or it is a profile picture or header (a cache entry also blocks those).
+- **Report:** per creator, the counts, up to `--sample` findings (default 20) with paths and sizes, and `folders_missing` (recorded folders that aren't there, which can mean a drive or share isn't connected). `totals` adds up every creator.
+- **Paths:** `--path-map RECORDED=HERE` reads a recorded path prefix as another (for a library recorded in Docker and checked from the host); relative recorded paths need `--path-root`.
+- **With `--postgres`:** checks the rows of the creator `--creator` names (a username or ID) in the PostgreSQL database named by `OFSC_DATABASE_URL` in the current environment, read-only.
+- **Exit status:** 0 with the report, 1 on failure, 2 on bad arguments, 130 when interrupted.
+
+Run `ofscraper verify (PATH... | --postgres --creator NAME) [OPTIONS]` (or `python -m ofscraper.commands.verify (PATH... | --postgres --creator NAME) [OPTIONS]`).
+
+- `DATABASES`: user_data.db files, or folders (e.g. a profile's .data) to search for them
+- `--path-map`: read a recorded path prefix as another, e.g. a library recorded in Docker and checked from the host; repeatable
+- `--path-root`: Original working directory for relative recorded paths
+- `--sample`: list up to N findings per creator (default 20)
+- `--postgres`: Check the PostgreSQL database $OFSC_DATABASE_URL names instead of user_data.db files; give --creator and no database with it
+- `--site`: With --postgres, the creator's site (default: the site that has the creator)
+- `--creator`: With --postgres, the creator to check, by username or id
 
 ### Scripts in `scripts/`
 
