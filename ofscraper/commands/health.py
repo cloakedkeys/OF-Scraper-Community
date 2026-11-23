@@ -1,0 +1,148 @@
+"""Check whether an unattended OF-Scraper daemon is healthy from its status file.
+
+Run as ``ofscraper health [STATUS_FILE] [--max-quiet MINUTES]``.
+Starts without loading the scraper so Docker HEALTHCHECK and monitoring
+scripts get an instant answer.
+"""
+
+import argparse
+from datetime import datetime, timedelta, timezone
+import json
+import os
+import pathlib
+import sys
+
+DEFAULT_MAX_QUIET_MINUTES = 60
+AUTH_EXIT_CODE = 3
+
+
+def _parse_iso(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def default_status_path():
+    override = (os.getenv("OFSC_STATUS_FILE") or "").strip()
+    if override:
+        return pathlib.Path(override)
+    return pathlib.Path.home() / ".config" / "ofscraper" / "main_profile" / "status.json"
+
+
+def _login_failed(data):
+    if data.get("auth") == "failed":
+        return True
+    last_pass = data.get("last_pass")
+    if isinstance(last_pass, dict) and last_pass.get("status") == AUTH_EXIT_CODE:
+        return True
+    profiles = data.get("profiles")
+    if isinstance(profiles, dict):
+        for entry in profiles.values():
+            if isinstance(entry, dict) and (
+                entry.get("auth") == "failed" or entry.get("status") == AUTH_EXIT_CODE
+            ):
+                return True
+    return False
+
+
+def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
+    """Return ``(healthy: bool, reason: str)`` for a parsed status dict."""
+    if not isinstance(data, dict):
+        return False, "unhealthy: status file is not a JSON object"
+
+    mode = data.get("mode")
+    if mode == "once":
+        return True, "healthy: last run was a one-off"
+
+    if _login_failed(data):
+        return False, "unhealthy: last pass recorded a failed login"
+
+    now_utc = (
+        datetime.now(timezone.utc)
+        if now is None
+        else (now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc))
+    )
+    limit = timedelta(minutes=max_quiet_minutes)
+    state = data.get("state")
+
+    if state == "running":
+        hb = _parse_iso(data.get("heartbeat"))
+        if hb is None:
+            return False, "unhealthy: daemon is running with no valid heartbeat"
+        age = now_utc - hb
+        if age > limit:
+            mins = int(age.total_seconds() // 60)
+            return False, f"unhealthy: daemon heartbeat is {mins} min old (limit {max_quiet_minutes} min)"
+        mins = max(0, int(age.total_seconds() // 60))
+        return True, f"healthy: daemon running (heartbeat {mins} min ago)"
+
+    if state == "idle":
+        next_at = data.get("next_pass_at")
+        if next_at is not None:
+            parsed = _parse_iso(next_at)
+            if parsed is None:
+                return False, "unhealthy: daemon is idle with an invalid next_pass_at"
+            overdue = now_utc - parsed
+            if overdue > limit:
+                mins = int(overdue.total_seconds() // 60)
+                return False, f"unhealthy: daemon next pass overdue by {mins} min (limit {max_quiet_minutes} min)"
+        return True, "healthy: daemon idle"
+
+    if state == "stopped":
+        return True, "healthy: daemon stopped"
+
+    return True, f"healthy: state is {state or 'unknown'}"
+
+
+def check_file(path, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
+    """Read ``path`` and return ``(healthy: bool, reason: str)``."""
+    target = pathlib.Path(path)
+    if not target.exists():
+        return True, f"healthy: no status file at {target}"
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except Exception as e:
+        return False, f"unhealthy: could not read status file ({e})"
+    return evaluate(data, max_quiet_minutes=max_quiet_minutes, now=now)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="ofscraper health",
+        description="Check whether an unattended OF-Scraper daemon is healthy from its status file.",
+    )
+    parser.add_argument(
+        "status_file",
+        nargs="?",
+        default=None,
+        help="Path to the status JSON file (default: OFSC_STATUS_FILE, or ~/.config/ofscraper/main_profile/status.json).",
+    )
+    parser.add_argument(
+        "--max-quiet",
+        type=float,
+        default=DEFAULT_MAX_QUIET_MINUTES,
+        help=f"Minutes before a quiet running daemon or overdue idle daemon counts as unhealthy (default: {DEFAULT_MAX_QUIET_MINUTES}).",
+    )
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    target = pathlib.Path(args.status_file) if args.status_file else default_status_path()
+    healthy, reason = check_file(target, max_quiet_minutes=args.max_quiet)
+    print(reason)
+    return 0 if healthy else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
