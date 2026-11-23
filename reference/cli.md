@@ -52,31 +52,31 @@ Accepts 103 options. Its `--help` summary: OF-Scraper Options.
 
 `ofscraper manual -u URL...` or `-f FILE` (one is required). Downloads specific posts, given as OnlyFans URLs (post, chat message, story, highlight) or bare post ids. A bare id is looked up on the timeline, then in that creator's purchases. It forces `force_all`, so existing files are downloaded again. It writes posts and media to the creator's `user_data.db` and media under `save_location`, then runs the after-download script.
 
-Accepts 52 options. Its `--help` summary: Manually download media by providing a list of urls or IDs.
+Accepts 52 options. Its `--help` summary: Manually download media by providing a list of URLs or IDs.
 
 ### `msg_check`
 
 `ofscraper msg_check -u ITEM...` or `-f FILE`. Each item is a creator username, a model id, or a chat URL (`onlyfans.com/my/chats/chat/<id>` or `onlyfans.com/my/chats/<id>/?id=<message id>`), whose number is taken as the model id. Any other item is skipped with a warning. It fetches the creator's messages and purchases, writes them to `user_data.db`, and opens an interactive table of the media. Unlocked rows in the table can be queued for download, and a background thread downloads them. The messages and purchases come from the check cache unless you pass `--force`. The cache expires after 3 days.
 
-Accepts 52 options. Its `--help` summary: The msg_check subcommand gathers information on media content from messages It presents this data in a table format with filtering options for focused searches Allows unlocked media entries to be directly downloaded through the table.
+Accepts 52 options. Its `--help` summary: The msg_check subcommand gathers information on media content from messages. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table..
 
 ### `story_check`
 
 `ofscraper story_check -u USERNAME...` (or `-f`). Fetches the creators' stories and highlights from the API, without the check cache. It writes them to `user_data.db` and opens the same downloadable media table.
 
-Accepts 50 options. Its `--help` summary: The story_check subcommand gathers information on media content from stories and highlights It presents this data in a table format with filtering options for focused searches Allows unlocked media entries to be directly downloaded through the table.
+Accepts 50 options. Its `--help` summary: The story_check subcommand gathers information on media content from stories and highlights. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table..
 
 ### `paid_check`
 
 `ofscraper paid_check -u USERNAME_OR_ID...` (or `-f`). Fetches each creator's purchased content, writes it to `user_data.db` and opens the media table. The content comes from the check cache unless you pass `--force`. A deleted creator, named `DELETED_MODEL_PLACEHOLDER`, is read from all purchases.
 
-Accepts 52 options. Its `--help` summary: The paid_check subcommand gathers information on media content from purchases It presents this data in a table format with filtering options for focused searches Allows unlocked media entries to be directly downloaded through the table.
+Accepts 52 options. Its `--help` summary: The paid_check subcommand gathers information on media content from purchases. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table..
 
 ### `post_check`
 
 `ofscraper post_check -u URL_OR_USERNAME...` or `-f FILE`. Takes `onlyfans.com/<username>` URLs or bare usernames. It fetches the areas in `--check-area` (default Timeline, Pinned, Archived and Streams; Labels is also available), writes them to `user_data.db` and opens the media table. The areas come from the check cache unless you pass `--force`. All check commands set `force_all` and `after=0`.
 
-Accepts 54 options. Its `--help` summary: The post_check subcommand gathers information on media content from posts It presents this data in a table format with filtering options for focused searches Allows unlocked media entries to be directly downloaded through the table.
+Accepts 54 options. Its `--help` summary: The post_check subcommand gathers information on media content from posts. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table..
 
 ### `metadata`
 
@@ -1119,7 +1119,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `text` · **Type:** flag · **Default:** off
 - **Commands:** `manual`, `msg_check`, `paid_check`, `post_check`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/check.py`, `ofscraper/utils/args/parse/arguments/post_content.py`
-- Download Text files in addition to media
+- Download text files in addition to media
 
 #### `--text-only` (`manual`, `msg_check`, `paid_check`, `post_check`)
 
@@ -1127,7 +1127,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `text_only` · **Type:** flag · **Default:** off
 - **Commands:** `manual`, `msg_check`, `paid_check`, `post_check`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/check.py`, `ofscraper/utils/args/parse/arguments/post_content.py`
-- Download Text files, but skip download media
+- Download text files, skipping media
 - **Note:** Also turns on `--text`. Text files are written and media is skipped.
 
 #### `--url`
@@ -1136,7 +1136,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `url` · **Type:** text; repeatable · **Default:** none
 - **Commands:** `manual`, `msg_check`, `post_check`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/check.py`, `ofscraper/utils/args/parse/arguments/user_select.py`
-- Scan posts via space or comma seperated list of urls
+- Scan posts via space or comma separated list of URLs
 
 #### `--file` (`file`)
 
@@ -1168,7 +1168,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `export` · **Type:** path · **Default:** none
 - **Commands:** `db`
 - **Defined in:** `ofscraper/utils/args/parse/group_bundles/db.py`
-- export the table as a csv file
+- Export the table as a CSV file
 
 #### `--unmark-permanent-skips`
 
@@ -1185,7 +1185,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Also:** `-ucl`, `-lc`, `--locked`
 - **Dest:** `unlocked` · **Type:** flag · **Default:** none
 - **Commands:** `msg_check`, `story_check`, `paid_check`, `post_check`, `db`
-- Flag for filtering accounts based on whether media is unlocked [select one --unlock or --locked]
+- Flag for filtering accounts based on whether media is unlocked [select one --unlocked or --locked]
 
 #### `--downloaded`
 
@@ -1208,7 +1208,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `posted_before` · **Type:** Arrow · **Default:** none
 - **Commands:** `msg_check`, `story_check`, `paid_check`, `post_check`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/metadata_filters.py`
-- Filter out posts posted at on or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads
+- Filter out posts posted at or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads
 
 ### Content Options
 
@@ -1244,7 +1244,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `mark_stray` · **Type:** flag · **Default:** off
 - **Commands:** `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/group_bundles/metadata.py`
-- Sets unmatched media items as locked This is done per api type excluding labels, and is limited to --after and --before range
+- Sets unmatched media items as locked. This is done per API type excluding labels, and is limited to --after and --before range.
 
 #### `--anon`
 
@@ -1252,7 +1252,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `anon` · **Type:** flag · **Default:** off
 - **Commands:** `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/group_bundles/metadata.py`
-- Use anonymise creditional forces --individual flag force --list flag to be removed most media is ignored
+- Use anonymous credentials. Forces --individual flag and removes --list flag. Most media is ignored.
 
 ### Sorting for the table
 

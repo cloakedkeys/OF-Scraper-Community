@@ -29,7 +29,7 @@ lock_option = click.option(
     help="""
         \b
         Flag for filtering accounts based on whether media is unlocked
-        [select one --unlock or --locked]""",
+        [select one --unlocked or --locked]""",
     default=None,
     required=False,
     is_flag=True,
@@ -57,7 +57,7 @@ posted_after = click.option(
 posted_before = click.option(
     "-pb",
     "--posted-before",
-    help="Filter out posts posted at on or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads",
+    help="Filter out posts posted at or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads",
     type=ArrowType(),
 )
 
@@ -71,7 +71,7 @@ created_after = click.option(
 created_before = click.option(
     "-cb",
     "--created-before",
-    help="Process media  created at or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads",
+    help="Process media created at or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads",
     type=ArrowType(),
 )
 
