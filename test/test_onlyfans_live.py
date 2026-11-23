@@ -342,7 +342,7 @@ def test_a_missing_chromium_says_how_to_install_it(monkeypatch, onlyfans_setting
         return [{"accountId": 1, "username": "creator_a"}, {"accountId": 2, "username": "creator_b"}]
 
     def capture(**kwargs):
-        raise live_capture.BrowserMissing(live_capture.INSTALL_HINT)
+        raise live_capture.BrowserMissing(live_capture.install_hint())
 
     monkeypatch.setattr(live, "get_online_streams", online)
     monkeypatch.setattr(live_capture, "playwright_ready", lambda: True)
@@ -354,9 +354,14 @@ def test_a_missing_chromium_says_how_to_install_it(monkeypatch, onlyfans_setting
     assert len(warnings) == 1
 
 
-def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypatch, onlyfans_settings, caplog):
+@pytest.mark.parametrize("dist", ["ofscraper-community", "ofscraper"])
+def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypatch, onlyfans_settings, caplog, dist):
     import builtins
 
+    import ofscraper.__version__ as version
+
+    # the hint names the package that is installed: datawhores publishes "ofscraper"
+    monkeypatch.setattr(version, "__dist_name__", dist)
     onlyfans_settings(live=True)
     real_import = builtins.__import__
 
@@ -369,7 +374,7 @@ def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypat
     monkeypatch.setattr(manager, "Manager", None)  # never reached
     with caplog.at_level("WARNING", logger="shared"):
         asyncio.run(live.run(False, asyncio.Event()))
-    assert 'pip install "ofscraper-community[live]"' in caplog.text
+    assert f'pip install "{dist}[live]"' in caplog.text
     assert "playwright install chromium" in caplog.text
 
 

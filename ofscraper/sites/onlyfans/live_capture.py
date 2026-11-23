@@ -35,9 +35,16 @@ log = logging.getLogger("shared")
 
 INSTALL_HINT = (
     'OnlyFans livestreams are recorded with a Chromium browser. Install it with: '
-    'pip install "ofscraper-community[live]" (or uv/pipx the same way), then '
+    'pip install "{dist}[live]" (or uv/pipx the same way), then '
     "playwright install chromium"
 )
+
+
+def install_hint() -> str:
+    """INSTALL_HINT for the installed package (datawhores publishes it as ``ofscraper``)."""
+    from ofscraper.__version__ import __dist_name__
+
+    return INSTALL_HINT.format(dist=__dist_name__)
 
 DRAIN_SECONDS = 5
 LIVE_CHECK_SECONDS = 60
@@ -311,7 +318,7 @@ def playwright_ready() -> bool:
     try:
         import playwright.sync_api  # noqa: F401
     except ImportError:
-        log.warning(INSTALL_HINT)
+        log.warning(install_hint())
         return False
     return True
 
@@ -510,7 +517,7 @@ def launch(p, profile: str, auth: dict, proxy=None):
         ctx = p.chromium.launch_persistent_context(**kwargs)
     except Exception as e:
         if "executable doesn't exist" in str(e).lower() or "playwright install" in str(e).lower():
-            raise BrowserMissing(INSTALL_HINT) from e
+            raise BrowserMissing(install_hint()) from e
         raise
     ctx.add_cookies(login_cookies(auth))
     script = xbc_script(auth)
