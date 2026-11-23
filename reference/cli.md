@@ -318,7 +318,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/download.py`
 - Download media that is in several posts once for each post, instead of once (default: ALLOW_DUPE_MEDIA, off)
-- **Note:** Without the option, `ALLOW_DUPE_MEDIA` decides (`merged_settings`); `--no-allow-dupes` turns it off for the run. When on, media that is in several posts is downloaded once for each post, and a copy counts as downloaded per media and post (`downloaded_media_ids`), so a later run still downloads the copies of posts it hasn't saved. This applies to OnlyFans and Fansly. Each copy gets its own file (see `file_options.filename_collision`) and its own `medias` row update. A Purchased copy is downloaded like any other post's copy, also when the media is in Messages or was downloaded from another post; a message listed in Purchased under the same id is one post, so it is downloaded once. The `metadata` command and the Fansly check of videos saved without sound read each post's own record. Copies already marked downloaded by a run without the option count as downloaded.
+- **Note:** Without this option, `ALLOW_DUPE_MEDIA` decides (`merged_settings`); `--no-allow-dupes` turns it off for the run. When on, media appearing in several posts is downloaded once per post, and each copy is tracked per `(media_id, post_id)` (`downloaded_media_ids`), so later runs still download copies from posts not yet saved. Applies to OnlyFans and Fansly. Each copy gets its own file (see `file_options.filename_collision`) and its own `medias` row update. A Purchased copy is downloaded like any other post's copy, even if the media is also in Messages or another post. However, a message listed in Purchased under the same ID counts as one post and is downloaded once. The `metadata` command and the Fansly silent-video check read each post's own record. Copies already marked downloaded by a run without this option still count as downloaded.
 
 ### Media Filters Options
 
@@ -432,7 +432,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/media_content.py`
 - Process media from posts at or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago') for likes, unlikes, and downloads
-- **Note:** On Fansly a timeline or message scan starts at this date instead of at the newest post, so the newer pages are not asked for; with `--after` only the pages of the range are. Walls (the Labels area) and purchases are scanned as without it.
+- **Note:** On Fansly, a timeline or message scan starts at this date instead of the newest post, skipping newer pages. With `--after`, only pages in that range are fetched. Walls (the Labels area) and purchases are still scanned normally.
 
 #### `--after`
 
@@ -1028,7 +1028,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/scripts.py`
 - Ask the skip download script again about the files it skipped for good (skip-permanent) for the creators in this run
-- **Note:** The files `skip_download_script` skipped for good (`medias.skip_permanent = 1`) are no longer treated as downloaded for the run, so the creators' files in the run are offered to the script again. Areas are scanned in full unless `--after` is given, since those files can be in older posts. A file the script keeps downloads. `skip-permanent` keeps it skipped for good. A plain skip counts as skipped and sets it back to not downloaded, so the next run asks again. Without a script set, nothing skips them, so they download. Real downloads and other rows don't change.
+- **Note:** Stops treating files skipped for good by `skip_download_script` (`medias.skip_permanent = 1`) as downloaded for this run, so they are passed to the script again for the selected creators. Areas are scanned in full unless `--after` is given, since those files can be in older posts. A file the script keeps is downloaded; `skip-permanent` keeps it skipped for good; a plain skip counts as skipped and resets it to not downloaded so the next run asks again. Without a script set, nothing skips them, so they download. Real downloads and other rows don't change.
 
 ### Advanced Program Options
 
@@ -1176,7 +1176,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** `db`
 - **Defined in:** `ofscraper/utils/args/parse/group_bundles/db.py`
 - Un-mark the files the skip download script skipped for good (skip-permanent) among the selected rows, so the next run asks the script about them again. Filter with the creator, post id and media id options
-- **Note:** `ofscraper db` only. Of the rows the other options select (creator, `--post-id`, `--media-id` and the media filters), it keeps those `skip_download_script` skipped for good, prints them, and sets them back to not downloaded with `skip_permanent` cleared. The next normal run asks the script about them again. A media's download state is kept on all of its rows, so its rows in other posts change too. Other rows never change. Without it, `db` only reads.
+- **Note:** `ofscraper db` only. From the rows selected by the other options (creator, `--post-id`, `--media-id` and the media filters), keeps only those `skip_download_script` skipped for good, prints them, and resets them to not downloaded with `skip_permanent` cleared. The next normal run asks the script about them again. Because download state is shared across a media item's rows, its rows in other posts change too. Other rows never change. Without this flag, `db` is read-only.
 
 ### Table Filter Options
 
