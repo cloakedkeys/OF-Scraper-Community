@@ -364,7 +364,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** all
 - **Config fallback:** `content_filter_options.length_max`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/media_content.py`
-- max duration in seconds (whole number, e.g. 90); only applies to videos
+- Max duration in seconds (whole number, e.g. 90); only applies to videos
 
 #### `--length-min`
 
@@ -373,7 +373,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** all
 - **Config fallback:** `content_filter_options.length_min`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/media_content.py`
-- min duration in seconds (whole number, e.g. 90); only applies to videos
+- Min duration in seconds (whole number, e.g. 90); only applies to videos
 
 #### `--media-id`
 
@@ -398,7 +398,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `mediasort` · **Type:** one of `random`, `text`, `text`, `date`, `filename` · **Default:** none
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/check.py`, `ofscraper/utils/args/parse/arguments/media_content.py`
-- Changes media processing order before actions Example: for download
+- Changes media processing order before actions (e.g. for download)
 
 #### `--media-desc`
 
@@ -568,7 +568,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `post_sort` · **Type:** one of `date` · **Default:** `'date'`
 - **Commands:** main program, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/post_content.py`
-- Changes post processing order before actions Example: for like or unlike
+- Changes post processing order before actions (e.g. for like or unlike)
 
 #### `--post-desc`
 
@@ -576,7 +576,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `post_desc` · **Type:** flag · **Default:** off
 - **Commands:** main program
 - **Defined in:** `ofscraper/utils/args/parse/arguments/post_content.py`
-- Sort the post list in descending order Example: for like or unlike
+- Sort the post list in descending order (e.g. for like or unlike)
 
 #### `--filter`
 
@@ -584,7 +584,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `filter` · **Type:** text; repeatable · **Default:** `['.*']`
 - **Commands:** main program, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/post_content.py`
-- Filter posts by regex (case-sensitive if uppercase characters included) uses raw python string
+- Filter posts by regex (case-sensitive if uppercase characters included) uses raw Python string
 
 #### `--neg-filter`
 
@@ -592,7 +592,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `neg_filter` · **Type:** text; repeatable · **Default:** `[]`
 - **Commands:** main program, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/post_content.py`
-- Filter posts to exclude those matching regex (case-styensitive if uppercase characters included) uses raw python string
+- Filter posts to exclude those matching regex (case-sensitive if uppercase characters included) uses raw Python string
 
 #### `--block-ads`
 
@@ -719,7 +719,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `usernames` · **Type:** text; repeatable · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/check.py`, `ofscraper/utils/args/parse/arguments/user_select.py`
-- Select which username to process (name,name2). Set to ALL for all users
+- Select which usernames to process (name,name2). Set to ALL for all users
 
 #### `--excluded-username`
 
@@ -809,7 +809,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `all_promo` · **Type:** flag · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/user_list.py`
-- Flag for enabling/disabling accounts with any promo price [select one all-promo-only or --all-promo-skip]
+- Flag for enabling/disabling accounts with any promo price [select one --all-promo-only or --all-promo-skip]
 
 #### `--active-subscription`
 
@@ -823,7 +823,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Also:** `-ro`, `-rf`, `--renew-off`
 - **Dest:** `renewal` · **Type:** flag · **Default:** none
 - **Commands:** main program, `metadata`, `db`
-- Flag for enabling/disabling accounts set to renew renew flag on [select one --renew-on or --renew-off]
+- Flag for enabling/disabling accounts with the renew flag on [select one --renew-on or --renew-off]
 
 ### Advanced User List Filter Options
 
@@ -937,7 +937,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `subscribed_before` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_user_filter.py`
-- Filter accounts by sub date being at or before the given date (YYYY-MM-DD format)
+- Filter accounts by subscription date being at or before the given date (YYYY-MM-DD format)
 
 ### Model Sort & Processing Order Options
 
@@ -1217,7 +1217,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `timeline_strict` · **Type:** flag · **Default:** off
 - **Commands:** `post_check`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/post_content.py`
-- When timeline is select removes pinned and archived
+- When timeline is selected, removes pinned and archived posts
 
 #### `--check-area`
 
@@ -1269,5 +1269,5 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `db_asc` · **Type:** flag · **Default:** off
 - **Commands:** `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/post_content.py`
-- Change the sort order of table to ascending
+- Change the sort order of the table to ascending
 

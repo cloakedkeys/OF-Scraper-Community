@@ -122,7 +122,7 @@ subscribed_after_option = click.option(
 subscribed_before_option = click.option(
     "-sb",
     "--subscribed-before",
-    help="Filter accounts by sub date being at or before the given date (YYYY-MM-DD format)",
+    help="Filter accounts by subscription date being at or before the given date (YYYY-MM-DD format)",
     default=None,
     required=False,
     type=ArrowType(),

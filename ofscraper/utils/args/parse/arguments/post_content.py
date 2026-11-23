@@ -127,9 +127,9 @@ filter_option = click.option(
     "--filter",
     help="""
     \b
-    Filter posts by regex 
+    Filter posts by regex
     (case-sensitive if uppercase characters included)
-    uses raw python string
+    uses raw Python string
     """,
     default=[".*"],
     required=False,
@@ -142,9 +142,9 @@ neg_filter_option = click.option(
     "--neg-filter",
     help="""
     \b
-    Filter posts to exclude those matching regex 
-    (case-styensitive if uppercase characters included)
-    uses raw python string
+    Filter posts to exclude those matching regex
+    (case-sensitive if uppercase characters included)
+    uses raw Python string
     """,
     default=[],
     required=False,
@@ -193,11 +193,7 @@ scrape_paid_option = click.option(
 post_sort_option = click.option(
     "-pst",
     "--post-sort",
-    help="""
-    \b
-    Changes post processing order before actions
-    Example: for like or unlike
-    """,
+    help="Changes post processing order before actions (e.g. for like or unlike)",
     default="date",
     required=False,
     type=click.Choice(
@@ -210,10 +206,7 @@ post_sort_option = click.option(
 post_desc_option = click.option(
     "-pdc",
     "--post-desc",
-    help="""
-    Sort the post list in descending order
-    Example: for like or unlike
-    """,
+    help="Sort the post list in descending order (e.g. for like or unlike)",
     is_flag=True,
     default=False,
 )
@@ -221,9 +214,7 @@ post_desc_option = click.option(
 db_sort_option = click.option(
     "-dst",
     "--db-sort",
-    help="""
-    Changes order of table
-    """,
+    help="Changes order of table",
     default="posted",
     required=False,
     type=click.Choice(
@@ -234,9 +225,7 @@ db_sort_option = click.option(
 db_desc_option = click.option(
     "-bdc",
     "--db-asc",
-    help="""
-    Change the sort order  of table to ascending
-    """,
+    help="Change the sort order of the table to ascending",
     is_flag=True,
     default=False,
 )
@@ -248,7 +237,7 @@ like_toggle_force = click.option(
     "--force-like-toggle",
     "--no-cache-like",
     "force_like",
-    help="force toggling of posts to like or unlike status regardless of cache",
+    help="Force toggling of posts to like or unlike status regardless of cache",
     default=False,
     is_flag=True,
 )
@@ -315,7 +304,7 @@ post_id_filter_option = click.option(
 timeline_strict = click.option(
     "-tls",
     "--timeline-strict",
-    help="When timeline is select removes pinned and archived",
+    help="When timeline is selected, removes pinned and archived posts",
     default=False,
     is_flag=True,
 )

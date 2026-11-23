@@ -62,14 +62,14 @@ media_id_filter = click.option(
 length_max = click.option(
     "-lx",
     "--length-max",
-    help="max duration in seconds (whole number, e.g. 90); only applies to videos",
+    help="Max duration in seconds (whole number, e.g. 90); only applies to videos",
     required=False,
     type=click.IntRange(min=0),
 )
 length_min = click.option(
     "-lm",
     "--length-min",
-    help="min duration in seconds (whole number, e.g. 90); only applies to videos",
+    help="Min duration in seconds (whole number, e.g. 90); only applies to videos",
     required=False,
     type=click.IntRange(min=0),
 )
@@ -88,11 +88,7 @@ media_sort_option = click.option(
     "-mst",
     "--media-sort",
     "mediasort",
-    help="""
-    \b
-    Changes media processing order before actions
-    Example: for download
-    """,
+    help="Changes media processing order before actions (e.g. for download)",
     default=None,
     required=False,
     type=click.Choice(
@@ -109,10 +105,7 @@ media_sort_option = click.option(
 media_desc_option = click.option(
     "-mdc",
     "--media-desc",
-    help="""
-    \b
-    Sort the media list in descending order
-    """,
+    help="Sort the media list in descending order",
     is_flag=True,
     default=False,
 )
