@@ -159,10 +159,10 @@ Defined in `ofscraper/utils/of_env/values/req/req.py`.
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
 | <a id="connect_timeout"></a>`CONNECT_TIMEOUT` | `OFSC_CONNECT_TIMEOUT` | `15` | Default connection timeout, in seconds, for HTTP sessions that don't pass their own. |
-| <a id="pool_connect_timeout"></a>`POOL_CONNECT_TIMEOUT` | `OFSC_POOL_CONNECT_TIMEOUT` | `15` | Default timeout, in seconds, to acquire a connection from the pool for HTTP sessions that don't pass their own. |
+| <a id="pool_connect_timeout"></a>`POOL_CONNECT_TIMEOUT` | `OFSC_POOL_CONNECT_TIMEOUT` | `15` | Default time, in seconds, allowed to get a connection, for HTTP sessions that don't pass their own. |
 | <a id="of_read_timeout"></a>`OF_READ_TIMEOUT` | `OFSC_READ_TIMEOUT` | `60` | Longest wait for the next piece of a response (seconds), for requests that don't pass their own read timeout. It isn't a limit on the whole response: a slow response that keeps sending is fine. On a kept connection that has answered before, a GET's answer must start within a third of this, or that connection is dropped and the request is retried. 0 means no limit (the session manager turns it into None). |
 | <a id="max_connections"></a>`MAX_CONNECTIONS` | `OFSC_MAX_CONNECTIONS` | `200` | Default maximum simultaneous connections for HTTP sessions that don't pass their own limit. |
-| <a id="api_max_connection"></a>`API_MAX_CONNECTION` | `OFSC_API_MAX_CONNECTION` | `100` | Maximum simultaneous connections for OnlyFans API sessions (`ofsession`). |
+| <a id="api_max_connection"></a>`API_MAX_CONNECTION` | `OFSC_API_MAX_CONNECTION` | `100` | Default maximum simultaneous connections for API sessions (OnlyFans and Fansly). |
 | <a id="total_timeout"></a>`TOTAL_TIMEOUT` | `OFSC_TOTAL_TIMEOUT` | `None` | Default total request timeout, in seconds, for HTTP sessions that don't pass their own (`None` means no limit). |
 | <a id="keep_alive"></a>`KEEP_ALIVE` | `OFSC_KEEP_ALIVE` | `20` | The most idle connections the sync client keeps open to use again. A count, not a time. The async client, which downloads, has no such limit. |
 | <a id="keep_alive_exp"></a>`KEEP_ALIVE_EXP` | `OFSC_KEEP_ALIVE_EXP` | `10` | How long an idle connection is kept open to use again (seconds). Applies to both clients. 0 keeps none: each connection is closed after use. |
@@ -171,7 +171,7 @@ Defined in `ofscraper/utils/of_env/values/req/req.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="proxy"></a>`PROXY` | `OFSC_PROXY` | `None` | Proxy URL passed to HTTP sessions (`None` means no proxy). |
+| <a id="proxy"></a>`PROXY` | `OFSC_PROXY` | `None` | Proxy URL for all HTTP sessions (`http://` or `https://` only; SOCKS isn't supported). When unset, most requests use no proxy, but some still follow `HTTP_PROXY`/`HTTPS_PROXY` from the environment. |
 | <a id="proxy_mounts"></a>`PROXY_MOUNTS` | `OFSC_PROXY_MOUNTS` | `None` | Defined but not read anywhere. |
 | <a id="proxy_auth"></a>`PROXY_AUTH` | `OFSC_PROXY_AUTH` | `None` | Defined but not read anywhere. |
 

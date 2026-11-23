@@ -16,7 +16,7 @@ def load_network_config():
     # Default: 15
     config["CONNECT_TIMEOUT"] = int(os.getenv("OFSC_CONNECT_TIMEOUT", "15"))
 
-    # POOL_CONNECT_TIMEOUT: Default timeout, in seconds, to acquire a connection from the pool for HTTP sessions that don't pass their own.
+    # POOL_CONNECT_TIMEOUT: Default time, in seconds, allowed to get a connection, for HTTP sessions that don't pass their own.
     # Default: 15
     config["POOL_CONNECT_TIMEOUT"] = int(os.getenv("OFSC_POOL_CONNECT_TIMEOUT", "15"))
 
@@ -34,7 +34,7 @@ def load_network_config():
     # Default: 200
     config["MAX_CONNECTIONS"] = int(os.getenv("OFSC_MAX_CONNECTIONS", "200"))
 
-    # API_MAX_CONNECTION: Maximum simultaneous connections for OnlyFans API sessions (`ofsession`).
+    # API_MAX_CONNECTION: Default maximum simultaneous connections for API sessions (OnlyFans and Fansly).
     # Default: 100
     config["API_MAX_CONNECTION"] = int(os.getenv("OFSC_API_MAX_CONNECTION", "100"))
 
@@ -60,7 +60,7 @@ def load_network_config():
     config["KEEP_ALIVE_EXP"] = int(os.getenv("OFSC_KEEP_ALIVE_EXP", "10"))
 
     # --- Proxy Configuration ---
-    # PROXY: Proxy URL passed to HTTP sessions (`None` means no proxy).
+    # PROXY: Proxy URL for all HTTP sessions (`http://` or `https://` only; SOCKS isn't supported). When unset, most requests use no proxy, but some still follow `HTTP_PROXY`/`HTTPS_PROXY` from the environment.
     config["PROXY"] = os.getenv("OFSC_PROXY", None)
 
     # PROXY_MOUNTS: Defined but not read anywhere.
