@@ -232,7 +232,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `env_files` · **Type:** path; repeatable · **Default:** none
 - **Commands:** all
 - **Defined in:** `ofscraper/utils/args/parse/arguments/program.py`
-- Path to a custom environment variables file (.env).
+- Environment file to load (.env, .yaml/.yml or .json). Can be given more than once; later files win.
 - **Note:** Loaded before settings are built. It replaces `advanced_options.env_files` instead of adding to it.
 
 ### Logging Options
@@ -299,7 +299,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `performance_options.download_sems`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/download.py`
-- Number of concurrent downloads per thread
+- Number of downloads at the same time (overrides performance_options.download_sems).
 
 #### `--download-limit`
 

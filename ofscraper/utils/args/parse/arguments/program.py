@@ -42,7 +42,7 @@ If not set, the profile's site.json decides, and OnlyFans is the default.
 env_file_option = click.option(
     "--env-files",
     type=click.Path(exists=True, dir_okay=False, readable=True),
-    help="Path to a custom environment variables file (.env).",
+    help="Environment file to load (.env, .yaml/.yml or .json). Can be given more than once; later files win.",
     default=None,
     multiple=True,
 )
