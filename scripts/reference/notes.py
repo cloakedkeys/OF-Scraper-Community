@@ -188,6 +188,7 @@ ENV_DIRECT = {
     "WAYLAND_DISPLAY": "Check table, Linux only: see `DISPLAY`.",
     "OFSC_FANSLY_API_BASE": "Base URL of the Fansly API that Fansly requests go to.",
     "OFSC_FANSLY_AUTH_FILE_NAME": "Name of the Fansly credentials file in the profile folder.",
+    "OFSC_STATUS_FILE": "Path to the status JSON file written for unattended runs. Unset, it is `status.json` in the active profile folder.",
     "STASH_API_KEY": "`stash_sync` only: the Stash API key, for a Stash with a password. `--api-key` overrides it.",
     "STASH_URL": "`stash_sync` only: Stash's GraphQL URL. `--url` overrides it.",
 }
