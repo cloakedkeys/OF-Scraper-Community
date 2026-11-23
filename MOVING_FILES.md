@@ -9,12 +9,14 @@ The command is offline: it does not contact OnlyFans or Fansly, and it does not 
 1. Close the scraper.
 2. Preview what would move (nothing is changed without `--apply`):
    ```sh
-   python -m ofscraper.commands.move_creator_files "<profile>/.data/<model_id>/user_data.db"
+   ofscraper move_creator_files "<profile>/.data/<model_id>/user_data.db"
    ```
 3. Apply the move:
    ```sh
-   python -m ofscraper.commands.move_creator_files "<profile>/.data/<model_id>/user_data.db" --apply
+   ofscraper move_creator_files "<profile>/.data/<model_id>/user_data.db" --apply
    ```
+
+`python -m ofscraper.commands.move_creator_files` also works.
 
 The JSON report includes:
 

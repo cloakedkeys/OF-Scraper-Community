@@ -550,7 +550,10 @@ def render_argparse(module, usage):
     finally:
         argparse.ArgumentParser.parse_args = original
     parser = captured["parser"]
-    out = [f"Run `python -m ofscraper.commands.{module} {usage}`.\n\n"]
+    out = [
+        f"Run `ofscraper {module} {usage}`"
+        f" (or `python -m ofscraper.commands.{module} {usage}`).\n\n"
+    ]
     for action in parser._actions:
         if isinstance(action, argparse._HelpAction):
             continue
