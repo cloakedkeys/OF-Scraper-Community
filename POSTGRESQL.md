@@ -222,11 +222,11 @@ Like `stash_sync --postgres`, it reads `OFSC_DATABASE_URL` from the environment 
       | **Showing only what is new since the last run** | `get_all_medias_sync` | Take the newest non-empty `posted_at` from its rows; this matches the newest `posted_at` in a SQLite file. |
 
     - *SQLite-only by design:* the GUI's Merge Databases and the download paths it updates when moving the OnlyFans folder work on `user_data.db` files by design, so with PostgreSQL on they change only those files.
-- **Standalone tools that do work with PostgreSQL:** `stash_sync`, `recover_collisions`, `move_creator_files`, and `scripts/creator_names.py` all work on PostgreSQL when passed `--postgres`. Each reads `OFSC_DATABASE_URL` only from the environment it is run in (doesn't read the scraper's settings), and warns when given files while PostgreSQL is on:
+- **Standalone tools that do work with PostgreSQL:** `stash_sync`, `recover_collisions`, `move_creator_files`, and `creator_names` all work on PostgreSQL when passed `--postgres`. Each reads `OFSC_DATABASE_URL` only from the environment it is run in (doesn't read the scraper's settings), and warns when given files while PostgreSQL is on:
   - See [Syncing to Stash](#syncing-to-stash), [Recovering filename collisions](#recovering-filename-collisions), and [Moving a creator's files](#moving-a-creators-files) above.
-  - For `scripts/creator_names.py`:
+  - For `creator_names` (`python scripts/creator_names.py` also works):
     ```bash
-    python scripts/creator_names.py --postgres [--site onlyfans|fansly]
+    ofscraper creator_names --postgres [--site onlyfans|fansly]
     ```
     All of its usual options work (`--all`, `--find`, `--csv`, `--add MODEL_ID NAME [--seen DATE] [--force]`).
 

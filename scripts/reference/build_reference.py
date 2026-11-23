@@ -508,6 +508,10 @@ def render_cli(notes):
 
 # argparse tools under ofscraper/commands that aren't part of the CLI: module -> (usage, summary)
 SEPARATE_COMMANDS = {
+    "creator_names": (
+        "[--all | --find NAME | --add MODEL_ID NAME [--seen DATE] [--force] | --csv FILE] [--data-dir DIR | --postgres [--site SITE]]",
+        "List and record the usernames each creator account has had.",
+    ),
     "move_creator_files": (
         "(DATABASE | --postgres --creator NAME) [OPTIONS]",
         "Move a creator's downloaded files to match new path settings and update recorded paths.",

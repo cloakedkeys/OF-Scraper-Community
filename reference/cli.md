@@ -44,6 +44,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 | [`post_check`](#post_check) (54 options) | Produces a media table from posts with filterable entries and quick downloads |
 | [`metadata`](#metadata) (86 options) | Modify metadata or db files |
 | [`db`](#db) (61 options) | Print information from the database |
+| [`creator_names`](#creator_names-separate-entry-point) (argparse) | List and record the usernames each creator account has had. |
 | [`move_creator_files`](#move_creator_files-separate-entry-point) (argparse) | Move a creator's downloaded files to match new path settings and update recorded paths. |
 | [`postgres_export`](#postgres_export-separate-entry-point) (argparse) | Export creators from PostgreSQL back to per-creator `user_data.db` files. |
 | [`postgres_import`](#postgres_import-separate-entry-point) (argparse) | Import per-creator `user_data.db` files into PostgreSQL. |
@@ -114,6 +115,24 @@ The run reads `auth.json` and `config.json` from the profile. It writes media un
 **Options:** 61 · **`--help` summary:** Print information from the database
 
 `ofscraper db`, with user selection, area (`-o`) and media filters (type, size, length, downloaded, locked, preview, protected, post and media ids, dates), sorting and a hard limit. `--post-id` and `--media-id` take one id, or several separated by commas or spaces. An id is decimal digits, from any script. A value with no id in it, or with anything else (such as `²` or `-4`), is a usage error. It reads media rows from each selected creator's `user_data.db` and prints them as a table. `-ep`/`--export PATH` also writes a `.csv`. It makes no API calls for the media itself. With several creators, every selected creator's rows go into the one CSV. `--unmark-permanent-skips` narrows the rows to the permanent `skip_download_script` skips and sets them back to not downloaded after printing them.
+
+### `creator_names` (separate entry point)
+
+`ofscraper creator_names [--all | --find NAME | --add MODEL_ID NAME [--seen DATE] [--force] | --csv FILE] [--data-dir DIR | --postgres [--site SITE]]` (or `python -m ofscraper.commands.creator_names`, or `python scripts/creator_names.py`). Offline tool using argparse. Lists the usernames each creator account has had from the `profiles` table of every `<data-dir>/<model_id>/user_data.db` (default: the main profile's `.data` folder), along with first-seen and last-seen dates and the folder name a deleted account would use. `--add` appends a name, and `--seen` sets its date (`2024-03-01` or `2024-03-01T09:30:00+00:00`; UTC unless an offset is given, at most one day ahead, and not allowed for the deleted-account placeholder). `--add` refuses a name or date that would change a deleted account's folder name unless `--force` is given. `--force` doesn't pick that name directly: a name becomes the deleted-account folder name only when its `--seen` date is newer than every other name's last-seen date. File mode reads OnlyFans databases only.
+
+With `--postgres [--site onlyfans|fansly]` (default `onlyfans`, without `--data-dir`), lists and adds names in that site's `profiles` table in the PostgreSQL database named by `OFSC_DATABASE_URL` in the current environment (see `POSTGRESQL.md`), with the same listing, CSV output, folder-name rules and refusals. `--add` writes one row (`user_id` is the creator's ID) and its dates in one transaction, kept only if nothing is refused. Requires the PostgreSQL driver.
+
+Run `ofscraper creator_names [--all | --find NAME | --add MODEL_ID NAME [--seen DATE] [--force] | --csv FILE] [--data-dir DIR | --postgres [--site SITE]]` (or `python -m ofscraper.commands.creator_names [--all | --find NAME | --add MODEL_ID NAME [--seen DATE] [--force] | --csv FILE] [--data-dir DIR | --postgres [--site SITE]]`).
+
+- `--data-dir`: 
+- `--postgres`: use $OFSC_DATABASE_URL, not the files
+- `--site`: with --postgres: the site (default: onlyfans)
+- `--all`: list every account
+- `--find`: accounts that ever used NAME
+- `--add`: record a name
+- `--seen`: with --add, when the name was in use: 2024-03-01 or 2024-03-01T09:30:00+00:00 (UTC unless it has an offset; no more than a day ahead)
+- `--force`: with --add, add the name even if it changes the deleted-account folder name
+- `--csv`: also write the listing to a CSV file
 
 ### `move_creator_files` (separate entry point)
 
@@ -196,9 +215,7 @@ Run `ofscraper stash_sync (PATH... | --postgres) [OPTIONS]` (or `python -m ofscr
 ### Scripts in `scripts/`
 
 - `scripts/commit_version.sh`: CI helper. Works out the commit-based version string, hashes and push type from git for the build workflows.
-- `scripts/creator_names.py`: `python scripts/creator_names.py [--all | --find NAME | --add MODEL_ID NAME [--seen DATE] [--force] | --csv FILE] [--data-dir DIR | --postgres [--site SITE]]`. Lists the usernames each creator account has had from the `profiles` table of every `<data-dir>/<model_id>/user_data.db` (default: the main profile's `.data` folder), along with first-seen and last-seen dates and the folder name a deleted account would use. `--add` appends a name, and `--seen` sets its date (`2024-03-01` or `2024-03-01T09:30:00+00:00`; UTC unless an offset is given, at most one day ahead, and not allowed for the deleted-account placeholder). `--add` refuses a name or date that would change a deleted account's folder name unless `--force` is given. `--force` doesn't pick that name directly: a name becomes the deleted-account folder name only when its `--seen` date is newer than every other name's last-seen date. File mode reads OnlyFans databases only.
-
-With `--postgres [--site onlyfans|fansly]` (default `onlyfans`, without `--data-dir`), lists and adds names in that site's `profiles` table in the PostgreSQL database named by `OFSC_DATABASE_URL` in the current environment (see `POSTGRESQL.md`), with the same listing, CSV output, folder-name rules and refusals. `--add` writes one row (`user_id` is the creator's ID) and its dates in one transaction, kept only if nothing is refused. Requires the PostgreSQL driver and the scraper from the same checkout.
+- `scripts/creator_names.py`: Compatibility wrapper that calls `ofscraper creator_names` (`ofscraper/commands/creator_names.py`).
 - `scripts/determine_docker_stable_dev_tags.py`: Older CI helper that the current Docker image workflow doesn't call. Asks the GitHub API for commit timestamps to pick Docker image tags.
 - `scripts/entry/`: Docker internals. `entrypoint.sh`, `lib_user_setup.sh`, `lib_paths.sh` and `lib_permissions.sh` set up the container user, the data and config paths and the permissions, then start the app.
 - `scripts/lint/`: CI lint helper. `python scripts/lint/check_blind_except.py [--update]` counts ruff's BLE001 (blind except) and S110 (try/except/pass) findings per file in `ofscraper/data/api` and `ofscraper/db` and fails when a count differs from `blind_except_baseline.json`. `--update` rewrites the baseline; commit it after removing findings.

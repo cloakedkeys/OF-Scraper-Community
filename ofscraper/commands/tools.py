@@ -37,6 +37,12 @@ def _postgres_export():
     return mod.main
 
 
+def _creator_names():
+    import ofscraper.commands.creator_names as mod
+
+    return mod.main
+
+
 TOOLS = {
     "stash_sync": (
         _stash_sync,
@@ -57,6 +63,10 @@ TOOLS = {
     "postgres_export": (
         _postgres_export,
         "Export creators from PostgreSQL back to user_data.db files",
+    ),
+    "creator_names": (
+        _creator_names,
+        "List and record usernames each creator account has had",
     ),
 }
 
