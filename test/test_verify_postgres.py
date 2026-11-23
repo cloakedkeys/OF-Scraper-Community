@@ -55,3 +55,50 @@ def test_unknown_creator(library, server, tmp_path):  # noqa: F811
     server.bring_in(tmp_path / ".data", tmp_path / "staging")
     with pytest.raises(Exception, match="no creator named nobody"):
         verify.verify_postgres(URL, "nobody")
+
+
+def medias(database_url):
+    import ofscraper.db.creator_rows as creator_rows
+
+    with creator_rows.in_postgres(database_url, ["onlyfans"], ["5"]) as (rows,):
+        return sorted(tuple(r) for r in rows.select("medias", ["media_id", "post_id", "downloaded"]))
+
+
+def check_apply_and_undo(database_url, library, tmp_path):
+    db, lib = library
+    before = medias(database_url)
+    with pytest.raises(ValueError, match="undo file"):
+        verify.verify_postgres(database_url, "5", apply=True)
+    undo_dir = tmp_path / "undo"
+    undo_dir.mkdir()
+    report = verify.verify_postgres(database_url, "5", apply=True, undo_dir=undo_dir)
+    (creator,) = report["creators"]
+    assert creator["media_reset"] == 2 and creator["files_moved_aside"] == 1
+    reset = {m for m, _, d in medias(database_url) if d == 0} - {m for m, _, d in before if d == 0}
+    assert reset == {2, 3}
+    assert (lib / "empty.jpg.bad").exists()
+    undo_file = creator["undo_file"]
+    assert verify.undo_postgres(database_url, "5", undo_file)["rows_to_restore"] == 2
+    assert verify.undo_postgres(database_url, "5", undo_file, apply=True)["files_to_rename_back"] == 1
+    assert medias(database_url) == before
+    assert (lib / "empty.jpg").exists() and not (lib / "empty.jpg.bad").exists()
+
+
+def test_apply_and_undo(library, server, tmp_path):  # noqa: F811
+    server.bring_in(tmp_path / ".data", tmp_path / "staging")
+    check_apply_and_undo(URL, library, tmp_path)
+
+
+def test_a_row_changed_meanwhile_changes_nothing(library, server, tmp_path, monkeypatch):  # noqa: F811
+    import ofscraper.db.creator_rows as creator_rows
+
+    db, lib = library
+    server.bring_in(tmp_path / ".data", tmp_path / "staging")
+    before = medias(URL)
+    real = creator_rows.PostgresRows.change
+    monkeypatch.setattr(creator_rows.PostgresRows, "change", lambda *a: False)
+    with pytest.raises(postgres.ChangedMeanwhile):
+        verify.verify_postgres(URL, "5", apply=True, undo_dir=tmp_path)
+    monkeypatch.setattr(creator_rows.PostgresRows, "change", real)
+    assert medias(URL) == before
+    assert (lib / "empty.jpg").exists() and not list(tmp_path.glob("*.verify-undo-*"))

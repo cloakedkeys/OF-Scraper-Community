@@ -1,0 +1,82 @@
+# Check your library against the database
+
+The database records each file the scraper downloaded. If a file is later deleted, cut short or lost with a drive, the database still says it's downloaded, so the scraper never fetches it again. `ofscraper verify` finds those files without logging in, and can mark them so the next normal run downloads them again.
+
+**Before you start:** stop the scraper while you run `--apply` or `--undo`.
+
+## 1. Preview
+
+```sh
+ofscraper verify "<profile>/.data"
+```
+
+Give a profile's `.data` folder to check every creator in it, or one creator's `user_data.db`. Nothing is changed. The JSON report has, for each creator:
+
+| Finding | Meaning | Reset by `--apply` |
+|---|---|---|
+| `missing` | the recorded file isn't there | yes |
+| `empty` | the file is 0 bytes | yes |
+| `size_differs` | the file's size isn't the recorded size | only with `--reset-size-differs` |
+| `no_file_recorded` | marked downloaded with no file | never |
+| `ok` | present and the right size | — |
+
+- **`no_file_recorded`** is how the scraper marks an item it has given up on for good (a bad link, an empty file from the server, a permanent skip by your script). Resetting those would make every run try them again, so they're only counted.
+- **`size_differs`** isn't reset by default, because you may have edited or re-encoded the file yourself.
+- **`not_recoverable`** marks a finding that downloading again can't fix: an expired story or highlight, a deleted post, a locked item, or a profile picture or header. `--apply` leaves these alone.
+- **`folders_missing`** lists recorded folders that aren't there, which often means a drive or share isn't connected.
+- **`media_to_reset`** and **`files_to_move_aside`** say what `--apply` would do.
+
+Up to 20 findings per creator are listed with their paths (`--sample N` for more); the counts always cover everything.
+
+## 2. Apply
+
+```sh
+ofscraper verify "<profile>/.data" --apply
+```
+
+- Every database row of each `missing` or `empty` media is set to not downloaded, so the next normal run downloads it again.
+- An `empty` file (or a `size_differs` one, with `--reset-size-differs`) is renamed with `.bad` added, so the new download gets the original name. Delete the `.bad` files once you're happy with the new ones.
+- An undo file is written beside each database first (`user_data.db.verify-undo-<...>.json`), and its path is in the report. If the run is stopped before it finishes, nothing is changed and the files are renamed back.
+
+**If a drive is unplugged:** a creator with more than half of its files missing is left alone, and `left_alone` in the report says why. Connect the drive and run it again. If the files really are gone, add `--allow-mostly-missing`.
+
+## 3. Download again
+
+Run the scraper as usual. Only the reset files are downloaded; everything else is still marked downloaded.
+
+No `--after` is needed. In the timeline, messages, archived posts and streams, a normal run starts its scan at the oldest not-downloaded file, so it goes back far enough by itself. Purchases, pinned posts, highlights and stories are scanned in full every run, and on Fansly a run keeps paging until it has passed the oldest not-downloaded post.
+
+A reset media isn't downloaded while another creator's row for the same media is still marked downloaded. That only happens when files are shared between creators (unique-across-models mode) or with PostgreSQL.
+
+## Undo
+
+```sh
+ofscraper verify --undo "<profile>/.data/<model_id>/user_data.db.verify-undo-<...>.json"
+ofscraper verify --undo "<...>.json" --apply
+```
+
+The first line previews; `--apply` does it. Rows still marked not downloaded are marked downloaded again, and files moved aside get their names back. Rows downloaded again since are left as they are, so it's safe to run at any time, and running it twice changes nothing the second time.
+
+## Libraries seen from elsewhere
+
+If the database was written in Docker and you run `verify` on the host, the recorded paths are the container's. Map them:
+
+```sh
+ofscraper verify "<profile>/.data" --path-map /data=/mnt/library
+```
+
+`--path-map` can be given more than once. If the database holds relative paths, give the folder the scraper ran in with `--path-root`.
+
+## PostgreSQL
+
+```sh
+ofscraper verify --postgres --creator "<name or id>"
+ofscraper verify --postgres --creator "<name or id>" --apply --undo-dir "<folder>"
+ofscraper verify --postgres --creator "<name or id>" --undo "<folder>/postgresql-...json" --apply
+```
+
+`OFSC_DATABASE_URL` must be set where you run it (see [POSTGRESQL.md](POSTGRESQL.md)). `--apply` needs `--undo-dir`, a folder that is kept (in Docker, a mounted one). Add `--site` if both sites have a creator by that name. A row the scraper changed while this ran stops it with nothing changed.
+
+## Exit status
+
+`0` with the report, `1` on failure, `2` on bad arguments, `130` when interrupted.

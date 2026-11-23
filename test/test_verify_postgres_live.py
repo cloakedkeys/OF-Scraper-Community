@@ -32,3 +32,10 @@ def test_the_same_rows_give_the_same_findings_from_either(library, pg, tmp_path)
     db, _ = library
     bring_in(tmp_path / ".data")
     check_same_findings(URL, db)
+
+
+def test_apply_and_undo(library, pg, tmp_path):  # noqa: F811
+    from test.test_verify_postgres import check_apply_and_undo
+
+    bring_in(tmp_path / ".data")
+    check_apply_and_undo(URL, library, tmp_path)
