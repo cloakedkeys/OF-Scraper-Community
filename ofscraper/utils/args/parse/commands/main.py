@@ -18,4 +18,11 @@ import ofscraper.utils.args.parse.arguments.utils.retry as retry_helper
 @click.pass_context
 def program(ctx, *args, **kwargs):
     ctx = retry_helper.retry_modifiy(ctx)
+    from ofscraper.commands.scraper.multi_profile import validate_multi_profile_args
+
+    error = validate_multi_profile_args(ctx.params)
+    if error:
+        from click import UsageError
+
+        raise UsageError(error, ctx=ctx)
     return ctx.params, ctx.info_name

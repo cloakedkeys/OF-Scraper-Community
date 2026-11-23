@@ -24,6 +24,14 @@ def check_database():
 def main():
     exit_status.reset()
     try:
+        import ofscraper.utils.settings as settings
+
+        args = settings.get_args()
+        if getattr(args, "profiles", None):
+            from ofscraper.commands.scraper.multi_profile import run_multi_profile_daemon
+
+            run_multi_profile_daemon(args)
+            raise SystemExit(exit_status.OK)
         check_database()
         start_manager()
     except SystemExit as exc:
