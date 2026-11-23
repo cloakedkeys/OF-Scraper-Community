@@ -1,0 +1,315 @@
+"""Check the setup without running a scrape: config, logins on file, ffmpeg,
+key files, folders, free space and the database setting.
+
+It reads config.json as it is, changes nothing, makes no connection and
+never asks a question. Each line is PASS, WARN, FAIL or SKIP; the exit status
+is 1 when anything fails. No login value, password or key is printed.
+"""
+
+import argparse
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+
+import ofscraper.utils.of_env.of_env as of_env
+
+PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
+OF_AUTH_KEYS = ["sess", "auth_id", "user_agent", "x-bc"]
+
+
+class Report:
+    def __init__(self):
+        self.results = []
+
+    def add(self, status, check, detail=""):
+        self.results.append({"status": status, "check": check, "detail": detail})
+
+    @property
+    def failed(self):
+        return any(r["status"] == FAIL for r in self.results)
+
+    def text(self):
+        width = max(len(r["check"]) for r in self.results)
+        return "\n".join(
+            f"{r['status']:<5} {r['check']:<{width}}  {r['detail']}".rstrip()
+            for r in self.results
+        )
+
+
+def config_path(given=None):
+    """Where config.json is, by get_config_path's rule (utils/paths/common.py),
+    without reading settings or creating anything."""
+    home = pathlib.Path.home() / of_env.getattr("configPath")
+    name = of_env.getattr("configFile")
+    if not given:
+        return home / name
+    path = pathlib.Path(given)
+    if path.is_file():
+        return path
+    if path.is_dir() or path.suffix == "":
+        return path / name
+    if str(path.parent) == ".":
+        return home / path
+    return path
+
+
+def read_config(path, report):
+    """The settings in config.json, or None for the built-in defaults."""
+    import ofscraper.utils.config.file as config_file
+
+    if not path.exists():
+        report.add(WARN, "config file", f"{path} isn't there: a run makes one with the defaults")
+        return None
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as error:
+        report.add(FAIL, "config file", f"{path} can't be read: {error}")
+        return None
+    try:
+        config = config_file.unwrap(config_file.json_loads(text))
+    except json.JSONDecodeError as error:
+        report.add(FAIL, "config file",
+                   f"{path} isn't valid JSON: {error.msg} at line {error.lineno}, column {error.colno}."
+                   " The rest is checked with the defaults")
+        return None
+    except config_file.NotAnObjectError as error:
+        report.add(FAIL, "config file", f"{path}: {error}. The rest is checked with the defaults")
+        return None
+    report.add(PASS, "config file", str(path))
+    return config
+
+
+def _get(getter, config):
+    """A config getter's value for this config, or the default."""
+    return getter(config=config if config is not None else False)
+
+
+def profile_folder(config, profile, path):
+    import ofscraper.utils.config.data as data
+    import ofscraper.utils.profiles.tools as profile_tools
+
+    name = profile or _get(data.get_main_profile, config)
+    return path.parent / profile_tools.profile_name_fixer(name)
+
+
+def check_onlyfans_auth(folder, report):
+    import ofscraper.utils.auth.utils.dict as auth_dict
+
+    path = folder / of_env.getattr("authFile")
+    if not path.exists():
+        report.add(FAIL, "OnlyFans auth", f"{path} isn't there")
+        return
+    try:
+        auth = auth_dict.get_auth_dict(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, AttributeError) as error:
+        report.add(FAIL, "OnlyFans auth", f"{path} can't be read: {type(error).__name__}")
+        return
+    if not isinstance(auth, dict):
+        report.add(FAIL, "OnlyFans auth", f"{path} doesn't hold the auth fields")
+        return
+    blank = [k for k in OF_AUTH_KEYS if auth.get(k) in (None, "")]
+    if blank:
+        report.add(FAIL, "OnlyFans auth", f"blank in {path}: {', '.join(blank)}")
+    else:
+        report.add(PASS, "OnlyFans auth", f"{path} (every field set; the login itself is checked with --online)")
+
+
+def check_fansly_auth(folder, report):
+    import ofscraper.sites.fansly.auth as fansly_auth
+    import ofscraper.sites.fansly.constants as fansly_constants
+
+    path = folder / fansly_constants.AUTH_FILE
+    if not path.exists():
+        report.add(FAIL, "Fansly auth", f"{path} isn't there")
+        return
+    try:
+        auth = fansly_auth.read_auth(path)
+    except (OSError, ValueError, AttributeError) as error:
+        report.add(FAIL, "Fansly auth", f"{path} can't be read: {type(error).__name__}")
+        return
+    problems = fansly_auth.problems(auth)
+    if problems:
+        report.add(FAIL, "Fansly auth", f"{path}: {'; '.join(problems)}")
+    else:
+        report.add(PASS, "Fansly auth", f"{path} (the login itself is checked with --online)")
+
+
+def check_auth(config, folder, site, report):
+    import ofscraper.sites as sites
+
+    for name, check in ((sites.ONLYFANS, check_onlyfans_auth), (sites.FANSLY, check_fansly_auth)):
+        label = "OnlyFans auth" if name == sites.ONLYFANS else "Fansly auth"
+        if name == site:
+            check(folder, report)
+        else:
+            report.add(SKIP, label, f"not used: the profile is for {sites.SITE_NAMES[site]}")
+
+
+def check_ffmpeg(config, report):
+    import ofscraper.utils.config.data as data
+    import ofscraper.utils.system.ffmpeg as ffmpeg
+
+    configured = _get(data.get_ffmpeg, config) or of_env.getattr("FFMPEG_DEFAULT")
+    if configured:
+        try:
+            is_ffmpeg, version, major = ffmpeg.ffmpeg_version(configured) if shutil.which(configured) else (None, None, None)
+        except (OSError, subprocess.SubprocessError):
+            is_ffmpeg, version, major = None, None, None
+        if is_ffmpeg and major is not None and major < 6:
+            report.add(FAIL, "ffmpeg", f"{configured} is version {version}; protected videos need 6 or newer")
+            return None
+        if not is_ffmpeg:
+            report.add(FAIL, "ffmpeg", f"the configured ffmpeg {configured} isn't there or isn't ffmpeg")
+            return None
+    path, source, version = ffmpeg.find_ffmpeg(configured)
+    if not path:
+        report.add(FAIL, "ffmpeg", "no ffmpeg 6 or newer found in the config, pyffmpeg or PATH")
+        return None
+    report.add(PASS, "ffmpeg", f"{version or 'version unknown'} (from {source}): {path}")
+    return path
+
+
+def check_ffprobe(ffmpeg_path, report):
+    if not ffmpeg_path:
+        report.add(SKIP, "ffprobe", "no ffmpeg to look beside")
+        return
+    name = "ffprobe.exe" if ffmpeg_path.lower().endswith(".exe") else "ffprobe"
+    beside = os.path.join(os.path.dirname(ffmpeg_path), name)
+    found = beside if os.path.exists(beside) else shutil.which("ffprobe")
+    if found:
+        report.add(PASS, "ffprobe", found)
+    else:
+        report.add(WARN, "ffprobe", "not found beside ffmpeg or in PATH: media lengths come from ffmpeg instead")
+
+
+def check_keys(config, report):
+    import ofscraper.utils.config.data as data
+    from ofscraper.commands.scraper.actions.download.utils import keyhelpers
+
+    mode = _get(data.get_key_mode, config)
+    if mode == "cdrm":
+        report.add(PASS, "key files", "key mode cdrm: no key files needed; its server isn't contacted by this check")
+        return
+    if mode != "manual":
+        report.add(PASS, "key files", f"key mode {mode}: no key files needed")
+        return
+    client_id = _get(data.get_client_id, config) if config is not None else None
+    private_key = _get(data.get_private_key, config) if config is not None else None
+    problem = keyhelpers.cdm_key_problems(mode, client_id, private_key)
+    if problem:
+        report.add(FAIL, "key files", problem)
+        return
+    try:
+        keyhelpers.load_device(private_key, client_id)
+    except Exception as error:
+        report.add(FAIL, "key files", f"the key files can't be loaded: {type(error).__name__}")
+        return
+    report.add(PASS, "key files", f"client-id {client_id}, private-key {private_key}")
+
+
+def _free(path):
+    gib = shutil.disk_usage(path).free / 2**30
+    return f"{gib:.1f} GiB free"
+
+
+def _device(path):
+    try:
+        return os.stat(path).st_dev
+    except OSError:
+        return None
+
+
+def check_folders(config, report):
+    import ofscraper.utils.config.data as data
+    import ofscraper.utils.paths.common as common_paths
+
+    save = pathlib.Path(os.path.expanduser(common_paths.get_save_location(config if config is not None else False)))
+    if save.is_dir():
+        report.add(PASS, "save folder", f"{save}, {_free(save)}")
+    else:
+        report.add(FAIL, "save folder", f"{save} isn't there")
+    temp = _get(data.get_TempDir, config)
+    if temp:
+        temp = pathlib.Path(os.path.expanduser(temp))
+        if temp.is_dir():
+            report.add(PASS, "temp folder", f"{temp}, {_free(temp)}")
+        else:
+            report.add(FAIL, "temp folder", f"{temp} isn't there")
+    else:
+        report.add(PASS, "temp folder", "not set: files are written beside their final place")
+
+    limit = _get(data.get_system_freesize, config) or 0
+    if not limit:
+        report.add(PASS, "free-space limit", "off")
+        return
+    measured = of_env.getattr("DISK_SPACE_CHECK_PATH")
+    if _device(measured) is None:
+        report.add(FAIL, "free-space limit", f"measures {measured}, which isn't there (set OFSC_DISK_SPACE_CHECK_PATH)")
+    elif save.is_dir() and _device(measured) != _device(save):
+        report.add(WARN, "free-space limit",
+                   f"measures {measured}, but downloads go to another disk ({save}); set OFSC_DISK_SPACE_CHECK_PATH")
+    else:
+        report.add(PASS, "free-space limit", f"{limit} bytes, measured at {measured}, {_free(measured)}")
+
+
+def check_database(report):
+    import ofscraper.db.postgres as postgres
+
+    url = postgres.url()
+    if not url:
+        report.add(PASS, "database", "SQLite, one user_data.db per creator")
+        return
+    where = postgres.describe(url)
+    try:
+        import psycopg  # noqa: F401
+        import psycopg_pool  # noqa: F401
+    except ImportError:
+        report.add(FAIL, "database", f"PostgreSQL at {where} is set, but its driver isn't installed")
+        return
+    report.add(PASS, "database", f"PostgreSQL at {where}; the connection is checked with --online")
+
+
+def run(config=None, profile=None, site=None):
+    """Every offline check; the Report."""
+    import ofscraper.sites as sites
+
+    report = Report()
+    path = config_path(config)
+    settings = read_config(path, report)
+    folder = profile_folder(settings, profile, path)
+    site = sites.normalize(site) or sites.read_profile_site(folder)
+    report.add(PASS, "profile", f"{folder.name} ({sites.SITE_NAMES[site]})" + ("" if folder.is_dir() else ", folder isn't there yet"))
+    check_auth(settings, folder, site, report)
+    ffmpeg_path = check_ffmpeg(settings, report)
+    check_ffprobe(ffmpeg_path, report)
+    check_keys(settings, report)
+    check_folders(settings, report)
+    check_database(report)
+    return report
+
+
+def main(argv=None):
+    import ofscraper.sites as sites
+
+    parser = argparse.ArgumentParser(prog="ofscraper doctor", description=__doc__)
+    parser.add_argument("--config", metavar="PATH", help="The config file or folder, as for a run's --config")
+    parser.add_argument("--profile", metavar="NAME", help="The profile to check (default: the config's main profile)")
+    parser.add_argument("--site", choices=list(sites.SITES), help="Check this site's auth file, not the profile's site")
+    parser.add_argument("--json", action="store_true", help="Print the results as JSON")
+    args = parser.parse_args(argv)
+    try:
+        report = run(args.config, args.profile, args.site)
+    except KeyboardInterrupt:
+        parser.exit(130, "Stopped\n")
+    if args.json:
+        print(json.dumps({"ok": not report.failed, "results": report.results}, indent=2))
+    else:
+        print(report.text())
+    return 1 if report.failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
