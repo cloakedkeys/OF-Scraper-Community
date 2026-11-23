@@ -131,6 +131,12 @@ jobs:
           echo "one_file_path=dist/${EXE_NAME}${EXE_EXT}" >> $GITHUB_OUTPUT
           echo "one_file_name=${EXE_NAME}${EXE_EXT}" >> $GITHUB_OUTPUT
 
+      - name: Verify offline tools in One-File executable
+        if: steps.build_onefile.outcome == 'success'
+        shell: bash
+        run: |
+          "${{ steps.build_onefile.outputs.one_file_path }}" stash_sync --help
+
       - name: Upload One-File Artifact
         uses: actions/upload-artifact@v7
         with:

@@ -38,7 +38,7 @@ def merge_runner():
             console.print("To bring the merged file into PostgreSQL, run:")
             # on one line and as written, so that it can be copied
             console.print(
-                f'python -m ofscraper.commands.postgres_import "{folder}"',
+                f'ofscraper postgres_import "{folder}"',
                 soft_wrap=True,
                 markup=False,
                 emoji=False,
