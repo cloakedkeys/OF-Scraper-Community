@@ -444,12 +444,12 @@ Defined in `ofscraper/utils/of_env/values/req/mpd.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="mpd_connect_timeout"></a>`MPD_CONNECT_TIMEOUT` | `OFSC_MPD_CONNECT_TIMEOUT` | `45` | Connection timeout for MPD operations (seconds). |
-| <a id="mpd_total_timeout"></a>`MPD_TOTAL_TIMEOUT` | `OFSC_MPD_TOTAL_TIMEOUT` | `None` | Total timeout for MPD operations (seconds). Defaults to None. |
-| <a id="mpd_read_timeout"></a>`MPD_READ_TIMEOUT` | `OFSC_MPD_READ_TIMEOUT` | `200` | Read timeout for MPD operations (seconds). |
-| <a id="mpd_pool_connect_timeout"></a>`MPD_POOL_CONNECT_TIMEOUT` | `OFSC_MPD_POOL_CONNECT_TIMEOUT` | `45` | Pool connection timeout for MPD operations (seconds). |
-| <a id="mpd_max_sems"></a>`MPD_MAX_SEMS` | `OFSC_MPD_MAX_SEMS` | `10` | Maximum semaphores for MPD operations. |
-| <a id="mpd_num_tries"></a>`MPD_NUM_TRIES` | `OFSC_MPD_NUM_TRIES` | `5` | Number of retries for MPD operations. |
+| <a id="mpd_connect_timeout"></a>`MPD_CONNECT_TIMEOUT` | `OFSC_MPD_CONNECT_TIMEOUT` | `45` | Connection timeout, in seconds, when fetching DRM manifests (MPD). |
+| <a id="mpd_total_timeout"></a>`MPD_TOTAL_TIMEOUT` | `OFSC_MPD_TOTAL_TIMEOUT` | `None` | Total request timeout, in seconds, when fetching DRM manifests (MPD) (`None` means no limit). |
+| <a id="mpd_read_timeout"></a>`MPD_READ_TIMEOUT` | `OFSC_MPD_READ_TIMEOUT` | `200` | Read timeout, in seconds, when fetching DRM manifests (MPD). |
+| <a id="mpd_pool_connect_timeout"></a>`MPD_POOL_CONNECT_TIMEOUT` | `OFSC_MPD_POOL_CONNECT_TIMEOUT` | `45` | Time, in seconds, allowed to get a connection when fetching DRM manifests (MPD). |
+| <a id="mpd_max_sems"></a>`MPD_MAX_SEMS` | `OFSC_MPD_MAX_SEMS` | `10` | Maximum concurrent requests when fetching DRM manifests (MPD). |
+| <a id="mpd_num_tries"></a>`MPD_NUM_TRIES` | `OFSC_MPD_NUM_TRIES` | `5` | Maximum number of attempts when fetching DRM manifests (MPD). |
 | <a id="mpd_session_sleep_init"></a>`MPD_SESSION_SLEEP_INIT` | `OFSC_MPD_SESSION_SLEEP_INIT` | `45` | Defined but not read anywhere. MPD requests use the standard `SESSION_*` values. |
 
 ## CDM
@@ -458,13 +458,13 @@ Defined in `ofscraper/utils/of_env/values/req/cdm.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="cdm_test_timeout"></a>`CDM_TEST_TIMEOUT` | `OFSC_CDM_TEST_TIMEOUT` | `30` | Timeout for CDM tests (seconds). |
-| <a id="cdm_timeout"></a>`CDM_TIMEOUT` | `OFSC_CDM_TIMEOUT` | `40` | General timeout for CDM operations (seconds). |
-| <a id="cdm_min_wait"></a>`CDM_MIN_WAIT` | `OFSC_CDM_MIN_WAIT` | `1.5` | Minimum wait time before retrying a CDM operation (seconds). |
-| <a id="cdm_max_wait"></a>`CDM_MAX_WAIT` | `OFSC_CDM_MAX_WAIT` | `6.0` | Maximum wait time before retrying a CDM operation (seconds). |
-| <a id="cdm_num_tries"></a>`CDM_NUM_TRIES` | `OFSC_CDM_NUM_TRIES` | `8` | Number of retries for general CDM operations. |
-| <a id="cdm_num_tries_check"></a>`CDM_NUM_TRIES_CHECK` | `OFSC_CDM_NUM_TRIES_CHECK` | `1` | Number of retries for CDM checks. |
-| <a id="cdm_test_num_tries"></a>`CDM_TEST_NUM_TRIES` | `OFSC_CDM_TEST_NUM_TRIES` | `2` | Number of retries for CDM tests. |
+| <a id="cdm_test_timeout"></a>`CDM_TEST_TIMEOUT` | `OFSC_CDM_TEST_TIMEOUT` | `30` | Defined but not read anywhere. |
+| <a id="cdm_timeout"></a>`CDM_TIMEOUT` | `OFSC_CDM_TIMEOUT` | `40` | Total request timeout, in seconds, for CDM licence requests. |
+| <a id="cdm_min_wait"></a>`CDM_MIN_WAIT` | `OFSC_CDM_MIN_WAIT` | `1.5` | Defined but not read anywhere. |
+| <a id="cdm_max_wait"></a>`CDM_MAX_WAIT` | `OFSC_CDM_MAX_WAIT` | `6.0` | Defined but not read anywhere. |
+| <a id="cdm_num_tries"></a>`CDM_NUM_TRIES` | `OFSC_CDM_NUM_TRIES` | `8` | Maximum number of attempts for CDM licence requests outside check mode. |
+| <a id="cdm_num_tries_check"></a>`CDM_NUM_TRIES_CHECK` | `OFSC_CDM_NUM_TRIES_CHECK` | `1` | Maximum number of attempts for CDM licence requests in check mode (`*_check` commands). |
+| <a id="cdm_test_num_tries"></a>`CDM_TEST_NUM_TRIES` | `OFSC_CDM_TEST_NUM_TRIES` | `2` | Defined but not read anywhere. |
 
 ## Authentication
 
@@ -472,7 +472,7 @@ Defined in `ofscraper/utils/of_env/values/req/auth.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="auth_warning_timeout"></a>`AUTH_WARNING_TIMEOUT` | `OFSC_AUTH_WARNING_TIMEOUT` | `1800.0` | Time to wait between printing auth warnings (seconds).) |
+| <a id="auth_warning_timeout"></a>`AUTH_WARNING_TIMEOUT` | `OFSC_AUTH_WARNING_TIMEOUT` | `1800.0` | Minimum time, in seconds, between repeated auth warning messages. |
 
 ## Anonymous requests
 
@@ -488,10 +488,10 @@ Defined in `ofscraper/utils/of_env/values/req/discord.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="discord_total_timeout"></a>`DISCORD_TOTAL_TIMEOUT` | `OFSC_DISCORD_TOTAL_TIMEOUT` | `None` | Total timeout for Discord operations (seconds). Defaults to None. |
-| <a id="discord_min_wait"></a>`DISCORD_MIN_WAIT` | `OFSC_DISCORD_MIN_WAIT` | `1.0` | Minimum wait time for Discord operations (seconds). |
-| <a id="discord_max_wait"></a>`DISCORD_MAX_WAIT` | `OFSC_DISCORD_MAX_WAIT` | `5.0` | Maximum wait time for Discord operations (seconds). |
-| <a id="discord_num_tries"></a>`DISCORD_NUM_TRIES` | `OFSC_DISCORD_NUM_TRIES` | `3` | Number of retries for Discord operations. |
+| <a id="discord_total_timeout"></a>`DISCORD_TOTAL_TIMEOUT` | `OFSC_DISCORD_TOTAL_TIMEOUT` | `None` | Total request timeout, in seconds, when sending Discord webhook log messages (`None` means no limit). |
+| <a id="discord_min_wait"></a>`DISCORD_MIN_WAIT` | `OFSC_DISCORD_MIN_WAIT` | `1.0` | Minimum wait, in seconds, before retrying a failed Discord webhook request. |
+| <a id="discord_max_wait"></a>`DISCORD_MAX_WAIT` | `OFSC_DISCORD_MAX_WAIT` | `5.0` | Maximum wait, in seconds, before retrying a failed Discord webhook request. |
+| <a id="discord_num_tries"></a>`DISCORD_NUM_TRIES` | `OFSC_DISCORD_NUM_TRIES` | `3` | Maximum number of attempts for each Discord webhook request. |
 
 ## Dynamic rule downloads
 
@@ -499,9 +499,9 @@ Defined in `ofscraper/utils/of_env/values/req/git.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="git_min_wait"></a>`GIT_MIN_WAIT` | `OFSC_GIT_MIN_WAIT` | `1.0` | Minimum wait time before retrying a Git operation (seconds). |
-| <a id="git_max_wait"></a>`GIT_MAX_WAIT` | `OFSC_GIT_MAX_WAIT` | `5.0` | Maximum wait time before retrying a Git operation (seconds). |
-| <a id="git_num_tries"></a>`GIT_NUM_TRIES` | `OFSC_GIT_NUM_TRIES` | `3` | Number of retries for Git operations. |
+| <a id="git_min_wait"></a>`GIT_MIN_WAIT` | `OFSC_GIT_MIN_WAIT` | `1.0` | Minimum wait, in seconds, before retrying a dynamic-rules download. |
+| <a id="git_max_wait"></a>`GIT_MAX_WAIT` | `OFSC_GIT_MAX_WAIT` | `5.0` | Maximum wait, in seconds, before retrying a dynamic-rules download. |
+| <a id="git_num_tries"></a>`GIT_NUM_TRIES` | `OFSC_GIT_NUM_TRIES` | `3` | Maximum number of attempts when downloading dynamic signing rules. |
 
 ## Output and file handling
 
