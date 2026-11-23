@@ -46,19 +46,19 @@ This fork is on PyPI as **`ofscraper-community`**. The command is still `ofscrap
 
 **With uv (recommended)**
 
-```
+```sh
 uv tool install ofscraper-community
 ```
 
 **With pipx**
 
-```
+```sh
 pipx install ofscraper-community
 ```
 
 **With pip**
 
-```
+```sh
 pip install ofscraper-community
 ```
 
@@ -66,37 +66,37 @@ pip install ofscraper-community
 
 **Docker**
 
-```
+```sh
 docker pull ghcr.io/cloakedkeys/of-scraper-community:latest
 ```
 
 ### Updating
 
-```
+Run the command that matches how you installed it:
+
+```sh
 uv tool upgrade ofscraper-community
 pipx upgrade ofscraper-community
 pip install -U ofscraper-community
 ```
 
-Use the one that matches how you installed it.
-
 ### Installed as `ofscraper`?
 
-[datawhores/OF-Scraper](https://github.com/datawhores/OF-Scraper) releases this same code to PyPI as `ofscraper`. The two packages are released separately, so either one can be a version ahead of the other for a while. If you installed `ofscraper` from PyPI, you can keep it and update it with `uv tool upgrade ofscraper`, `pipx upgrade ofscraper` or `pip install -U ofscraper`. Version 3.14.7 and older are upstream's old code, without these fixes.
+[datawhores/OF-Scraper](https://github.com/datawhores/OF-Scraper) releases this same code to PyPI as `ofscraper`. The two packages are released separately, so either one can be a version ahead of the other for a while. Version 3.14.7 and older are upstream's old code, without these fixes.
 
-Both packages install the same `ofscraper` command, so keep only one. To switch to `ofscraper-community`, uninstall `ofscraper` first, using the tool you installed it with:
-
-- pip: `pip uninstall ofscraper`
-- uv (this includes the fork installed from GitHub before it was on PyPI): `uv tool uninstall ofscraper`
-- pipx: `pipx uninstall ofscraper`
-
-Then install `ofscraper-community` as above. If pip already has both, uninstall both, then install `ofscraper-community` again.
+- **To keep `ofscraper`:** update it with `uv tool upgrade ofscraper`, `pipx upgrade ofscraper`, or `pip install -U ofscraper`.
+- **To switch to `ofscraper-community`:** both packages install the same `ofscraper` command, so keep only one:
+  1. Uninstall `ofscraper` using the tool you installed it with:
+     - **pip:** `pip uninstall ofscraper`
+     - **uv** (including the fork installed from GitHub before it was on PyPI): `uv tool uninstall ofscraper`
+     - **pipx:** `pipx uninstall ofscraper`
+  2. Install `ofscraper-community` as above. If pip already has both, uninstall both first, then install `ofscraper-community` again.
 
 ### Unreleased changes
 
 To get what's on `main` before it's released, install from this repo. To update, run the same command again.
 
-```
+```sh
 uv tool install --force git+https://github.com/cloakedkeys/OF-Scraper-Community
 pip install git+https://github.com/cloakedkeys/OF-Scraper-Community
 ```
@@ -113,51 +113,56 @@ The check table lists a creator's media so you can filter it, pick what you want
 
 ![The check table with made-up rows](https://raw.githubusercontent.com/cloakedkeys/OF-Scraper-Community/main/media/check_table.svg)
 
-**Opening it**
+### Opening it
 
-- **From the menu:** run `ofscraper`, choose **Perform Action(s)**, then **Browse and pick media (check table)**. Pick the creators, then the table: Posts, Messages, Paid or Stories. When you close the table, any downloads you sent from it finish, then you're back at the menu.
-- **From the command line:** `ofscraper post_check`, `msg_check`, `paid_check` or `story_check`, with `-u` (usernames, or links for `post_check` and `msg_check`) or `-f` (a file with one per line).
+- **From the menu:** run `ofscraper`, choose **Perform Action(s)**, then **Browse and pick media (check table)**. Pick the creators, then the table: **Posts**, **Messages**, **Paid**, or **Stories**. When you close the table, any downloads you sent from it finish, then you're back at the menu.
+- **From the command line:** run `ofscraper post_check`, `msg_check`, `paid_check`, or `story_check`, with `-u` (usernames, or links for `post_check` and `msg_check`) or `-f` (a file with one entry per line).
 
-The menu uses the commands' defaults: a creator's saved post list when there is one, and for Posts the Timeline, Pinned, Archived and Streams areas. To fetch a fresh list or pick other areas, use the command with `--force` or `--check-area`.
+The menu uses the commands' defaults: a creator's saved post list when there is one, and for Posts the Timeline, Pinned, Archived, and Streams areas. To fetch a fresh list or pick other areas, use the command with `--force` or `--check-area`.
 
-**Tabs**
+### Tabs
 
 - **DataTable:** every media item, a page at a time. Click a column header to sort by it.
 - **Cart:** what you've picked. The **Download Text** and **Text Only (Skip Media)** boxes apply to the next send.
 - **Console:** the log, including download progress.
 
-**Sidebars** (DataTable tab)
+### Sidebars (DataTable tab)
 
-- **Ctrl+S** opens the options sidebar: filters for text, media ID, post ID, post media count, price, post date, length, downloaded, unlocked, media type, response type, download type and username. Press **Filter** to apply them. **Clear Filters**, or the **Reset Filters** button, clears them.
-- **Ctrl+D** opens the download sidebar: the minimum and maximum file size to download. Changes apply right away.
+- **Ctrl+S** opens the options sidebar with filters for: text, media ID, post ID, post media count, price, post date, length, downloaded, unlocked, media type, response type, download type, and username. Press **Filter** to apply them. **Clear Filters**, or the **Reset Filters** button, clears them.
+- **Ctrl+D** opens the download sidebar to set the minimum and maximum file size to download. Changes apply right away.
 - Press the same key again to close a sidebar.
-- With a cell highlighted, `;` or `'` copies its value into that column's filter. Press **Filter** to apply it.
+- With a cell highlighted, press `;` or `'` to copy its value into that column's filter, then press **Filter** to apply it.
 
-**Cart keys** (DataTable tab, with both sidebars closed)
+### Cart keys (DataTable tab)
+
+These shortcuts work when both sidebars are closed:
 
 | Key | Adds to the cart |
 |---|---|
-| `a` / `Shift+A` | this page / everything the filters show |
-| `u` / `Shift+U` | the same, but each media item once |
-| `e` / `Shift+E` | the same, but only media that isn't downloaded yet |
+| `a` / `Shift+A` | This page / everything the filters show |
+| `u` / `Shift+U` | Same, but each media item once |
+| `e` / `Shift+E` | Same, but only media that isn't downloaded yet |
 
 | Key | Removes from the cart |
 |---|---|
-| `c` / `Shift+C` | this page / everything the filters show |
-| `x` | everything |
+| `c` / `Shift+C` | This page / everything the filters show |
+| `x` | Everything |
 
-You can also click a row's **Download Cart** cell to add or remove it, or click the **Download Cart** header to add the page. Locked media can't be added. On the Cart tab, click `[added]` to remove a row, `c` removes the page, and `x` or `Shift+C` empties the cart.
+- **Mouse:** click a row's **Download Cart** cell to add or remove it, or click the **Download Cart** header to add the page.
+- **Cart tab:** click `[added]` to remove a row, press `c` to remove the page, or press `x` / `Shift+C` to empty the cart.
 
-**Downloading**
+Locked media can't be added, by key or by mouse.
 
-Press **>> Send Downloads to OF-Scraper** (on the DataTable or Cart tab). The table switches to the Console, and each row's Download Cart cell shows `[downloading]`, then `[downloaded]`, `[skipped]` or `[failed]`. You can keep picking and send more while it downloads.
+### Downloading
 
-**Opening the download folder**
+Press **>> Send Downloads to OF-Scraper** (on the DataTable or Cart tab). The table switches to the Console, and each row's **Download Cart** cell shows `[downloading]`, then `[downloaded]`, `[skipped]`, or `[failed]`. You can keep picking and send more while it downloads.
 
-- `o` (DataTable tab, sidebars closed) opens the highlighted row's folder. For a downloaded file, that's the folder holding it, with the file selected where the file manager can do that. Otherwise it's the creator's download folder.
-- The **Open Download Folder** button opens the highlighted row's creator's download folder.
+### Opening the download folder
 
-**Ctrl+Q** closes the table.
+- Press `o` (DataTable tab, sidebars closed) to open the highlighted row's folder. For a downloaded file, that opens the folder holding it, with the file selected where the file manager supports it. Otherwise it opens the creator's download folder.
+- Click **Open Download Folder** to open the highlighted row's creator's download folder.
+
+Press **Ctrl+Q** to close the table.
 
 ## FAQ
 
@@ -213,7 +218,7 @@ Put the full path to the ffmpeg program in `binary_options` → `ffmpeg` in your
 <details>
 <summary><b>It says to update to 3.14.7</b></summary>
 
-That's upstream's PyPI version, which is older than this fork. Version 3.15.0 and later no longer show that message.
+3.14.7 is the last of upstream's old `ofscraper` releases on PyPI, and it's older than this fork's code. Version 3.15.0 and later no longer show that message. From 3.16.2 the update check looks up `ofscraper-community`; from 3.17.0 it looks up the package you installed (`ofscraper-community`, or `ofscraper`, which `datawhores/OF-Scraper` now publishes from the same code).
 
 </details>
 
@@ -228,13 +233,13 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
 
 - **Skip a model during `--scrape-paid`:** `--excluded-username` now works with `--scrape-paid`. Separate several names with commas.
 
-  ```
+  ```sh
   ofscraper --scrape-paid --excluded-username modelname,othermodel
   ```
 
 - **Start the next daemon pass early (Docker/Linux):** while the daemon is waiting between passes, send `SIGUSR1`.
 
-  ```
+  ```sh
   docker kill --signal=SIGUSR1 <container>
   ```
 
