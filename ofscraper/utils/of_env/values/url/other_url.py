@@ -16,7 +16,7 @@ def load_other_urls_config():
     config["CDRM"] = os.getenv("OFSC_CDRM_URL", "https://cdrm-project.com/api/decrypt")
 
     # --- Bad URL Host Configuration ---
-    # BAD_URL_HOST: Regular expressions matching hosts whose media URLs are treated as broken or unusable (accepts a comma-separated list via `OFSC_BAD_URL_HOSTS`).
+    # BAD_URL_HOST: Regular expressions for hosts whose media is skipped and recorded in the database as downloaded with no file (a comma-separated list can be given in `OFSC_BAD_URL_HOSTS`).
     # Default: {".*\\.upload.onlyfans.com", "of2transcoder.s3-accelerate.amazonaws.com", ".*\\.convert.onlyfans.com"}
     # Expects a comma-separated string if provided via environment variable (e.g., "pattern1,pattern2")
     bad_url_host_env = os.getenv("OFSC_BAD_URL_HOSTS")

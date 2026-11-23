@@ -769,8 +769,8 @@ Defined in `ofscraper/utils/of_env/values/path/general.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="skip_filename_retrival"></a>`SKIP_FILENAME_RETRIVAL` | `OFSC_SKIP_FILENAME_RETRIVAL` | `False` | When on, skips looking up previously recorded filenames in the database during filename generation. |
-| <a id="skip_mediadir_retrival"></a>`SKIP_MEDIADIR_RETRIVAL` | `OFSC_SKIP_MEDIADIR_RETRIVAL` | `False` | When on, skips looking up previously recorded media folders in the database during filename generation. |
+| <a id="skip_filename_retrival"></a>`SKIP_FILENAME_RETRIVAL` | `OFSC_SKIP_FILENAME_RETRIVAL` | `False` | When on, the file name isn't built from `file_format`, so a naming script must supply it. Without a naming script, downloads fail. |
+| <a id="skip_mediadir_retrival"></a>`SKIP_MEDIADIR_RETRIVAL` | `OFSC_SKIP_MEDIADIR_RETRIVAL` | `False` | When on, the media folder isn't built from `dir_format` or created, so a naming script must supply it. Without a naming script, downloads fail. |
 
 ### Temporary files
 
@@ -869,7 +869,7 @@ Defined in `ofscraper/utils/of_env/values/url/other_url.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="bad_url_host"></a>`BAD_URL_HOST` | `OFSC_BAD_URL_HOSTS` | a list of 3 items (see the source) | Regular expressions matching hosts whose media URLs are treated as broken or unusable (accepts a comma-separated list via `OFSC_BAD_URL_HOSTS`). |
+| <a id="bad_url_host"></a>`BAD_URL_HOST` | `OFSC_BAD_URL_HOSTS` | a list of 3 items (see the source) | Regular expressions for hosts whose media is skipped and recorded in the database as downloaded with no file (a comma-separated list can be given in `OFSC_BAD_URL_HOSTS`). |
 
 ### Media Host
 
