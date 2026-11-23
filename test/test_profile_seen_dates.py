@@ -13,8 +13,6 @@ import sqlite3
 import arrow
 import pytest
 
-pytestmark = pytest.mark.slow
-
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.db.merge as merge
@@ -26,6 +24,8 @@ from ofscraper.db.difference import get_group_difference
 from ofscraper.db.operations_.media import write_media_table_transition
 from test.import_files import file_2023, sql, without_the_dates
 from test.test_db_merge_site import media as media_row
+
+pytestmark = pytest.mark.slow
 
 CREATOR = 5
 START = arrow.get("2024-05-01T12:00:00+00:00")

@@ -20,7 +20,7 @@ class _Settings_f419(SimpleNamespace):
         return None
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _stub_settings(monkeypatch):
     monkeypatch.setattr(
         table_app.settings, "get_settings",
@@ -60,6 +60,7 @@ def _drive_f419(rows, steps):
     asyncio.run(run())
 
 
+@pytest.mark.usefixtures("_stub_settings")
 def test_username_cell_semicolon_copies_to_filter():
     async def steps(app, pilot):
         app.table.move_cursor(
@@ -76,6 +77,7 @@ def test_username_cell_semicolon_copies_to_filter():
     "response",
     ["Timeline", "Archived", "Pinned", "Streams", "Stories", "Highlights", "Messages"],
 )
+@pytest.mark.usefixtures("_stub_settings")
 def test_response_cell_semicolon_selects_its_option(response):
     async def steps(app, pilot):
         app.table.move_cursor(
@@ -97,6 +99,7 @@ def test_response_cell_semicolon_selects_its_option(response):
         ("0:01:00", "0:02:00", [2, 3, 4]),
     ],
 )
+@pytest.mark.usefixtures("_stub_settings")
 def test_length_filter_includes_bounds(start, end, expected):
     async def steps(app, pilot):
         field = app.query_one("#length")

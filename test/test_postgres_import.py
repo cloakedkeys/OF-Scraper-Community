@@ -16,8 +16,6 @@ from types import SimpleNamespace
 
 import pytest
 
-pytestmark = pytest.mark.slow
-
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.commands.postgres_import as importer
 import ofscraper.db.postgres as postgres
@@ -31,6 +29,8 @@ from test.import_files import (
     sql,
     without_the_dates,
 )
+
+pytestmark = pytest.mark.slow
 
 # a name recorded before its dates were kept (#643), or added by hand
 NO_DATES = {"first_seen_at": None, "last_seen_at": None}

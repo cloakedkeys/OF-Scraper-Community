@@ -11,13 +11,13 @@ import sqlite3
 
 import pytest
 
-pytestmark = pytest.mark.slow
-
 import ofscraper.db.merge as merge
 import ofscraper.db.operations as operations
 from ofscraper.db.operations_.media import write_media_table_transition
 from ofscraper.db.operations_.profile import write_models_table, write_profile_table
 from ofscraper.db.transition import modify_tables
+
+pytestmark = pytest.mark.slow
 
 MODEL_ID = 12345
 USERNAME = "dbmodel"

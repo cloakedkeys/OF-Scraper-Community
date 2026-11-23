@@ -19,8 +19,6 @@ from urllib.request import urlopen
 
 import pytest
 
-pytestmark = pytest.mark.slow
-
 import ofscraper.commands.scraper.scraper as scraper
 import ofscraper.managers.manager as manager
 import ofscraper.utils.paths.common as common_paths
@@ -28,6 +26,8 @@ import ofscraper.utils.settings as settings
 import ofscraper.utils.system.ffmpeg as ffmpeg_finder
 from ofscraper.sites.fansly import auth as fansly_auth
 from ofscraper.sites.fansly import live, live_api, live_chat
+
+pytestmark = pytest.mark.slow
 
 TOKEN = "a" * 60
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/140.0"

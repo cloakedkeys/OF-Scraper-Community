@@ -16,12 +16,12 @@ import aiohttp
 import httpx
 import pytest
 
-pytestmark = pytest.mark.slow
-
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 from ofscraper.managers.sessionmanager.sessionmanager import sessionManager
 from ofscraper.utils.of_env.values.req.req import load_network_config
+
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture(autouse=True)

@@ -18,7 +18,6 @@ from types import SimpleNamespace
 
 import pytest
 
-pytestmark = pytest.mark.slow
 from aiohttp import web
 
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
@@ -27,6 +26,8 @@ import ofscraper.managers.sessionmanager.sessionmanager as sm
 import ofscraper.sites.fansly.address as fansly_address
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
+
+pytestmark = pytest.mark.slow
 
 
 class _Log:

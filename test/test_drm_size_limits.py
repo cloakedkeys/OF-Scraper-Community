@@ -26,7 +26,6 @@ from types import SimpleNamespace
 
 import pytest
 
-pytestmark = pytest.mark.slow
 from aiohttp import web
 from tenacity import stop_after_attempt, wait_none
 
@@ -42,6 +41,8 @@ import ofscraper.utils.settings as settings
 from ofscraper.classes.of.media import Media
 from ofscraper.managers.sessionmanager.sessionmanager import sessionManager
 from ofscraper.scripts.skip_download_script import SKIP_PERMANENT
+
+pytestmark = pytest.mark.slow
 
 AUDIO = bytes(i % 251 for i in range(1_000))
 VIDEO = bytes(i % 241 for i in range(5_000))

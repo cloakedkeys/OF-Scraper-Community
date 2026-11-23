@@ -18,8 +18,6 @@ from types import SimpleNamespace
 import arrow
 import pytest
 
-pytestmark = pytest.mark.slow
-
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.commands.postgres_export as exporter
@@ -37,6 +35,8 @@ from ofscraper.db.transition import modify_tables
 from test.db_scenario import ONE, TABLES, TWO, check, plain, scenario, table_rows
 from test.import_files import current_file, file_2023, sql
 from test.test_postgres_import import Target as ImportTarget
+
+pytestmark = pytest.mark.slow
 
 DATABASE = exporter.DATABASE
 

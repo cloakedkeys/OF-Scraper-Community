@@ -200,7 +200,7 @@ def _row_enter(index, unlocked=True):
     }
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _stub_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -253,6 +253,7 @@ def _cell(table, row, column):
     return getattr(value, "plain", value)
 
 
+@pytest.mark.usefixtures("_stub_settings")
 @pytest.mark.parametrize("column", ["number", "download_cart"])
 def test_enter_on_the_main_table_adds_and_removes_the_row(column):
     async def steps(app, pilot):
@@ -270,6 +271,7 @@ def test_enter_on_the_main_table_adds_and_removes_the_row(column):
     _drive_enter([_row_enter(1), _row_enter(2), _row_enter(3)], steps)
 
 
+@pytest.mark.usefixtures("_stub_settings")
 def test_enter_on_number_skips_locked_media_like_the_download_cell():
     async def steps(app, pilot):
         await _enter_on(pilot, app.table, 0, "number")
@@ -278,6 +280,7 @@ def test_enter_on_number_skips_locked_media_like_the_download_cell():
     _drive_enter([_row_enter(1, unlocked=False)], steps)
 
 
+@pytest.mark.usefixtures("_stub_settings")
 @pytest.mark.parametrize("column", ["number", "download_cart"])
 def test_enter_on_the_cart_table_removes_the_row(column):
     async def steps(app, pilot):
@@ -297,6 +300,7 @@ def test_enter_on_the_cart_table_removes_the_row(column):
     _drive_enter([_row_enter(1), _row_enter(2)], steps)
 
 
+@pytest.mark.usefixtures("_stub_settings")
 def test_enter_on_another_column_does_not_change_the_cart():
     async def steps(app, pilot):
         await _enter_on(pilot, app.table, 0, "username")
@@ -329,7 +333,7 @@ class _Settings_hide(SimpleNamespace):
         return None
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def fake_cache(monkeypatch):
     saved = {}
     monkeypatch.setattr(cache, "get", lambda key, default=None: saved.get(key, default))
@@ -408,6 +412,7 @@ def test_columns_hidden_by_default_and_h_toggles_both_tables(fake_cache):
     asyncio.run(drive())
 
 
+@pytest.mark.usefixtures("fake_cache")
 def test_hidden_media_id_filter_keeps_working_after_toggles():
     async def drive():
         app = _app()
@@ -472,6 +477,7 @@ def test_saved_visibility_is_loaded_on_each_open_and_toggles_are_saved(fake_cach
     asyncio.run(drive())
 
 
+@pytest.mark.usefixtures("fake_cache")
 @pytest.mark.parametrize("disabled", [False, True])
 def test_unavailable_or_disabled_cache_defaults_to_hidden(monkeypatch, disabled):
     def unavailable(*args, **kwargs):

@@ -55,7 +55,7 @@ ROWS = [
 ]
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _stub_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -100,6 +100,7 @@ async def _settle_layout(pilot):
         ("#download_size_max", "Max size", "10000"),
     ],
 )
+@pytest.mark.usefixtures("_stub_settings")
 def test_size_fields_are_small_and_labelled(field, label, value):
     async def steps(app, pilot):
         await pilot.press("ctrl+d")
@@ -121,6 +122,7 @@ def test_size_fields_are_small_and_labelled(field, label, value):
     _drive_layout(steps)
 
 
+@pytest.mark.usefixtures("_stub_settings")
 def test_length_inputs_do_not_overlap():
     async def steps(app, pilot):
         await pilot.press("ctrl+s")
@@ -142,6 +144,7 @@ def test_length_inputs_do_not_overlap():
     _drive_layout(steps)
 
 
+@pytest.mark.usefixtures("_stub_settings")
 def test_options_sidebar_fields_do_not_overlap():
     async def steps(app, pilot):
         await pilot.press("ctrl+s")
@@ -160,6 +163,7 @@ def _selected(app, field):
     return sorted(app.query_one(field).query_one(SelectionList).selected)
 
 
+@pytest.mark.usefixtures("_stub_settings")
 def test_clear_filters_resets_every_filter_and_keeps_the_sidebar_open():
     async def steps(app, pilot):
         await pilot.press("ctrl+s")
@@ -496,7 +500,7 @@ class _Settings_sizenote(SimpleNamespace):
         return None
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _stub(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -525,6 +529,7 @@ def _row_sizenote():
     }
 
 
+@pytest.mark.usefixtures("_stub")
 @pytest.mark.parametrize("width", [245, 120])
 def test_note_says_when_the_limits_apply(width):
     async def run():

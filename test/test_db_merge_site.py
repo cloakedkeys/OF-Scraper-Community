@@ -14,8 +14,6 @@ import sqlite3
 
 import pytest
 
-pytestmark = pytest.mark.slow
-
 import ofscraper.db.merge as merge
 import ofscraper.db.operations as operations
 import ofscraper.sites as sites
@@ -23,6 +21,8 @@ from ofscraper.db.operations_.media import write_media_table_transition
 from ofscraper.db.operations_.others import get_site_flag, write_site_flag
 from ofscraper.db.operations_.profile import write_models_table, write_profile_table
 from ofscraper.db.transition import modify_tables
+
+pytestmark = pytest.mark.slow
 
 MODEL_ID = 12345
 # as long as a Fansly creator's id

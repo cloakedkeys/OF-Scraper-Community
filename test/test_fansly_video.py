@@ -24,7 +24,6 @@ from urllib.parse import urlparse
 import aiohttp
 import pytest
 
-pytestmark = pytest.mark.slow
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
@@ -42,6 +41,8 @@ from ofscraper.classes.of.posts import Post
 from ofscraper.managers.sessionmanager import ofsession
 from ofscraper.sites.fansly import auth as fansly_auth
 from ofscraper.sites.fansly import normalize, video
+
+pytestmark = pytest.mark.slow
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "fansly"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/140.0"
