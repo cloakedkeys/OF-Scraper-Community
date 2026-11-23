@@ -511,15 +511,15 @@ Defined in `ofscraper/utils/of_env/values/general.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="supress_outputs"></a>`SUPRESS_OUTPUTS` | `OFSC_SUPRESS_OUTPUTS` | `['CRITICAL', 'ERROR', 'LOW', 'OFF', 'PROMPT', 'WARNING']` | A set of log levels or output types to suppress. |
-| <a id="refreshscreen"></a>`refreshScreen` | `OFSC_REFRESH_SCREEN` | `50` | Frequency to refresh the screen (e.g., for progress updates). |
-| <a id="show_avatar"></a>`SHOW_AVATAR` | `OFSC_SHOW_AVATAR` | `True` | Whether to show avatar in certain displays. |
-| <a id="show_results_log"></a>`SHOW_RESULTS_LOG` | `OFSC_SHOW_RESULTS_LOG` | `True` | Whether to show results in the log. |
-| <a id="model_price_placeholder"></a>`MODEL_PRICE_PLACEHOLDER` | `OFSC_MODEL_PRICE_PLACEHOLDER` | `'Unknown_Price'` | Placeholder text for unknown model prices. |
-| <a id="deleted_model_placeholder"></a>`DELETED_MODEL_PLACEHOLDER` | `OFSC_DELETED_MODEL_PLACEHOLDER` | `'modeldeleted'` | Placeholder text for deleted models. |
-| <a id="app_token"></a>`APP_TOKEN` | `OFSC_APP_TOKEN` | `'33d57ade8c02dbc5a333db99ff9ae26a'` | A generic application token (example, usually sensitive and not hardcoded). |
-| <a id="continue_bool"></a>`CONTINUE_BOOL` | `OFSC_CONTINUE_BOOL` | `True` | General boolean flag for continuing operations. |
-| <a id="file_count_placeholder"></a>`FILE_COUNT_PLACEHOLDER` | `OFSC_FILE_COUNT_PLACEHOLDER` | `True` | Flag related to file count display or logic. |
+| <a id="supress_outputs"></a>`SUPRESS_OUTPUTS` | `OFSC_SUPRESS_OUTPUTS` | `['CRITICAL', 'ERROR', 'LOW', 'OFF', 'PROMPT', 'WARNING']` | Output levels (`--output`) at which `lowstdout()` silences standard output. |
+| <a id="refreshscreen"></a>`refreshScreen` | `OFSC_REFRESH_SCREEN` | `50` | Defined but not read anywhere. |
+| <a id="show_avatar"></a>`SHOW_AVATAR` | `OFSC_SHOW_AVATAR` | `True` | Whether to include the creator's avatar URL in scrape headers and summaries. |
+| <a id="show_results_log"></a>`SHOW_RESULTS_LOG` | `OFSC_SHOW_RESULTS_LOG` | `True` | Whether to print the final run summary log at exit. |
+| <a id="model_price_placeholder"></a>`MODEL_PRICE_PLACEHOLDER` | `OFSC_MODEL_PRICE_PLACEHOLDER` | `'Unknown_Price'` | Fallback value for price placeholders (`{current_price}`, `{regular_price}`, `{promo_price}`, `{renewal_price}`) when a creator's model isn't loaded. |
+| <a id="deleted_model_placeholder"></a>`DELETED_MODEL_PLACEHOLDER` | `OFSC_DELETED_MODEL_PLACEHOLDER` | `'modeldeleted'` | Fallback username prefix used for deleted accounts whose real username isn't recorded. |
+| <a id="app_token"></a>`APP_TOKEN` | `OFSC_APP_TOKEN` | `'33d57ade8c02dbc5a333db99ff9ae26a'` | The OnlyFans `app-token` header value sent on API requests. |
+| <a id="continue_bool"></a>`CONTINUE_BOOL` | `OFSC_CONTINUE_BOOL` | `True` | When off, skips the interactive "Do you want to continue with script" prompt and exits. |
+| <a id="file_count_placeholder"></a>`FILE_COUNT_PLACEHOLDER` | `OFSC_FILE_COUNT_PLACEHOLDER` | `True` | When on, appends `_<count>` to multi-media filenames when `file_format` doesn't include a unique filename or media ID placeholder. |
 | <a id="filter_self_media"></a>`FILTER_SELF_MEDIA` | `OFSC_FILTER_SELF_MEDIA` | `True` | Whether to skip the account's own media: the media in messages you sent, and your own profile's media when you scrape it. Set it to False to download them. |
 | <a id="allow_dupe_media"></a>`ALLOW_DUPE_MEDIA` | `OFSC_ALLOW_DUPE_MEDIA` | `False` | The default for --allow-dupes: download media that is in several posts once for each post. The option overrides it for one run. |
 
@@ -527,12 +527,12 @@ Defined in `ofscraper/utils/of_env/values/general.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="number_regex"></a>`NUMBER_REGEX` | `OFSC_NUMBER_REGEX` | `'[0-9]'` | Regex pattern for numbers. |
-| <a id="username_regex"></a>`USERNAME_REGEX` | `OFSC_USERNAME_REGEX` | `'[^/]'` | Regex pattern for usernames (excluding slash). |
-| <a id="buf_size"></a>`BUF_SIZE` | `OFSC_BUF_SIZE` | `1048576` | Buffer size for file operations (bytes). |
-| <a id="large_trace_chunk_size"></a>`LARGE_TRACE_CHUNK_SIZE` | `OFSC_LARGE_TRACE_CHUNK_SIZE` | `100` | Chunk size for large tracing operations. |
-| <a id="skip_unavailable_default"></a>`SKIP_UNAVAILABLE_DEFAULT` | `OFSC_SKIP_UNAVAILABLE_DEFAULT` | `True` | Default to True (Yes) |
-| <a id="expired_grace_default"></a>`EXPIRED_GRACE_DEFAULT` | `OFSC_EXPIRED_GRACE_DEFAULT` | `1` | Default to 1 day |
+| <a id="number_regex"></a>`NUMBER_REGEX` | `OFSC_NUMBER_REGEX` | `'[0-9]'` | Single-character regex class used to match numeric IDs in URLs for `manual` and `*_check` commands. |
+| <a id="username_regex"></a>`USERNAME_REGEX` | `OFSC_USERNAME_REGEX` | `'[^/]'` | Single-character regex class used to match usernames in URLs for `manual` and `*_check` commands. |
+| <a id="buf_size"></a>`BUF_SIZE` | `OFSC_BUF_SIZE` | `1048576` | Read buffer size, in bytes, used when hashing files and copying or moving files. |
+| <a id="large_trace_chunk_size"></a>`LARGE_TRACE_CHUNK_SIZE` | `OFSC_LARGE_TRACE_CHUNK_SIZE` | `100` | Defined but not read anywhere. |
+| <a id="skip_unavailable_default"></a>`SKIP_UNAVAILABLE_DEFAULT` | `OFSC_SKIP_UNAVAILABLE_DEFAULT` | `True` | Default for `advanced_options.skip_unavailable_content`. |
+| <a id="expired_grace_default"></a>`EXPIRED_GRACE_DEFAULT` | `OFSC_EXPIRED_GRACE_DEFAULT` | `1` | Grace period, in days, after a subscription's expiry during which the creator is still treated as active for filtering and scanning. |
 
 ## General defaults
 
