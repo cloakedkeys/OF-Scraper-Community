@@ -301,7 +301,8 @@ def browser_proxy(proxy: str) -> dict:
     u = urlsplit(proxy)
     if not u.username:
         return {"server": proxy}
-    server = f"{u.scheme}://{u.hostname}" + (f":{u.port}" if u.port else "")
+    host = f"[{u.hostname}]" if ":" in u.hostname else u.hostname  # IPv6 keeps its brackets
+    server = f"{u.scheme}://{host}" + (f":{u.port}" if u.port else "")
     return {"server": server, "username": unquote(u.username), "password": unquote(u.password or "")}
 
 

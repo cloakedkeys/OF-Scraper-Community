@@ -148,6 +148,8 @@ def test_is_live_page(url, expected):
     ("http://proxy.example.invalid:8080", {"server": "http://proxy.example.invalid:8080"}),
     ("http://user%40x:p%3Ass@proxy.example.invalid:8080",
      {"server": "http://proxy.example.invalid:8080", "username": "user@x", "password": "p:ss"}),
+    ("http://user:pass@[::1]:8080", {"server": "http://[::1]:8080", "username": "user", "password": "pass"}),
+    ("http://[::1]:8080", {"server": "http://[::1]:8080"}),
 ])
 def test_the_browser_uses_the_same_proxy(proxy, expected):
     assert live_capture.browser_proxy(proxy) == expected
@@ -337,7 +339,7 @@ def test_a_missing_chromium_says_how_to_install_it(monkeypatch, onlyfans_setting
     install_session(monkeypatch, Client(Response(404)))
 
     async def online(c):
-        return [{"accountId": 1, "username": "creator_a"}]
+        return [{"accountId": 1, "username": "creator_a"}, {"accountId": 2, "username": "creator_b"}]
 
     def capture(**kwargs):
         raise live_capture.BrowserMissing(live_capture.INSTALL_HINT)
@@ -347,7 +349,9 @@ def test_a_missing_chromium_says_how_to_install_it(monkeypatch, onlyfans_setting
     monkeypatch.setattr(live_capture, "capture", capture)
     with caplog.at_level("WARNING", logger="shared"):
         asyncio.run(live.run(False, asyncio.Event()))
-    assert "playwright install chromium" in caplog.text
+    # two creators tried, one warning: --live-watch would otherwise repeat it every poll
+    warnings = [r for r in caplog.records if r.levelname == "WARNING" and "playwright install chromium" in r.getMessage()]
+    assert len(warnings) == 1
 
 
 def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypatch, onlyfans_settings, caplog):

@@ -126,6 +126,7 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
     async with manager.Manager.session.aget_ofsession() as c, \
             manager.Manager.session.aget_ofsession(retries=1) as checks:
         loop = asyncio.get_running_loop()
+        warned = []
 
         async def fetch_online():
             online = await get_online_streams(c)
@@ -154,7 +155,9 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
                     proxy=of_env.getattr("PROXY"),
                 )
             except live_capture.BrowserMissing as e:
-                log.warning(str(e))
+                # once per run: --live-watch tries again every interval
+                (log.debug if warned else log.warning)(str(e))
+                warned.append(True)
 
         watcher = shared.LiveWatcher(
             fetch_online, record,
