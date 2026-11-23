@@ -214,7 +214,7 @@ def test_run_main_exit_codes(monkeypatch):
     sm = stats_mod.StatsManager()
     dl = sm._get_stat_obj("a_creator", "download")
     dl.failed_count = 1
-    monkeypatch.setattr(final_mod, "final_script", lambda: None)
+    monkeypatch.setattr(final_mod, "final_script", lambda *a: None)
     monkeypatch.setattr(final_mod, "printEndValues", lambda: None)
     monkeypatch.setattr(
         final_mod.manager,

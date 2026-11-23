@@ -259,6 +259,8 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
   urllib.request.urlopen("https://ntfy.sh/your-topic", data=text.encode())
   ```
 
+- **Alerts when something needs you:** when the login is rejected, the free-space limit is reached, or a daemon pass fails, a short alert goes to Discord (at any `--discord` level except `OFF`) and to `alert_script` (`--alert-script`), which gets `kind`, `message`, `site` and `profile` as JSON. Each is sent when it starts and again when it's fixed, not on every pass. A login rejected partway through a run stops that pass with exit code 3.
+
 - **Move a creator's files after a rename:** move the files saved under a creator's old name to their current name's folder, and update the database to match. See [Moving files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/MOVING_FILES.md).
 
 ## Exit codes and scheduled runs

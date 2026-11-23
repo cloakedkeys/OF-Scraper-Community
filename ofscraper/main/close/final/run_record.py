@@ -79,6 +79,16 @@ def build(outcome="ok", error=None):
     }
     if error:
         record["error"] = error
+    # plan 2's exit status so far: 0 ok, 4 partial, 3 login failed, ...
+    import ofscraper.main.close.exit_status as exit_status
+
+    status = exit_status.code()
+    if outcome == "failed" and status == exit_status.OK:
+        status = int(exit_status.ERROR)  # what the caller records next
+    elif outcome == "stopped" and status == exit_status.OK:
+        status = int(exit_status.INTERRUPTED)
+    record["status"] = status
+    record["status_label"] = exit_status.label(status)
     return record
 
 

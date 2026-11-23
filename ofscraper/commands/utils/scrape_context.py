@@ -28,6 +28,9 @@ def scrape_context_manager():
     # Before yield as the enter method
     start = datetime.now()
     run_record.start()
+    from ofscraper.utils.checkers import new_pass
+
+    new_pass()
     log.info("""
 ==============================
 [bold] starting script [/bold]

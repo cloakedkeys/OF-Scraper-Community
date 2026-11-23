@@ -26,6 +26,10 @@ def log_user_failure(username, error, what=None):
     what = f" {what}" if what else ""
     log.warning(f"[{username}]{what} failed: {type(error).__name__}: {error}")
     exit_status.record(exit_status.PARTIAL)
+    # a 401 or 403 may mean the login was rejected: that stops the pass
+    from ofscraper.utils.checkers import check_login_after_failure
+
+    check_login_after_failure(error)
 
 
 class CommandManager:

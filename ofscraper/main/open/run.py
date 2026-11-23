@@ -60,5 +60,9 @@ def main():
 
         if isinstance(E, postgres.PostgresUnavailable):
             raise SystemExit(exit_status.CONFIG)
+        from ofscraper.utils.checkers import LoginRejected
+
+        if isinstance(E, LoginRejected):
+            raise SystemExit(exit_status.AUTH)
         raise SystemExit(exit_status.ERROR)
     raise SystemExit(exit_status.code())

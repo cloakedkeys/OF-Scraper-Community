@@ -21,10 +21,11 @@ import ofscraper.main.close.final.run_record as run_record
 def final_action(outcome="ok"):
     """End a run: the run record (post_script's summary, --discord SUMMARY),
     post_script and the printed summaries. outcome is "ok" or "stopped"."""
+    # before the record, so the record carries it
+    if manager.Manager.stats_manager.failed_count() > 0:
+        exit_status.record(exit_status.PARTIAL)
     record = run_record.finish(outcome)
     final_script(record)
     manager.Manager.stats_manager.print_summary_by_activity()
     manager.Manager._stats_manager.print_global_summary()
-    if manager.Manager.stats_manager.failed_count() > 0:
-        exit_status.record(exit_status.PARTIAL)
     printEndValues()
