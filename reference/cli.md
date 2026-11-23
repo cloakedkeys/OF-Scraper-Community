@@ -700,7 +700,7 @@ Run script in the background. Set value for how many minutes between script runs
 
 **Type:** flag · **Default:** off · **Commands:** main program
 
-Fansly only: record the selected creators (all followed creators without -u) who are live now, then continue
+Record the selected creators (all followed creators without -u) who are live now, then continue. OnlyFans needs the optional live install (a Chromium browser)
 
 **Dest:** `live` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
 
@@ -708,7 +708,7 @@ Fansly only: record the selected creators (all followed creators without -u) who
 
 **Type:** flag · **Default:** off · **Commands:** main program
 
-Fansly only: keep checking who is live and record them; with --daemon it runs beside the scheduled scrapes
+Keep checking who is live and record them; with --daemon it runs beside the scheduled scrapes
 
 **Dest:** `live_watch` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
 
@@ -716,7 +716,7 @@ Fansly only: keep checking who is live and record them; with --daemon it runs be
 
 **Type:** integer range · **Default:** none · **Commands:** main program
 
-Fansly only: seconds between live checks in --live-watch (default 60, plus up to 10 s of jitter)
+Seconds between live checks in --live-watch (default 60, plus up to 10 s of jitter)
 
 **Dest:** `live_interval` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
 
@@ -724,7 +724,7 @@ Fansly only: seconds between live checks in --live-watch (default 60, plus up to
 
 **Type:** integer range · **Default:** none · **Commands:** main program
 
-Fansly only: most livestreams recorded at the same time (default 2)
+Most livestreams recorded at the same time (default 2)
 
 **Dest:** `live_max` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
 
