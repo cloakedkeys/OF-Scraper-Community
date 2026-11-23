@@ -617,8 +617,8 @@ Defined in `ofscraper/utils/of_env/values/date.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="prompt_date_format"></a>`PROMPT_DATE_FORMAT` | `OFSC_PROMPT_DATE_FORMAT` | `'YYYY-MM-DD'` | Date format used for user prompts or display. |
-| <a id="api_date_format"></a>`API_DATE_FORMAT` | `OFSC_API_DATE_FORMAT` | `'YYYY-MM-DD HH:mm:ss'` | Date format used for API interactions. |
+| <a id="prompt_date_format"></a>`PROMPT_DATE_FORMAT` | `OFSC_PROMPT_DATE_FORMAT` | `'YYYY-MM-DD'` | Arrow date format used for subscription and expiry dates in interactive model-selection prompts. |
+| <a id="api_date_format"></a>`API_DATE_FORMAT` | `OFSC_API_DATE_FORMAT` | `'YYYY-MM-DD HH:mm:ss'` | Arrow date/time format used for scan-range logs and `ofscraper db` date columns. |
 
 ## Expiry and timeouts
 
@@ -626,17 +626,17 @@ Defined in `ofscraper/utils/of_env/values/time.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="hourly_expiry"></a>`HOURLY_EXPIRY` | `OFSC_HOURLY_EXPIRY` | `3600` | Expiry time in seconds for hourly items. |
-| <a id="thirty_expiry"></a>`THIRTY_EXPIRY` | `OFSC_THIRTY_EXPIRY` | `1800` | Expiry time in seconds for thirty-minute items. |
-| <a id="size_timeout"></a>`SIZE_TIMEOUT` | `OFSC_SIZE_TIMEOUT` | `1209600` | Timeout for size-related data (seconds). |
-| <a id="database_timeout"></a>`DATABASE_TIMEOUT` | `OFSC_DATABASE_TIMEOUT` | `300` | Timeout for database operations (seconds). |
-| <a id="key_expiry"></a>`KEY_EXPIRY` | `OFSC_KEY_EXPIRY` | `None` | Expiry time for decryption keys (seconds). Defaults to None (no expiry). |
-| <a id="response_expiry"></a>`RESPONSE_EXPIRY` | `OFSC_RESPONSE_EXPIRY` | `5000000` | Expiry time for API responses (seconds). |
-| <a id="dbinterval"></a>`DBINTERVAL` | `OFSC_DBINTERVAL` | `86400` | Interval for database-related operations (seconds). |
-| <a id="day_seconds"></a>`DAY_SECONDS` | `OFSC_DAY_SECONDS` | `86400` | Number of seconds in a day. |
-| <a id="three_day_seconds"></a>`THREE_DAY_SECONDS` | `OFSC_THREE_DAY_SECONDS` | `259200` | Number of seconds in three days. |
-| <a id="profile_data_expiry"></a>`PROFILE_DATA_EXPIRY` | `OFSC_PROFILE_DATA_EXPIRY` | `86400` | Expiry time for profile data (seconds). |
-| <a id="profile_data_expiry_async"></a>`PROFILE_DATA_EXPIRY_ASYNC` | `OFSC_PROFILE_DATA_EXPIRY_ASYNC` | `86400` | Expiry time for async profile data (seconds). |
+| <a id="hourly_expiry"></a>`HOURLY_EXPIRY` | `OFSC_HOURLY_EXPIRY` | `3600` | Defined but not read anywhere. |
+| <a id="thirty_expiry"></a>`THIRTY_EXPIRY` | `OFSC_THIRTY_EXPIRY` | `1800` | Cache lifetime, in seconds, for OnlyFans dynamic signing rules. |
+| <a id="size_timeout"></a>`SIZE_TIMEOUT` | `OFSC_SIZE_TIMEOUT` | `1209600` | Defined but not read anywhere. |
+| <a id="database_timeout"></a>`DATABASE_TIMEOUT` | `OFSC_DATABASE_TIMEOUT` | `300` | Timeout, in seconds, for SQLite and PostgreSQL database locks and connections. |
+| <a id="key_expiry"></a>`KEY_EXPIRY` | `OFSC_KEY_EXPIRY` | `None` | Cache lifetime, in seconds, for Widevine decryption keys (`None` means no expiry). |
+| <a id="response_expiry"></a>`RESPONSE_EXPIRY` | `OFSC_RESPONSE_EXPIRY` | `5000000` | Cache lifetime, in seconds, for scraped paid-page responses. |
+| <a id="dbinterval"></a>`DBINTERVAL` | `OFSC_DBINTERVAL` | `86400` | Minimum time, in seconds, between rotating `user_data_copy_N.db` backups. |
+| <a id="day_seconds"></a>`DAY_SECONDS` | `OFSC_DAY_SECONDS` | `86400` | Cache lifetime, in seconds, for username-to-model-ID lookups. |
+| <a id="three_day_seconds"></a>`THREE_DAY_SECONDS` | `OFSC_THREE_DAY_SECONDS` | `259200` | Cache lifetime, in seconds, for check-mode API caches. |
+| <a id="profile_data_expiry"></a>`PROFILE_DATA_EXPIRY` | `OFSC_PROFILE_DATA_EXPIRY` | `86400` | Cache lifetime, in seconds, for synchronous creator profile lookups. |
+| <a id="profile_data_expiry_async"></a>`PROFILE_DATA_EXPIRY_ASYNC` | `OFSC_PROFILE_DATA_EXPIRY_ASYNC` | `86400` | Cache lifetime, in seconds, for async creator profile lookups. |
 
 ## Dynamic rules
 
@@ -644,10 +644,10 @@ Defined in `ofscraper/utils/of_env/values/dynamic.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="dynamic_rule_manual"></a>`DYNAMIC_RULE_MANUAL` | `OFSC_DYNAMIC_RULE_MANUAL` | `None` | The specific manual dynamic rule to use. Defaults to None. |
-| <a id="dynamic_options"></a>`DYNAMIC_OPTIONS` | `OFSC_DYNAMIC_OPTIONS` | `['digitalcriminals', 'manual', 'generic', 'xagler', 'rafa']` | List of available dynamic rule options. |
-| <a id="dynamic_options_all"></a>`DYNAMIC_OPTIONS_ALL` | `OFSC_DYNAMIC_OPTIONS_ALL` | a list of 12 items (see the source) | Comprehensive list of all dynamic rule options including aliases. |
-| <a id="dynamic_rule_default"></a>`DYNAMIC_RULE_DEFAULT` | `OFSC_DYNAMIC_RULE_DEFAULT` | `'digital'` | The default dynamic rule when none is specified. |
+| <a id="dynamic_rule_manual"></a>`DYNAMIC_RULE_MANUAL` | `OFSC_DYNAMIC_RULE_MANUAL` | `None` | JSON object containing custom OnlyFans dynamic signing rules, used when `dynamic-mode-default` is `manual`. |
+| <a id="dynamic_options"></a>`DYNAMIC_OPTIONS` | `OFSC_DYNAMIC_OPTIONS` | `['digitalcriminals', 'manual', 'generic', 'xagler', 'rafa']` | Dynamic rule sources shown in the interactive config menu. |
+| <a id="dynamic_options_all"></a>`DYNAMIC_OPTIONS_ALL` | `OFSC_DYNAMIC_OPTIONS_ALL` | a list of 12 items (see the source) | Accepted values (including aliases) when validating `advanced_options.dynamic-mode-default`. |
+| <a id="dynamic_rule_default"></a>`DYNAMIC_RULE_DEFAULT` | `OFSC_DYNAMIC_RULE_DEFAULT` | `'digital'` | Default for `advanced_options.dynamic-mode-default` when unset or invalid. |
 
 ## List names
 
@@ -655,12 +655,12 @@ Defined in `ofscraper/utils/of_env/values/list.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="ofscraper_reserved_list"></a>`OFSCRAPER_RESERVED_LIST` | `OFSCRAPER_RESERVED_LIST` | `'ofscraper.main'` | Reserved list identifier for Ofscraper. |
-| <a id="ofscraper_reserved_list_alt"></a>`OFSCRAPER_RESERVED_LIST_ALT` | `OFSCRAPER_RESERVED_LIST_ALT` | `'main'` | Alternative reserved list identifier. |
-| <a id="ofscraper_active_list"></a>`OFSCRAPER_ACTIVE_LIST` | `OFSCRAPER_ACTIVE_LIST` | `'ofscraper.active'` | Active list identifier for Ofscraper. |
-| <a id="ofscraper_active_list_alt"></a>`OFSCRAPER_ACTIVE_LIST_ALT` | `OFSCRAPER_ACTIVE_LIST_ALT` | `'active'` | Alternative active list identifier. |
-| <a id="ofscraper_expired_list"></a>`OFSCRAPER_EXPIRED_LIST` | `OFSCRAPER_EXPIRED_LIST` | `'ofscraper.expired'` | Expired list identifier for Ofscraper. |
-| <a id="ofscraper_expired_list_alt"></a>`OFSCRAPER_EXPIRED_LIST_ALT` | `OFSCRAPER_EXPIRED_LIST_ALT` | `'expired'` | Alternative expired list identifier. |
+| <a id="ofscraper_reserved_list"></a>`OFSCRAPER_RESERVED_LIST` | `OFSCRAPER_RESERVED_LIST` | `'ofscraper.main'` | Built-in user-list name representing all subscriptions. |
+| <a id="ofscraper_reserved_list_alt"></a>`OFSCRAPER_RESERVED_LIST_ALT` | `OFSCRAPER_RESERVED_LIST_ALT` | `'main'` | Short alias for the built-in all-subscriptions list. |
+| <a id="ofscraper_active_list"></a>`OFSCRAPER_ACTIVE_LIST` | `OFSCRAPER_ACTIVE_LIST` | `'ofscraper.active'` | Built-in user-list name representing active subscriptions. |
+| <a id="ofscraper_active_list_alt"></a>`OFSCRAPER_ACTIVE_LIST_ALT` | `OFSCRAPER_ACTIVE_LIST_ALT` | `'active'` | Short alias for the built-in active-subscriptions list. |
+| <a id="ofscraper_expired_list"></a>`OFSCRAPER_EXPIRED_LIST` | `OFSCRAPER_EXPIRED_LIST` | `'ofscraper.expired'` | Built-in user-list name representing expired subscriptions. |
+| <a id="ofscraper_expired_list_alt"></a>`OFSCRAPER_EXPIRED_LIST_ALT` | `OFSCRAPER_EXPIRED_LIST_ALT` | `'expired'` | Short alias for the built-in expired-subscriptions list. |
 
 ## Progress display
 
@@ -672,7 +672,7 @@ Defined in `ofscraper/utils/of_env/values/live.py`.
 | <a id="supress_download_display"></a>`SUPRESS_DOWNLOAD_DISPLAY` | `OFSC_SUPRESS_DOWNLOAD_DISPLAY` | `None` | Hides the download progress display when on. The value is read as on/off: `true` or `1` (any case) is on, and anything else is off, which shows the display. This holds for the bare name too, which has no default to take a type from. It applies only while that screen is up. Unset, the display follows `--output` and `--no-rich`. |
 | <a id="supress_subscription_display"></a>`SUPRESS_SUBSCRIPTION_DISPLAY` | `OFSC_SUPRESS_SUBSCRIPTION_DISPLAY` | `None` | Hides the subscription progress display when on. The value is read as on/off: `true` or `1` (any case) is on, and anything else is off, which shows the display. This holds for the bare name too, which has no default to take a type from. It applies only while that screen is up. Unset, the display follows `--output` and `--no-rich`. |
 | <a id="supress_like_display"></a>`SUPRESS_LIKE_DISPLAY` | `OFSC_SUPRESS_LIKE_DISPLAY` | `None` | Hides the like progress display when on. The value is read as on/off: `true` or `1` (any case) is on, and anything else is off, which shows the display. This holds for the bare name too, which has no default to take a type from. It applies only while that screen is up. Unset, the display follows `--output` and `--no-rich`. |
-| <a id="download_live_display"></a>`DOWNLOAD_LIVE_DISPLAY` | `OFSC_DOWNLOAD_LIVE_DISPLAY` | `True` | Whether to enable live download progress display. |
+| <a id="download_live_display"></a>`DOWNLOAD_LIVE_DISPLAY` | `OFSC_DOWNLOAD_LIVE_DISPLAY` | `True` | Defined but not read anywhere. |
 
 ## Logging
 
@@ -680,10 +680,10 @@ Defined in `ofscraper/utils/of_env/values/logger.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="logger_timeout"></a>`LOGGER_TIMEOUT` | `OFSC_LOGGER_TIMEOUT` | `0.4` | Timeout for logger operations (seconds). |
-| <a id="log_display_timeout"></a>`LOG_DISPLAY_TIMEOUT` | `OFSC_LOG_DISPLAY_TIMEOUT` | `0.8` | Timeout for log display updates (seconds). |
-| <a id="forced_thread_timeout"></a>`FORCED_THREAD_TIMEOUT` | `OFSC_FORCED_THREAD_TIMEOUT` | `5` | Timeout for forced thread termination in logging (seconds). |
-| <a id="logname"></a>`logname` | `OFSC_LOGNAME` | `'ofscraper'` | Base name for the logger. |
+| <a id="logger_timeout"></a>`LOGGER_TIMEOUT` | `OFSC_LOGGER_TIMEOUT` | `0.4` | Defined but not read anywhere. |
+| <a id="log_display_timeout"></a>`LOG_DISPLAY_TIMEOUT` | `OFSC_LOG_DISPLAY_TIMEOUT` | `0.8` | Base pause, in seconds, used when waiting after printing a warning (for example, `unique_name_warning()` sleeps for `LOG_DISPLAY_TIMEOUT * 3`). |
+| <a id="forced_thread_timeout"></a>`FORCED_THREAD_TIMEOUT` | `OFSC_FORCED_THREAD_TIMEOUT` | `5` | Defined but not read anywhere. |
+| <a id="logname"></a>`logname` | `OFSC_LOGNAME` | `'ofscraper'` | Defined but not read anywhere. |
 
 ## Subprocess log levels and free-space check
 
