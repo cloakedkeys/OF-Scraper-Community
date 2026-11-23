@@ -35,18 +35,23 @@ def merge_runner():
             # Windows ("D:\" reads as D:"), so it is doubled
             if folder.endswith("\\"):
                 folder += "\\"
-            console.print("To bring the merged file into PostgreSQL, run:")
+            merged = str(merge.MergeDatabase().get_new_db(new_db))
+            console.print("To bring the merged file into PostgreSQL, close the scraper and run:")
             # on one line and as written, so that it can be copied
+            console.print(
+                f'ofscraper --migrate-sqlite-to-postgres "{merged}"',
+                soft_wrap=True,
+                markup=False,
+                emoji=False,
+                highlight=False,
+            )
+            console.print("To see what it would do first, without writing anything:")
             console.print(
                 f'python -m ofscraper.commands.postgres_import "{folder}"',
                 soft_wrap=True,
                 markup=False,
                 emoji=False,
                 highlight=False,
-            )
-            console.print(
-                "It only reports what it would do. Then run it again with"
-                " --apply to bring the file in."
             )
         if not prompts.confirm_db_continue(completed, skipped, failed):
             break

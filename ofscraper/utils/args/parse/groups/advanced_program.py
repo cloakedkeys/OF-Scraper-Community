@@ -9,6 +9,7 @@ from ofscraper.utils.args.parse.arguments.advanced_program import (
     no_cache_option,
     update_profile_option,
     auth_fail,
+    migrate_sqlite_to_postgres_option,
 )
 
 advanced_options_desc = "Advanced Program Options"
@@ -22,6 +23,7 @@ advanced_options_tuple = (
     dynamic_rules_option,
     update_profile_option,
     auth_fail,
+    migrate_sqlite_to_postgres_option,
 )
 # Create the option group
 advanced_options = click.option_group(

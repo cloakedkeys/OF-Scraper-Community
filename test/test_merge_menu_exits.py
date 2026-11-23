@@ -129,10 +129,10 @@ def test_the_screen_says_it_works_on_sqlite_files_while_postgresql_is_on(monkeyp
         " scraped since PostgreSQL was turned on, and what it changes in those"
         " files does not reach PostgreSQL. See POSTGRESQL.md.\n"
         # after the merge, the next step, with the merge folder that was used
-        "To bring the merged file into PostgreSQL, run:\n"
+        "To bring the merged file into PostgreSQL, close the scraper and run:\n"
+        f'ofscraper --migrate-sqlite-to-postgres "{Path("merged", "user_data.db")}"\n'
+        "To see what it would do first, without writing anything:\n"
         'python -m ofscraper.commands.postgres_import "merged"\n'
-        "It only reports what it would do. Then run it again with --apply to"
-        " bring the file in.\n"
     )
     # the merge still runs
     assert merges == [("source", "merged")]
@@ -154,6 +154,11 @@ def test_the_import_command_is_one_line_with_the_folder_the_merge_used(monkeypat
     )
     assert len(command) > 60
     assert command in printed.getvalue().splitlines()
+    migrate = (
+        "ofscraper --migrate-sqlite-to-postgres"
+        f' "{Path("a [b]", "long merge folder name", "user_data.db")}"'
+    )
+    assert migrate in printed.getvalue().splitlines()
 
 
 def test_a_drive_root_keeps_its_closing_quote(monkeypatch, screen):

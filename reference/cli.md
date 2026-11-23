@@ -36,13 +36,13 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 
 | Command | Summary |
 |---|---|
-| [Main program (no command)](#main-program-no-command) (103 options) | OF-Scraper Options |
-| [`manual`](#manual) (52 options) | Manually download media by providing a list of URLs or IDs |
-| [`msg_check`](#msg_check) (52 options) | Produces a media table from messages with filterable entries and quick downloads |
-| [`story_check`](#story_check) (50 options) | Produces a media table from stories and highlights with filterable entries and quick downloads |
-| [`paid_check`](#paid_check) (52 options) | Produces a media table from purchases with filterable entries and quick downloads |
-| [`post_check`](#post_check) (54 options) | Produces a media table from posts with filterable entries and quick downloads |
-| [`metadata`](#metadata) (86 options) | Modify metadata or db files |
+| [Main program (no command)](#main-program-no-command) (104 options) | OF-Scraper Options |
+| [`manual`](#manual) (53 options) | Manually download media by providing a list of URLs or IDs |
+| [`msg_check`](#msg_check) (53 options) | Produces a media table from messages with filterable entries and quick downloads |
+| [`story_check`](#story_check) (51 options) | Produces a media table from stories and highlights with filterable entries and quick downloads |
+| [`paid_check`](#paid_check) (53 options) | Produces a media table from purchases with filterable entries and quick downloads |
+| [`post_check`](#post_check) (55 options) | Produces a media table from posts with filterable entries and quick downloads |
+| [`metadata`](#metadata) (87 options) | Modify metadata or db files |
 | [`db`](#db) (61 options) | Print information from the database |
 | [`move_creator_files`](#move_creator_files-separate-entry-point) (argparse) | Move a creator's downloaded files to match new path settings and update recorded paths. |
 | [`postgres_export`](#postgres_export-separate-entry-point) (argparse) | Export creators from PostgreSQL back to per-creator `user_data.db` files. |
@@ -56,7 +56,7 @@ Run `OF-Scraper [OPTIONS] [COMMAND] [COMMAND OPTIONS]`.
 
 ### Main program (no command)
 
-**Options:** 103 · **`--help` summary:** OF-Scraper Options
+**Options:** 104 · **`--help` summary:** OF-Scraper Options
 
 Runs when no subcommand is given. The entry point is `ofscraper/__main__.py`. Then `Manager.pick()` calls `commands/scraper/scraper.main()`, which cleans temp files and the database and checks the CDM. After that, the run goes one of these ways:
 
@@ -69,37 +69,37 @@ The run reads `auth.json` and `config.json` from the profile. It writes media un
 
 ### `manual`
 
-**Options:** 52 · **`--help` summary:** Manually download media by providing a list of URLs or IDs
+**Options:** 53 · **`--help` summary:** Manually download media by providing a list of URLs or IDs
 
 `ofscraper manual -u URL...` or `-f FILE` (one is required). Downloads specific posts, given as OnlyFans URLs (post, chat message, story, highlight) or bare post ids. A bare id is looked up on the timeline, then in that creator's purchases. It forces `force_all`, so existing files are downloaded again. It writes posts and media to the creator's `user_data.db` and media under `save_location`, then runs the after-download script.
 
 ### `msg_check`
 
-**Options:** 52 · **`--help` summary:** The msg_check subcommand gathers information on media content from messages. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table.
+**Options:** 53 · **`--help` summary:** The msg_check subcommand gathers information on media content from messages. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table.
 
 `ofscraper msg_check -u ITEM...` or `-f FILE`. Each item is a creator username, a model id, or a chat URL (`onlyfans.com/my/chats/chat/<id>` or `onlyfans.com/my/chats/<id>/?id=<message id>`), whose number is taken as the model id. Any other item is skipped with a warning. It fetches the creator's messages and purchases, writes them to `user_data.db`, and opens an interactive table of the media. Unlocked rows in the table can be queued for download, and a background thread downloads them. The messages and purchases come from the check cache unless you pass `--force`. The cache expires after 3 days.
 
 ### `story_check`
 
-**Options:** 50 · **`--help` summary:** The story_check subcommand gathers information on media content from stories and highlights. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table.
+**Options:** 51 · **`--help` summary:** The story_check subcommand gathers information on media content from stories and highlights. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table.
 
 `ofscraper story_check -u USERNAME...` (or `-f`). Fetches the creators' stories and highlights from the API, without the check cache. It writes them to `user_data.db` and opens the same downloadable media table.
 
 ### `paid_check`
 
-**Options:** 52 · **`--help` summary:** The paid_check subcommand gathers information on media content from purchases. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table.
+**Options:** 53 · **`--help` summary:** The paid_check subcommand gathers information on media content from purchases. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table.
 
 `ofscraper paid_check -u USERNAME_OR_ID...` (or `-f`). Fetches each creator's purchased content, writes it to `user_data.db` and opens the media table. The content comes from the check cache unless you pass `--force`. A deleted creator, named `DELETED_MODEL_PLACEHOLDER`, is read from all purchases.
 
 ### `post_check`
 
-**Options:** 54 · **`--help` summary:** The post_check subcommand gathers information on media content from posts. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table.
+**Options:** 55 · **`--help` summary:** The post_check subcommand gathers information on media content from posts. It presents this data in a table format with filtering options for focused searches. Allows unlocked media entries to be directly downloaded through the table.
 
 `ofscraper post_check -u URL_OR_USERNAME...` or `-f FILE`. Takes `onlyfans.com/<username>` URLs or bare usernames. It fetches the areas in `--check-area` (default Timeline, Pinned, Archived and Streams; Labels is also available), writes them to `user_data.db` and opens the media table. The areas come from the check cache unless you pass `--force`. All check commands set `force_all` and `after=0`.
 
 ### `metadata`
 
-**Options:** 86 · **`--help` summary:** Uses API to modify db files without the need for downloading
+**Options:** 87 · **`--help` summary:** Uses API to modify db files without the need for downloading
 
 `ofscraper metadata --metadata check|update|complete`, with the usual user and area options (`--scrape-paid` takes a mode too). It uses the API to update the creators' `user_data.db` without downloading. The modes differ as follows:
 
@@ -151,7 +151,7 @@ Run `python -m ofscraper.commands.postgres_export FOLDER [OPTIONS]`.
 
 Run `python -m ofscraper.commands.postgres_import FOLDER [OPTIONS]`.
 
-- `FOLDER`: folder to search for user_data.db files
+- `FOLDER`: folder to search for user_data.db files, or one database file
 - `--apply`: write to PostgreSQL; without it, only report
 - `--skip-bad-files`: with --apply, bring in the files that can be and leave out the rest
 - `--staging`: folder for the working copies, which need as much room as the files (default: the system's temporary folder)
@@ -1125,6 +1125,14 @@ Get up-to-date profile info instead of using cache
 Quit on authentication failure rather than prompting
 
 **Dest:** `auth_fail` · **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
+
+#### `--migrate-sqlite-to-postgres`
+
+**Type:** path · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
+
+Copy a user_data.db file (such as the one Merge Databases writes), or a folder of them, into the PostgreSQL database OFSC_DATABASE_URL names, then exit
+
+**Dest:** `migrate_sqlite_to_postgres` · **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
 
 ### Other options
 

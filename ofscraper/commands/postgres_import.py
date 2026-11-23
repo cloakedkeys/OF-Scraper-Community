@@ -2,7 +2,8 @@
 
     python -m ofscraper.commands.postgres_import FOLDER [--apply]
 
-FOLDER is searched for user_data.db files (for example <profile>/.data). The
+FOLDER is searched for user_data.db files (for example <profile>/.data), or
+is one database file, such as the one Merge Databases writes. The
 PostgreSQL database is the one OFSC_DATABASE_URL names, as for the scraper
 itself (see POSTGRESQL.md).
 
@@ -666,10 +667,14 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
     """The command. Returns its exit code: 0 when everything found was (or
     could be) brought in."""
     folder = Path(folder)
-    if not folder.is_dir():
-        out(f"There is no folder at {folder}.")
+    if folder.is_file():
+        # one file, such as the one Merge Databases writes
+        paths = [folder]
+    elif folder.is_dir():
+        paths = find(folder)
+    else:
+        out(f"There is no file or folder at {folder}.")
         return 2
-    paths = find(folder)
     if not paths:
         out(f"No user_data.db files were found under {folder}.")
         return 2
@@ -679,7 +684,8 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
             " to bring the files into. See POSTGRESQL.md."
         )
         return 2
-    out(f"Found {_many(len(paths), 'user_data.db file')} under {folder}.")
+    if folder.is_dir():
+        out(f"Found {_many(len(paths), 'user_data.db file')} under {folder}.")
     # a new folder of this run's own, so that nothing already in the staging
     # folder is touched, and nothing of this run is left
     if staging is not None:
@@ -762,12 +768,23 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def migrate(path):
+    """``ofscraper --migrate-sqlite-to-postgres PATH``: bring a database file
+    (or a folder of them) into PostgreSQL in one step, as ``--apply`` does.
+    Exits with the command's code when anything stood in the way."""
+    code = run(path, apply=True)
+    if code:
+        raise SystemExit(code)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "folder", type=Path, help="folder to search for user_data.db files"
+        "folder",
+        type=Path,
+        help="folder to search for user_data.db files, or one database file",
     )
     parser.add_argument(
         "--apply",

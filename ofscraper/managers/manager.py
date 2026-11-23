@@ -88,7 +88,12 @@ class mainManager:
         return self._stats_manager
 
     def pick(self):
-        if settings.get_settings().command in [
+        migrate = getattr(settings.get_settings(), "migrate_sqlite_to_postgres", None)
+        if migrate:
+            import ofscraper.commands.postgres_import as postgres_import
+
+            postgres_import.migrate(migrate)
+        elif settings.get_settings().command in [
             "post_check",
             "msg_check",
             "paid_check",

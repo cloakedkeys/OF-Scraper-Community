@@ -1194,3 +1194,86 @@ def test_the_command_reads_its_own_arguments(tmp_path, monkeypatch):
         (tmp_path, dict(apply=False, skip_bad=False, staging=None)),
         (tmp_path, dict(apply=True, skip_bad=True, staging=None)),
     ]
+
+
+# --- ofscraper --migrate-sqlite-to-postgres ---
+
+
+def merged_file(tmp_path):
+    """Two creators' files merged into one with the menu's Merge Databases."""
+    import asyncio
+
+    import ofscraper.db.merge as merge
+
+    old = tmp_path / "old"
+    current_file(old / "111" / "user_data.db", 111, name="creator_a")
+    current_file(old / "222" / "user_data.db", 222, name="creator_b")
+    merged = tmp_path / "merged" / "user_data.db"
+    failed, completed, skipped = asyncio.run(merge.MergeDatabase()(old, merged))
+    assert not failed and len(completed) == 2
+    return merged
+
+
+def test_a_merged_file_is_brought_in_by_its_path(tmp_path):
+    merged = merged_file(tmp_path)
+    before = snapshot(merged.parent)
+    target = Target()
+
+    code, said = run(merged, target, apply=True)
+
+    assert code == 0, said
+    assert "onlyfans: 1 file, 2 creators" in said
+    assert {row["model_id"] for row in target.rows("onlyfans", "posts")} == {111, 222}
+    assert snapshot(merged.parent) == before
+
+
+def test_a_path_that_isnt_there_is_said_so(tmp_path):
+    code, said = run(tmp_path / "missing.db", Target(), apply=True)
+    assert code == 2
+    assert said == f"There is no file or folder at {tmp_path / 'missing.db'}."
+
+
+def test_the_option_brings_the_file_in_and_exits_with_the_commands_code(tmp_path, monkeypatch, capsys):
+    calls = []
+
+    def fake_run(path, apply=False, **kwargs):
+        calls.append((Path(path), apply))
+        kwargs.get("out", print)("Done.")
+        return 1
+
+    monkeypatch.setattr(importer, "run", fake_run)
+    with pytest.raises(SystemExit) as exit_info:
+        importer.migrate(tmp_path / "user_data.db")
+    assert exit_info.value.code == 1
+    assert calls == [(tmp_path / "user_data.db", True)]
+    assert "Done." in capsys.readouterr().out
+
+
+def test_a_migration_that_worked_returns(tmp_path, monkeypatch):
+    monkeypatch.setattr(importer, "run", lambda path, apply=False, **kwargs: 0)
+    assert importer.migrate(tmp_path) is None
+
+
+def test_the_option_is_on_the_main_command(monkeypatch, tmp_path):
+    import sys
+
+    import ofscraper.utils.args.main as args_main
+
+    monkeypatch.setattr(sys, "argv", ["OF-Scraper", "--migrate-sqlite-to-postgres", str(tmp_path)])
+    monkeypatch.setattr(args_main.main.program, "add_command", lambda *a, **k: None)
+    args = args_main.parse_args()
+    assert Path(args.migrate_sqlite_to_postgres) == tmp_path
+
+
+def test_the_app_runs_the_migration_instead_of_scraping(monkeypatch, tmp_path):
+    import ofscraper.managers.manager as manager
+
+    calls = []
+    monkeypatch.setattr(
+        settings, "get_settings",
+        lambda: SimpleNamespace(command=None, migrate_sqlite_to_postgres=str(tmp_path)),
+    )
+    monkeypatch.setattr(importer, "migrate", lambda path: calls.append(("migrate", Path(path))))
+    monkeypatch.setattr(manager.actions, "main", lambda: calls.append(("scrape",)))
+    manager.mainManager().pick()
+    assert calls == [("migrate", tmp_path)]
