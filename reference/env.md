@@ -542,73 +542,73 @@ Defined in `ofscraper/utils/of_env/values/main.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="sanitize_db_default"></a>`SANITIZE_DB_DEFAULT` | `OFSC_SANITIZE_DB_DEFAULT` | `False` | Whether to sanitize the database by default. |
-| <a id="suppress_log_level"></a>`SUPPRESS_LOG_LEVEL` | `OFSC_SUPPRESS_LOG_LEVEL` | `21` | Log level to suppress output (integer representing level). |
-| <a id="resume_default"></a>`RESUME_DEFAULT` | `OFSC_RESUME_DEFAULT` | `True` | Whether to resume downloads by default. |
-| <a id="cachedefault"></a>`CACHEDEFAULT` | `OFSC_CACHE_DEFAULT` | `'sqlite'` | Default caching mechanism (e.g., "sqlite"). |
-| <a id="key_default"></a>`KEY_DEFAULT` | `OFSC_KEY_DEFAULT` | `'manual'` | Default key mode for content decryption. |
+| <a id="sanitize_db_default"></a>`SANITIZE_DB_DEFAULT` | `OFSC_SANITIZE_DB_DEFAULT` | `False` | Default for `advanced_options.sanitize_text` (whether post and message text is sanitised before storing in the database). |
+| <a id="suppress_log_level"></a>`SUPPRESS_LOG_LEVEL` | `OFSC_SUPPRESS_LOG_LEVEL` | `21` | Defined but not read anywhere. |
+| <a id="resume_default"></a>`RESUME_DEFAULT` | `OFSC_RESUME_DEFAULT` | `True` | Default for `download_options.auto_resume` (whether leftover `.part` files are resumed). |
+| <a id="cachedefault"></a>`CACHEDEFAULT` | `OFSC_CACHE_DEFAULT` | `'sqlite'` | Default for `advanced_options.cache-mode` (`sqlite`, `json`, `disabled` or `api_disabled`). |
+| <a id="key_default"></a>`KEY_DEFAULT` | `OFSC_KEY_DEFAULT` | `'manual'` | Default for `cdm_options.key-mode-default` (`manual`; `cdrm` is deprecated because its service no longer works). |
 | <a id="key_options"></a>`KEY_OPTIONS` | none (bare key only) | `['cdrm', 'manual']` | The allowed `cdm_options.key-mode-default` values, taken from `ofscraper/utils/const.py`. Not read from the environment. |
-| <a id="file_size_max_default"></a>`FILE_SIZE_MAX_DEFAULT` | `OFSC_FILE_SIZE_MAX_DEFAULT` | `0` | Default maximum file size allowed (bytes, 0 for no limit). |
-| <a id="file_size_min_default"></a>`FILE_SIZE_MIN_DEFAULT` | `OFSC_FILE_SIZE_MIN_DEFAULT` | `0` | Default minimum file size allowed (bytes, 0 for no limit). |
-| <a id="min_length_default"></a>`MIN_LENGTH_DEFAULT` | `OFSC_MIN_LENGTH_DEFAULT` | `0` | Default minimum content length (e.g., for video duration). |
-| <a id="max_length_default"></a>`MAX_LENGTH_DEFAULT` | `OFSC_MAX_LENGTH_DEFAULT` | `0` | Default maximum content length. |
-| <a id="textlength_default"></a>`TEXTLENGTH_DEFAULT` | `OFSC_TEXTLENGTH_DEFAULT` | `0` | Default text length setting. |
-| <a id="space_replacer_default"></a>`SPACE_REPLACER_DEFAULT` | `OFSC_SPACE_REPLACER_DEFAULT` | `' '` | Character to replace spaces in paths/names. |
-| <a id="progress_default"></a>`PROGRESS_DEFAULT` | `OFSC_PROGRESS_DEFAULT` | `False` | Whether to show progress bars by default. |
-| <a id="save_path_default"></a>`SAVE_PATH_DEFAULT` | `OFSC_SAVE_PATH_DEFAULT` | `'{home_directory}/Data/ofscraper'` | Default base path for saving downloaded content. |
-| <a id="date_default"></a>`DATE_DEFAULT` | `OFSC_DATE_DEFAULT` | `'MM-DD-YYYY'` | Default date format string. |
-| <a id="profile_default"></a>`PROFILE_DEFAULT` | `OFSC_PROFILE_DEFAULT` | `'main_profile'` | Default profile name. |
-| <a id="premium_default"></a>`PREMIUM_DEFAULT` | `OFSC_PREMIUM_DEFAULT` | `'Premium'` | Default category for premium content. |
-| <a id="ffmpeg_default"></a>`FFMPEG_DEFAULT` | `OFSC_FFMPEG_DEFAULT` | `''` | Default path for FFmpeg executable. |
-| <a id="discord_default"></a>`DISCORD_DEFAULT` | `OFSC_DISCORD_DEFAULT` | `''` | Default Discord webhook URL or related setting. |
-| <a id="threads_default"></a>`THREADS_DEFAULT` | `OFSC_THREADS_DEFAULT` | `2` | Default number of threads for operations. |
-| <a id="download_sem_default"></a>`DOWNLOAD_SEM_DEFAULT` | `OFSC_DOWNLOAD_SEM_DEFAULT` | `6` | Default semaphore limit for downloads. |
+| <a id="file_size_max_default"></a>`FILE_SIZE_MAX_DEFAULT` | `OFSC_FILE_SIZE_MAX_DEFAULT` | `0` | Default for `content_filter_options.file_size_max` (maximum file size in bytes; 0 means no limit). |
+| <a id="file_size_min_default"></a>`FILE_SIZE_MIN_DEFAULT` | `OFSC_FILE_SIZE_MIN_DEFAULT` | `0` | Default for `content_filter_options.file_size_min` (minimum file size in bytes; 0 means no limit). |
+| <a id="min_length_default"></a>`MIN_LENGTH_DEFAULT` | `OFSC_MIN_LENGTH_DEFAULT` | `0` | Default for `content_filter_options.length_min` (minimum video duration in seconds; 0 means no limit). |
+| <a id="max_length_default"></a>`MAX_LENGTH_DEFAULT` | `OFSC_MAX_LENGTH_DEFAULT` | `0` | Default for `content_filter_options.length_max` (maximum video duration in seconds; 0 means no limit). |
+| <a id="textlength_default"></a>`TEXTLENGTH_DEFAULT` | `OFSC_TEXTLENGTH_DEFAULT` | `0` | Default for `file_options.textlength` (maximum post text length in filenames; 0 means no limit). |
+| <a id="space_replacer_default"></a>`SPACE_REPLACER_DEFAULT` | `OFSC_SPACE_REPLACER_DEFAULT` | `' '` | Default for `file_options.space_replacer` (character replacing spaces in filename text). |
+| <a id="progress_default"></a>`PROGRESS_DEFAULT` | `OFSC_PROGRESS_DEFAULT` | `False` | Default for `advanced_options.downloadbars` (whether to show per-file download progress bars). |
+| <a id="save_path_default"></a>`SAVE_PATH_DEFAULT` | `OFSC_SAVE_PATH_DEFAULT` | `'{home_directory}/Data/ofscraper'` | Default for `file_options.save_location` (root folder for downloads). |
+| <a id="date_default"></a>`DATE_DEFAULT` | `OFSC_DATE_DEFAULT` | `'MM-DD-YYYY'` | Default for `file_options.date` (arrow date format for the `{date}` placeholder). |
+| <a id="profile_default"></a>`PROFILE_DEFAULT` | `OFSC_PROFILE_DEFAULT` | `'main_profile'` | Default for `main_profile` (profile folder name in the config directory). |
+| <a id="premium_default"></a>`PREMIUM_DEFAULT` | `OFSC_PREMIUM_DEFAULT` | `'Premium'` | Defined but not read anywhere. |
+| <a id="ffmpeg_default"></a>`FFMPEG_DEFAULT` | `OFSC_FFMPEG_DEFAULT` | `''` | Default for `binary_options.ffmpeg` (path to the ffmpeg executable). |
+| <a id="discord_default"></a>`DISCORD_DEFAULT` | `OFSC_DISCORD_DEFAULT` | `''` | Default for `discord` (Discord webhook URL for log messages). |
+| <a id="threads_default"></a>`THREADS_DEFAULT` | `OFSC_THREADS_DEFAULT` | `2` | Defined but not read anywhere. |
+| <a id="download_sem_default"></a>`DOWNLOAD_SEM_DEFAULT` | `OFSC_DOWNLOAD_SEM_DEFAULT` | `6` | Default for `performance_options.download_sems` (number of concurrent downloads). |
 | <a id="fansly_stream_segments"></a>`FANSLY_STREAM_SEGMENTS` | `OFSC_FANSLY_STREAM_SEGMENTS` | `8` | How many files of one Fansly stream (HLS segments, AES-128 keys, DASH segments) are fetched at once before ffmpeg joins them locally; fetched files are kept so a stopped download resumes (`fansly_stream_download.py`). 0 leaves the whole stream to ffmpeg, one segment after another, with no resume. Streams the local path can't handle still go to ffmpeg: HLS that is live (no `#EXT-X-ENDLIST`) or uses encryption other than AES-128, and DASH that is protected, live, has more than one period or uses unsupported addressing. The number of files downloaded at once is still set by `download_sems`. |
 | <a id="silent_rechecks"></a>`SILENT_RECHECKS` | `OFSC_SILENT_RECHECKS` | `3` | How many times a Fansly video saved without sound, because the CDN refused its separate audio track and the direct file couldn't give the sound, is checked again (`download/utils/silent.py`). A check asks for the audio playlist and its first file with new links, at the end of the run that saved it and once on each later download run of that creator that includes videos. If the audio is accepted, the video is downloaded again and replaces the silent file once the new copy passes its checks. After this many refused checks the video is kept as it is. A check that fails for another reason (network, rate limit) doesn't count. 0 turns the checks off. |
 | <a id="fansly_full_scan_days"></a>`FANSLY_FULL_SCAN_DAYS` | `OFSC_FANSLY_FULL_SCAN_DAYS` | `7` | How often, in days, a Fansly download run scans the timeline and messages of a creator in full. Between full scans a run stops an area where the last finished scan began (see `advanced_options.incremental_downloads`). A post that appears later with an older date is found by the next full scan, so this is the longest it can be missed. 0 scans fully every time (`ofscraper/sites/fansly/incremental.py`). |
-| <a id="text_type_default"></a>`TEXT_TYPE_DEFAULT` | `OFSC_TEXT_TYPE_DEFAULT` | `'letter'` | Default text type processing. |
-| <a id="truncation_default"></a>`TRUNCATION_DEFAULT` | `OFSC_TRUNCATION_DEFAULT` | `True` | Whether truncation is enabled by default. |
+| <a id="text_type_default"></a>`TEXT_TYPE_DEFAULT` | `OFSC_TEXT_TYPE_DEFAULT` | `'letter'` | Default for `file_options.text_type_default` (`letter` or `word`). |
+| <a id="truncation_default"></a>`TRUNCATION_DEFAULT` | `OFSC_TRUNCATION_DEFAULT` | `True` | Default for `file_options.truncation_default` (whether long file paths are shortened to fit OS limits). |
 | <a id="filename_collision_default"></a>`FILENAME_COLLISION_DEFAULT` | `OFSC_FILENAME_COLLISION_DEFAULT` | `'media_id'` | What to do when a download's path is already taken by a different media. "media_id" appends _<media_id>; "overwrite" keeps the old behaviour (one file replaces the other). |
-| <a id="max_count_default"></a>`MAX_COUNT_DEFAULT` | `OFSC_MAX_COUNT_DEFAULT` | `0` | Default maximum count for certain operations. |
-| <a id="temp_folder_default"></a>`TEMP_FOLDER_DEFAULT` | `OFSC_TEMP_FOLDER_DEFAULT` | `None` | Default temporary folder path. Defaults to None. |
-| <a id="rotate_default"></a>`ROTATE_DEFAULT` | `OFSC_ROTATE_DEFAULT` | `True` | Whether to rotate content by default. |
-| <a id="system_freemin_default"></a>`SYSTEM_FREEMIN_DEFAULT` | `OFSC_SYSTEM_FREEMIN_DEFAULT` | `0` | Minimum free system space required (bytes/MB?). |
-| <a id="avatar_default"></a>`AVATAR_DEFAULT` | `OFSC_AVATAR_DEFAULT` | `True` | Whether avatars are included by default. |
-| <a id="infinite_loop_default"></a>`INFINITE_LOOP_DEFAULT` | `OFSC_INFINITE_LOOP_DEFAULT` | `False` | Whether infinite loop mode is enabled by default. |
-| <a id="incremental_downloads_default"></a>`INCREMENTAL_DOWNLOADS_DEFAULT` | `OFSC_INCREMENTAL_DOWNLOADS_DEFAULT`, `OFSC_ENABLE_AUTO_AFTER_DEFAULT` | `True` | Whether auto-after processing is enabled by default. |
-| <a id="default_user_list"></a>`DEFAULT_USER_LIST` | `OFSC_DEFAULT_USER_LIST` | `'main'` | Default user list to use. |
-| <a id="default_black_list"></a>`DEFAULT_BLACK_LIST` | `OFSC_DEFAULT_BLACK_LIST` | `''` | Default blacklist name. |
-| <a id="hashed_default"></a>`HASHED_DEFAULT` | `OFSC_HASHED_DEFAULT` | `None` | Default hashing setting. Defaults to None. |
-| <a id="blocked_ads_default"></a>`BLOCKED_ADS_DEFAULT` | `OFSC_BLOCKED_ADS_DEFAULT` | `False` | Whether ads are blocked by default. |
-| <a id="default_log_level"></a>`DEFAULT_LOG_LEVEL` | `OFSC_DEFAULT_LOG_LEVEL` | `'DEBUG'` | Default logging level. |
-| <a id="include_labels_all"></a>`INCLUDE_LABELS_ALL` | `OFSC_INCLUDE_LABELS_ALL` | `False` | Whether to include all labels by default. |
+| <a id="max_count_default"></a>`MAX_COUNT_DEFAULT` | `OFSC_MAX_COUNT_DEFAULT` | `0` | Default for `download_options.max_post_count` (maximum media items to process per creator; 0 means no limit). |
+| <a id="temp_folder_default"></a>`TEMP_FOLDER_DEFAULT` | `OFSC_TEMP_FOLDER_DEFAULT` | `None` | Default for `advanced_options.temp_dir` (root folder for `.part` files). |
+| <a id="rotate_default"></a>`ROTATE_DEFAULT` | `OFSC_ROTATE_DEFAULT` | `True` | Default for `advanced_options.rotate_logs` (whether each run writes its own log file in a per-day folder). |
+| <a id="system_freemin_default"></a>`SYSTEM_FREEMIN_DEFAULT` | `OFSC_SYSTEM_FREEMIN_DEFAULT` | `0` | Default for `download_options.system_free_min` (minimum free disk space in bytes; 0 disables the check). |
+| <a id="avatar_default"></a>`AVATAR_DEFAULT` | `OFSC_AVATAR_DEFAULT` | `True` | Defined but not read anywhere. |
+| <a id="infinite_loop_default"></a>`INFINITE_LOOP_DEFAULT` | `OFSC_INFINITE_LOOP_DEFAULT` | `False` | Default for `advanced_options.infinite_loop_action_mode` (whether action mode prompts to continue after each run). |
+| <a id="incremental_downloads_default"></a>`INCREMENTAL_DOWNLOADS_DEFAULT` | `OFSC_INCREMENTAL_DOWNLOADS_DEFAULT`, `OFSC_ENABLE_AUTO_AFTER_DEFAULT` | `True` | Default for `advanced_options.incremental_downloads` (also reads `OFSC_ENABLE_AUTO_AFTER_DEFAULT`). |
+| <a id="default_user_list"></a>`DEFAULT_USER_LIST` | `OFSC_DEFAULT_USER_LIST` | `'main'` | Default for `advanced_options.default_user_list` (user lists selected when `--user-list` isn't given). |
+| <a id="default_black_list"></a>`DEFAULT_BLACK_LIST` | `OFSC_DEFAULT_BLACK_LIST` | `''` | Default for `advanced_options.default_black_list` (user lists excluded when `--black-list` isn't given). |
+| <a id="hashed_default"></a>`HASHED_DEFAULT` | `OFSC_HASHED_DEFAULT` | `None` | Default for `advanced_options.remove_hash_match` (`true`, `false` or `None`). |
+| <a id="blocked_ads_default"></a>`BLOCKED_ADS_DEFAULT` | `OFSC_BLOCKED_ADS_DEFAULT` | `False` | Default for `content_filter_options.block_ads` (whether posts matching the ad regex are skipped). |
+| <a id="default_log_level"></a>`DEFAULT_LOG_LEVEL` | `OFSC_DEFAULT_LOG_LEVEL` | `'DEBUG'` | Default log file level when `--log` isn't given. |
+| <a id="include_labels_all"></a>`INCLUDE_LABELS_ALL` | `OFSC_INCLUDE_LABELS_ALL` | `False` | When on, `--posts all` (and `--download-area all` / `--like-area all`) also includes the Labels area. |
 | <a id="labels_concurrency"></a>`LABELS_CONCURRENCY` | `OFSC_LABELS_CONCURRENCY` | `2` | How many labels are paged at the same time. |
-| <a id="discord_thread_override"></a>`DISCORD_THREAD_OVERRIDE` | `OFSC_DISCORD_THREAD_OVERRIDE` | `False` | Whether to override Discord threading. |
-| <a id="discord_async"></a>`DISCORD_ASYNC` | `OFSC_DISCORD_ASYNC` | `False` | Whether Discord integration is asynchronous. |
-| <a id="use_wiv_cache_key"></a>`USE_WIV_CACHE_KEY` | `OFSC_USE_WIV_CACHE_KEY` | `True` | Whether to use Widevine cache key. |
-| <a id="after_action_script_default"></a>`AFTER_ACTION_SCRIPT_DEFAULT` | `OFSC_AFTER_ACTION_SCRIPT_DEFAULT` | `None` | Default path for a script to run after download. Defaults to None. |
-| <a id="post_script_default"></a>`POST_SCRIPT_DEFAULT` | `OFSC_POST_SCRIPT_DEFAULT` | `None` | Default path for a general post-processing script. Defaults to None. |
-| <a id="skip_download_script_default"></a>`SKIP_DOWNLOAD_SCRIPT_DEFAULT` | `OFSC_SKIP_DOWNLOAD_SCRIPT_DEFAULT` | `None` | Default path for a general download-skipping script. Defaults to None. |
-| <a id="after_download_script_default"></a>`AFTER_DOWNLOAD_SCRIPT_DEFAULT` | `OFSC_AFTER_DOWNLOAD_SCRIPT_DEFAULT` | `None` | Default path for a script that runs after download. Defaults to None. |
-| <a id="env_files_default"></a>`ENV_FILES_DEFAULT` | `OFSC_ENV_FILES_DEFAULT` | `''` | Default path for a file(s) used to import env variables. Defaults to None. |
-| <a id="naming_script_default"></a>`NAMING_SCRIPT_DEFAULT` | `OFSC_NAMING_SCRIPT_DEFAULT` | `None` | Default path for a general naming-processing script. Defaults to None. |
-| <a id="download_limit_default"></a>`DOWNLOAD_LIMIT_DEFAULT` | `OFSC_DOWNLOAD_LIMIT_DEFAULT` | `0` | Default limit for downloads (integer, 0 for no limit). |
+| <a id="discord_thread_override"></a>`DISCORD_THREAD_OVERRIDE` | `OFSC_DISCORD_THREAD_OVERRIDE` | `False` | Defined but not read anywhere. |
+| <a id="discord_async"></a>`DISCORD_ASYNC` | `OFSC_DISCORD_ASYNC` | `False` | When on, sends Discord webhook log messages asynchronously instead of synchronously. |
+| <a id="use_wiv_cache_key"></a>`USE_WIV_CACHE_KEY` | `OFSC_USE_WIV_CACHE_KEY` | `True` | Whether to cache Widevine decryption keys by PSSH (`keyhelpers.py`). |
+| <a id="after_action_script_default"></a>`AFTER_ACTION_SCRIPT_DEFAULT` | `OFSC_AFTER_ACTION_SCRIPT_DEFAULT` | `None` | Default for `script_options.after_action_script`. |
+| <a id="post_script_default"></a>`POST_SCRIPT_DEFAULT` | `OFSC_POST_SCRIPT_DEFAULT` | `None` | Default for `script_options.post_script`. |
+| <a id="skip_download_script_default"></a>`SKIP_DOWNLOAD_SCRIPT_DEFAULT` | `OFSC_SKIP_DOWNLOAD_SCRIPT_DEFAULT` | `None` | Default for `script_options.skip_download_script`. |
+| <a id="after_download_script_default"></a>`AFTER_DOWNLOAD_SCRIPT_DEFAULT` | `OFSC_AFTER_DOWNLOAD_SCRIPT_DEFAULT` | `None` | Default for `script_options.after_download_script`. |
+| <a id="env_files_default"></a>`ENV_FILES_DEFAULT` | `OFSC_ENV_FILES_DEFAULT` | `''` | Defined but not read anywhere. |
+| <a id="naming_script_default"></a>`NAMING_SCRIPT_DEFAULT` | `OFSC_NAMING_SCRIPT_DEFAULT` | `None` | Default for `script_options.naming_script`. |
+| <a id="download_limit_default"></a>`DOWNLOAD_LIMIT_DEFAULT` | `OFSC_DOWNLOAD_LIMIT_DEFAULT` | `0` | Default for `performance_options.download_limit` (maximum download speed in bytes per second; 0 means unlimited). |
 
 ### Format strings
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="dir_format_default"></a>`DIR_FORMAT_DEFAULT` | `OFSC_DIR_FORMAT_DEFAULT` | `'{model_username}/{responsetype}/{mediatype}/'` | Default directory naming format string. |
-| <a id="file_format_default"></a>`FILE_FORMAT_DEFAULT` | `OFSC_FILE_FORMAT_DEFAULT` | `'{filename}.{ext}'` | Default file naming format string. |
-| <a id="metadata_default"></a>`METADATA_DEFAULT` | `OFSC_METADATA_DEFAULT` | `'{configpath}/{profile}/.data/{model_id}'` | Default metadata file path format. |
+| <a id="dir_format_default"></a>`DIR_FORMAT_DEFAULT` | `OFSC_DIR_FORMAT_DEFAULT` | `'{model_username}/{responsetype}/{mediatype}/'` | Default for `file_options.dir_format`. |
+| <a id="file_format_default"></a>`FILE_FORMAT_DEFAULT` | `OFSC_FILE_FORMAT_DEFAULT` | `'{filename}.{ext}'` | Default for `file_options.file_format`. |
+| <a id="metadata_default"></a>`METADATA_DEFAULT` | `OFSC_METADATA_DEFAULT` | `'{configpath}/{profile}/.data/{model_id}'` | Default for `metadata` (folder pattern for each creator's `user_data.db`). |
 
 ### Fixed values
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="response_type_default"></a>`RESPONSE_TYPE_DEFAULT` | `OFSC_RESPONSE_TYPE_DEFAULT` | a dict of 9 entries (see the source) | Mapping of response types to display names. |
-| <a id="empty_media_default"></a>`EMPTY_MEDIA_DEFAULT` | `OFSC_EMPTY_MEDIA_DEFAULT` | `{}` | Default empty media dictionary. |
-| <a id="filter_default"></a>`FILTER_DEFAULT` | `OFSC_FILTER_DEFAULT` | `['Images', 'Audios', 'Videos']` | Default filter list. |
+| <a id="response_type_default"></a>`RESPONSE_TYPE_DEFAULT` | `OFSC_RESPONSE_TYPE_DEFAULT` | a dict of 9 entries (see the source) | Default for the `responsetype` map in `config.json` (accepts a JSON object via `OFSC_RESPONSE_TYPE_DEFAULT`). |
+| <a id="empty_media_default"></a>`EMPTY_MEDIA_DEFAULT` | `OFSC_EMPTY_MEDIA_DEFAULT` | `{}` | Defined but not read anywhere. |
+| <a id="filter_default"></a>`FILTER_DEFAULT` | `OFSC_FILTER_DEFAULT` | `['Images', 'Audios', 'Videos']` | Default for `download_options.filter` (media types to download; accepts a comma-separated list via `OFSC_FILTER_DEFAULT`). |
 | <a id="ssl_validation_default"></a>`SSL_VALIDATION_DEFAULT` | `OFSC_SSL_VALIDATION_DEFAULT` | `'custom'` | The default for `advanced_options.ssl_verify`, used when the config has no usable value. |
 
 ## Dates
