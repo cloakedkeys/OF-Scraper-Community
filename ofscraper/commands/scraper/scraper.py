@@ -59,7 +59,7 @@ class scraperManager(CommandManager):
             try:
                 self._runner(menu=menu)
             except stop.DownloadsStopped:
-                final_action()
+                final_action("stopped")
                 if not menu:
                     raise SystemExit(130)
 

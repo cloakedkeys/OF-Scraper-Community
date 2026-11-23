@@ -1,11 +1,21 @@
 """The run's totals (StatsManager.totals) and the end-of-run summary built on them."""
 
+import json
 import logging
+import queue
 from types import SimpleNamespace
 
+import pytest
+
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
+import ofscraper.commands.utils.scrape_context as scrape_context
+import ofscraper.main.close.final.run_record as run_record
+import ofscraper.scripts.final_script as final_script
+import ofscraper.utils.logs.utils.level as log_level
 from ofscraper.managers.stats import StatsManager
 from ofscraper.managers.utils.state import EActivity
+from ofscraper.utils.logs.classes.classes import DiscordFormatter
+from ofscraper.utils.logs.classes.handlers.discord import DiscordHandler
 
 DOWNLOAD = EActivity.ScrapeActivity.DOWNLOAD
 PAID = EActivity.PaidActivity.SCRAPE_PAID_DOWNLOAD
@@ -72,3 +82,166 @@ def test_printed_summary_uses_the_totals(caplog):
     assert " ➜ FAILED:      2 overall" in text
     assert " ➜ TOTAL CHANGED: 2" in text
     assert " ➜ SAVED:   1" in text
+
+
+# --- the run record ---------------------------------------------------------
+
+
+class FakeModels:
+    def __init__(self, processed=(), unprocessed=()):
+        self.processed, self.unprocessed = set(processed), list(unprocessed)
+
+    def get_processed(self, activity):
+        return self.processed if activity == DOWNLOAD else set()
+
+    def get_unprocessed(self, activity):
+        return self.unprocessed if activity == DOWNLOAD else []
+
+
+@pytest.fixture
+def run(monkeypatch):
+    """A run of a filled StatsManager: alice and bob done, carol not."""
+    state = SimpleNamespace(
+        stats=filled(), models=FakeModels({"alice", "bob"}, ["carol"]),
+        settings=SimpleNamespace(site="onlyfans", command="scraper", discord_level="OFF",
+                                 post_script=None, profile="main_profile"),
+    )
+    monkeypatch.setattr(
+        run_record, "manager",
+        SimpleNamespace(Manager=SimpleNamespace(
+            stats_manager=state.stats, current_model_manager=state.models)),
+    )
+    monkeypatch.setattr(run_record.settings, "get_settings", lambda: state.settings)
+    import ofscraper.utils.profiles.data as profile_data
+
+    monkeypatch.setattr(profile_data, "get_active_profile", lambda: "main_profile")
+    run_record.start()
+    return state
+
+
+def test_record_of_a_run(run):
+    record = run_record.finish()
+    assert record["site"] == "onlyfans" and record["profile"] == "main_profile"
+    assert record["command"] == "scraper" and record["outcome"] == "ok"
+    assert record["started"] and record["finished"] >= record["started"]
+    assert record["totals"] == {k: v for k, v in run.stats.totals().items()}
+    assert record["creators"] == {"done": 2, "failed": 1}
+    assert [c["username"] for c in record["per_creator"]] == ["alice", "bob", "carol"]
+    # built once a run: a later call returns the same record
+    assert run_record.finish("failed") is record and run_record.current() is record
+    json.dumps(record)  # post_script gets it as JSON
+
+
+def test_record_of_a_pass_that_raises(run):
+    with pytest.raises(RuntimeError):
+        with scrape_context.scrape_context_manager():
+            raise RuntimeError("database is gone")
+    record = run_record.current()
+    assert record["outcome"] == "failed" and record["error"] == "database is gone"
+
+
+def test_record_of_a_stopped_pass(run):
+    with pytest.raises(KeyboardInterrupt):
+        with scrape_context.scrape_context_manager():
+            raise KeyboardInterrupt
+    assert run_record.current()["outcome"] == "stopped"
+
+
+def test_each_pass_gets_its_own_record(run):
+    with scrape_context.scrape_context_manager():
+        first = run_record.finish()
+    with scrape_context.scrape_context_manager():
+        second = run_record.finish()
+    assert first is not second
+
+
+def test_post_script_gets_the_old_keys_and_the_summary(run, monkeypatch, tmp_path):
+    script = tmp_path / "post.py"
+    script.write_text("", encoding="utf-8")
+    run.settings.post_script = str(script)
+    model_manager = SimpleNamespace(
+        get_processed=lambda activity: {"alice"} if activity == "download" else set(),
+        get_unprocessed=lambda activity: ["carol"] if activity == "download" else [],
+    )
+    monkeypatch.setattr(
+        final_script, "manager", SimpleNamespace(Manager=SimpleNamespace(current_model_manager=model_manager))
+    )
+    monkeypatch.setattr(final_script.settings, "get_settings", lambda: run.settings)
+    sent = []
+    monkeypatch.setattr(final_script, "run", lambda cmd, input=None, **k: sent.append(json.loads(input)))
+    record = run_record.finish()
+    final_script.final_script(record)
+    payload = sent[0]
+    assert payload["download_processed_users"] == ["alice"]
+    assert payload["download_unprocessed_users"] == ["carol"]
+    assert set(payload) == {
+        "like_processed_users", "like_unprocessed_users", "unlike_processed_users",
+        "unlike_unprocessed_users", "download_processed_users", "download_unprocessed_users",
+        "scrape_paid_processed_users", "scrape_paid_unprocessed_users", "summary",
+    }
+    assert payload["summary"] == json.loads(json.dumps(record))
+
+
+# --- --discord SUMMARY ------------------------------------------------------
+
+
+@pytest.fixture
+def discord(monkeypatch):
+    """A Discord handler on the shared log that queues instead of sending."""
+    handler = DiscordHandler.__new__(DiscordHandler)
+    logging.Handler.__init__(handler)
+    handler.queue = queue.Queue()
+    handler.setFormatter(DiscordFormatter("%(message)s"))
+    handler.setLevel(log_level.getLevel("SUMMARY"))
+    shared = logging.getLogger("shared")
+    shared.addHandler(handler)
+    yield handler
+    shared.removeHandler(handler)
+
+
+def queued(handler):
+    out = []
+    while not handler.queue.empty():
+        out.append(handler.queue.get())
+    return out
+
+
+def test_summary_level_sends_one_message_and_no_log_lines(run, discord):
+    run.settings.discord_level = "SUMMARY"
+    log = logging.getLogger("shared")
+    log.warning("a warning")
+    log.error("an error")
+    run_record.finish()
+    run_record.finish()
+    messages = queued(discord)
+    assert len(messages) == 1
+    assert messages[0].startswith(
+        "OnlyFans, main_profile: 3 creators, 5 new files (3.02 KB), 2 failed. 1 creator not finished. Took "
+    )
+    assert "- alice: 4 new (3.02 KB), 1 failed" in messages[0]
+    assert "- bob: 1 new (7 bytes), 1 failed" in messages[0]
+    assert "carol" not in messages[0].split("\n", 1)[1]
+
+
+@pytest.mark.parametrize("level", ["OFF", "LOW", "NORMAL"])
+def test_other_levels_send_no_summary(run, discord, level):
+    run.settings.discord_level = level
+    run_record.finish()
+    assert queued(discord) == []
+
+
+def test_long_creator_list_is_cut_to_fit_one_message(run):
+    record = run_record.build()
+    record["per_creator"] = [
+        {"username": f"creator{i:03}", "new_files": 1, "bytes": 1, "failed": 0} for i in range(300)
+    ]
+    text = run_record.message(record)
+    assert len(text) <= run_record.MESSAGE_LIMIT
+    lines = text.split("\n")
+    shown = [line for line in lines if line.startswith("- creator")]
+    assert lines[-1] == f"... and {300 - len(shown)} more" and shown
+
+
+def test_failed_run_says_so(run):
+    record = run_record.build("failed", "database is gone")
+    assert "The run failed: database is gone." in run_record.message(record)

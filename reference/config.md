@@ -101,7 +101,7 @@ The folder pattern for each creator's `user_data.db`. It uses placeholders such 
 
 **Default:** `""` · **CLI override:** `--discord` · **Env default:** [`DISCORD_DEFAULT`](env.md#discord_default) · **Read by:** `get_discord()` in `ofscraper/utils/config/data.py`
 
-The Discord webhook URL that log messages are posted to. Nothing is sent unless the run's Discord log level is raised with `-dc`/`--discord` set to `LOW` or `NORMAL`. The option defaults to `OFF`.
+The Discord webhook URL that log messages are posted to. Nothing is sent unless the run's Discord log level is raised with `-dc`/`--discord` set to `SUMMARY` (one summary message per run or daemon pass, no log lines), `LOW` or `NORMAL`. The option defaults to `OFF`.
 
 ## `file_options`
 
@@ -377,7 +377,7 @@ An executable that runs after each user is processed by the like, unlike or down
 
 **Default:** `null` · **CLI override:** `--post-script` · **Env default:** [`POST_SCRIPT_DEFAULT`](env.md#post_script_default) · **Also reads:** `advanced_options`, `scripts` · **Read by:** `get_post_script()` in `ofscraper/utils/config/data.py`
 
-An executable that runs once when the program finishes. It receives JSON on stdin that lists processed and unprocessed users for the like, unlike, download and scrape-paid activities. The `-ps`/`--post-script` option overrides it.
+An executable that runs once when the program finishes. It receives JSON on stdin that lists processed and unprocessed users for the like, unlike, download and scrape-paid activities, plus a `summary` key: the run's record (site, profile, command, start and finish times, outcome, download/metadata/text totals, creators done and not finished, and each creator's new files, bytes and failures), or `null` when it couldn't be built. The `-ps`/`--post-script` option overrides it.
 
 ### `script_options.naming_script`
 

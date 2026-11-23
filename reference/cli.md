@@ -280,9 +280,9 @@ Turn off Rich UI live display features
 
 #### `--discord`
 
-**Also:** `-dc` · **Type:** one of `OFF`, `LOW`, `NORMAL` · **Default:** `'OFF'` · **Commands:** all · **Config fallback:** `discord`
+**Also:** `-dc` · **Type:** one of `OFF`, `SUMMARY`, `LOW`, `NORMAL` · **Default:** `'OFF'` · **Commands:** all · **Config fallback:** `discord`
 
-Set Discord log level
+Set Discord log level; SUMMARY sends one message per run (or daemon pass) and no log lines
 
 **Dest:** `discord_level` · **Defined in:** `ofscraper/utils/args/parse/arguments/logging.py`
 

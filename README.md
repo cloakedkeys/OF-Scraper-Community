@@ -246,6 +246,19 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
 - **Organize downloads in Stash:** copy each download's creator, date, caption and source into [Stash](https://stashapp.cc). See [Stash](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/STASH.md).
 - **Keep the database in PostgreSQL:** as an option, one PostgreSQL database can replace the per-creator SQLite files. See [PostgreSQL](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/POSTGRESQL.md).
 - **Record OnlyFans livestreams:** `--live` records the selected creators who are live now, and `--live-watch` keeps checking and records them as they go live. OnlyFans streams are recorded in a Chromium browser, so install the optional extra first: `pip install "ofscraper-community[live]"`, then `playwright install chromium`. Recordings are saved as `.webm` under `OnlyFans/{username}/Livestreams/`. Based on [cjb900](https://github.com/cjb900)'s Live Stream Monitor plugin.
+- **A run summary on your phone:** `--discord SUMMARY` sends one Discord message per run (or daemon pass) instead of log lines, for example `OnlyFans, main_profile: 12 creators, 47 new files (1.8 GB), 2 failed. Took 14 min.`, followed by a line per creator that got new files. The same summary reaches `post_script` as the `summary` key of its JSON input (`site`, `profile`, `started`, `finished`, `outcome`, `totals`, `creators`, `per_creator`), so a short script can forward it anywhere else. For example, to [ntfy](https://ntfy.sh):
+
+  ```python
+  #!/usr/bin/env python3
+  import json, sys, urllib.request
+
+  s = json.load(sys.stdin)["summary"] or {}
+  d = s.get("totals", {}).get("downloads", {})
+  new = d.get("videos", 0) + d.get("audios", 0) + d.get("photos", 0)
+  text = f"{s.get('outcome')}: {new} new files, {d.get('failed', 0)} failed"
+  urllib.request.urlopen("https://ntfy.sh/your-topic", data=text.encode())
+  ```
+
 - **Move a creator's files after a rename:** move the files saved under a creator's old name to their current name's folder, and update the database to match. See [Moving files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/MOVING_FILES.md).
 
 ## Exit codes and scheduled runs
