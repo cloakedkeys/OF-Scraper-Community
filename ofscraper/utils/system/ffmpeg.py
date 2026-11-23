@@ -1,5 +1,7 @@
+import base64
 import os
 import shutil
+import signal
 import subprocess
 import re
 import logging
@@ -15,6 +17,69 @@ log = logging.getLogger("shared")
 _ffmpeg_path: str | None = None
 _ffprobe_path: str | None = None
 _ffprobe_checked: bool = False
+# ffmpeg binaries that passed the version check but crashed on the MPEG-TS
+# sample; used only when no other ffmpeg is found
+_crashed: list[str] = []
+
+# A 940-byte MPEG-TS file: 0.05 s of silent MP2 audio. Reading it runs the
+# same MPEG-TS reader as a Fansly or HLS join. Some static builds crash there
+# on newer Linux systems: they load the system's own text-conversion (gconv)
+# modules, which were built for a newer C library than the one inside them.
+_TS_SAMPLE = base64.b64decode(
+    "R0AREABC8CUAAcEAAP8B/wAB/IAUSBIBBkZGbXBlZwlTZXJ2aWNlMDF3fEPK////////////"
+    "////////////////////////////////////////////////////////////////////////"
+    "////////////////////////////////////////////////////////////////////////"
+    "//////////////////////////////////9HQAAQAACwDQABwQAAAAHwACqxBLL/////////"
+    "////////////////////////////////////////////////////////////////////////"
+    "////////////////////////////////////////////////////////////////////////"
+    "/////////////////////////////////////////////////////////////////////0dQ"
+    "ABAAArASAAHBAADhAPAABOEA8AAsZW9I////////////////////////////////////////"
+    "////////////////////////////////////////////////////////////////////////"
+    "////////////////////////////////////////////////////////////////////////"
+    "////////////////////////////////R0EAMAdQAAB7DH4AAAABwAEogIAFIQAH2GH/9UjE"
+    "dVRNpt/+gAAAFVVVVVfffffffffffffffffPvvu7u7rY+WxbHy2LYti2LYti2LY19993d3db"
+    "Hy2LY+WxbFsWxbFsWxbGvvvu7u7rY+WxbHy2LYti2LYti2LY19993d3dbHy2LY+WxbFsWxbF"
+    "sWxbGvvvu7u7rY+WxbHy2LYti2LYti2LY19993d3dbHy2LY+WxbFsWxbFsWxbGvvvu5HAQAx"
+    "OQD/////////////////////////////////////////////////////////////////////"
+    "/////+7utj5bFsfLYti2LYti2LYtjX333d3d1sfLYtj5bFsWxbFsWxbFsa+++7u7utj5bFsf"
+    "LYti2LYti2LYtjX333d3d1sfLYtj5bFsWxbFsWxbFsa+++7u7utj5bFsfLYti2LYti2LYtjX"
+    "333d3d1sfLYtj5bFsWxbFsWxbFsaAA=="
+)
+
+_CRASH_SIGNALS = {"SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT"}
+
+
+def stop_reason(returncode) -> str | None:
+    """How ffmpeg ended when it did not exit by itself: stopped by a signal
+    (Linux, macOS) or by a Windows exception code. None for a normal exit."""
+    if returncode is None:
+        return None
+    if returncode < 0:
+        try:
+            name = signal.Signals(-returncode).name
+        except ValueError:
+            name = f"signal {-returncode}"
+        return f"crashed ({name})" if name in _CRASH_SIGNALS else f"was stopped ({name})"
+    if returncode >= 0xC0000000:
+        return f"crashed (Windows error 0x{returncode:08X})"
+    return None
+
+
+def _ts_crash(path: str) -> str | None:
+    """How ``path`` crashed reading the MPEG-TS sample, or None if it did not.
+    A normal error exit (a build without the MPEG-TS reader) is not a crash."""
+    try:
+        result = subprocess.run(
+            [path, "-nostdin", "-loglevel", "error", "-f", "mpegts", "-i", "pipe:0",
+             "-c", "copy", "-f", "null", "-"],
+            input=_TS_SAMPLE,
+            capture_output=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        log.debug(f"Could not run the MPEG-TS check on '{path}'.", exc_info=True)
+        return None
+    return stop_reason(result.returncode)
 
 
 def _is_valid_ffmpeg(path: str | None) -> bool:
@@ -54,6 +119,18 @@ def _is_valid_ffmpeg(path: str | None) -> bool:
                     return False
             else:
                 log.debug(f"Could not parse strict semantic version from '{path}' (likely a git/custom build). Allowing it to pass.")
+
+            crash = _ts_crash(path)
+            if crash:
+                log.warning(
+                    f"⚠️ The FFmpeg at '{path}' {crash} reading a small test video, "
+                    "so it can't join Fansly or HLS downloads. Some static builds do "
+                    "this on newer Linux systems. Looking for another FFmpeg; to choose "
+                    "one, set \"ffmpeg\" in config.json, for example to your system's "
+                    "own ffmpeg (/usr/bin/ffmpeg on most Linux systems)."
+                )
+                _crashed.append(path)
+                return False
 
             log.info(f"Validation successful: Found valid FFmpeg binary at '{path}'")
             return True
@@ -127,7 +204,17 @@ def get_ffmpeg() -> str:
         _ffmpeg_path = system_path
         return _ffmpeg_path
 
-    # Step 4: If all methods fail, raise the exception.
+    # Step 4: an ffmpeg that crashed on the MPEG-TS check can still do other
+    # work (DRM decryption reads MP4), so use it rather than none.
+    if _crashed:
+        log.warning(
+            f"⚠️ No other FFmpeg was found, so using '{_crashed[0]}', which crashed "
+            "on the test video. Fansly and HLS downloads will likely fail with it."
+        )
+        _ffmpeg_path = _crashed[0]
+        return _ffmpeg_path
+
+    # Step 5: If all methods fail, raise the exception.
     raise FileNotFoundError(
         "A valid FFmpeg executable could not be found.\n"
         "Please add FFmpeg to your system's PATH, specify its location in your settings, "

@@ -135,6 +135,7 @@ def _fake_version(monkeypatch, line):
     monkeypatch.setattr(
         ffmpeg, "run", lambda *a, **k: SimpleNamespace(stdout=line, stderr="")
     )
+    monkeypatch.setattr(ffmpeg, "_ts_crash", lambda path: None)
 
 
 @pytest.mark.parametrize(
@@ -153,3 +154,105 @@ def _fake_version(monkeypatch, line):
 def test_ffmpeg_version_gate(monkeypatch, line, ok):
     _fake_version(monkeypatch, line)
     assert ffmpeg._is_valid_ffmpeg("ffmpeg") is ok
+
+
+@pytest.mark.parametrize(
+    "code,said",
+    [
+        (0, None),
+        (1, None),
+        (None, None),
+        (-11, "crashed (SIGSEGV)"),
+        (-15, "was stopped (SIGTERM)"),
+        (-200, "was stopped (signal 200)"),
+        (0xC0000005, "crashed (Windows error 0xC0000005)"),
+    ],
+)
+def test_stop_reason(code, said):
+    assert ffmpeg.stop_reason(code) == said
+
+
+def test_ts_sample_is_read_by_a_working_ffmpeg():
+    import shutil
+    import subprocess
+
+    found = shutil.which("ffmpeg")
+    if not found:
+        pytest.skip("no ffmpeg on PATH")
+    result = subprocess.run(
+        [found, "-nostdin", "-loglevel", "error", "-f", "mpegts", "-i", "pipe:0",
+         "-c", "copy", "-f", "null", "-"],
+        input=ffmpeg._TS_SAMPLE, capture_output=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert ffmpeg._ts_crash(found) is None
+
+
+def test_ts_crash_reports_a_crashing_binary(tmp_path, monkeypatch):
+    import sys
+
+    # a stand-in ffmpeg that reads the sample, then crashes the way the
+    # static build does (a bad memory read)
+    script = tmp_path / "crash.py"
+    # (Python turns a bad memory read into an exception on Windows, so fail
+    # fast there)
+    crash = (
+        "import ctypes; ctypes.windll.kernel32.RaiseFailFastException(None, None, 0)"
+        if sys.platform == "win32"
+        else "import faulthandler; faulthandler._sigsegv()"
+    )
+    script.write_text(f"import sys\nsys.stdin.buffer.read()\n{crash}\n", encoding="utf-8")
+    real = ffmpeg.subprocess.run
+    monkeypatch.setattr(
+        ffmpeg.subprocess, "run",
+        lambda cmd, **k: real([sys.executable, "-I", str(script), *cmd[1:]], **k),
+    )
+    assert ffmpeg._ts_crash("ffmpeg").startswith("crashed (")
+
+
+@pytest.fixture
+def lookup(monkeypatch):
+    """get_ffmpeg with a settings path, no pyffmpeg, and fake binaries:
+    ``crashes`` lists the paths that crash on the MPEG-TS sample."""
+    import sys
+
+    state = SimpleNamespace(crashes=set(), on_path=None)
+    monkeypatch.setattr(ffmpeg, "_ffmpeg_path", None)
+    monkeypatch.setattr(ffmpeg, "_crashed", [])
+    monkeypatch.setitem(sys.modules, "pyffmpeg", None)
+    monkeypatch.setattr(
+        ffmpeg.settings, "get_settings", lambda: SimpleNamespace(ffmpeg="/static/ffmpeg")
+    )
+    monkeypatch.setattr(
+        ffmpeg.shutil, "which",
+        lambda p: state.on_path if p == "ffmpeg" else p,
+    )
+    monkeypatch.setattr(
+        ffmpeg, "run",
+        lambda *a, **k: SimpleNamespace(stdout="ffmpeg version 7.0.2-static", stderr=""),
+    )
+    monkeypatch.setattr(
+        ffmpeg, "_ts_crash",
+        lambda path: "crashed (SIGSEGV)" if path in state.crashes else None,
+    )
+    return state
+
+
+def test_a_crashing_ffmpeg_is_skipped_for_a_working_one(lookup, caplog):
+    lookup.crashes = {"/static/ffmpeg"}
+    lookup.on_path = "/usr/bin/ffmpeg"
+    with caplog.at_level("WARNING"):
+        assert ffmpeg.get_ffmpeg() == "/usr/bin/ffmpeg"
+    assert "'/static/ffmpeg' crashed (SIGSEGV) reading a small test video" in caplog.text
+
+
+def test_a_crashing_ffmpeg_is_used_when_there_is_no_other(lookup, caplog):
+    lookup.crashes = {"/static/ffmpeg"}
+    with caplog.at_level("WARNING"):
+        assert ffmpeg.get_ffmpeg() == "/static/ffmpeg"
+    assert "No other FFmpeg was found" in caplog.text
+
+
+def test_a_working_settings_ffmpeg_is_still_first(lookup):
+    lookup.on_path = "/usr/bin/ffmpeg"
+    assert ffmpeg.get_ffmpeg() == "/static/ffmpeg"

@@ -48,7 +48,7 @@ from ofscraper.sites.fansly import auth as fansly_auth
 from ofscraper.sites.fansly import headers as fansly_headers
 from ofscraper.sites.fansly import video as fansly_video
 from ofscraper.utils.cache.profile import set_profile_cache
-from ofscraper.utils.system.ffmpeg import get_ffmpeg, get_ffprobe
+from ofscraper.utils.system.ffmpeg import get_ffmpeg, get_ffprobe, stop_reason
 from ofscraper.utils.system.ffprobe import get_media_duration, verify_media_integrity
 from ofscraper.commands.scraper.actions.download.utils.chunk import (
     get_chunk_size,
@@ -972,7 +972,16 @@ class FanslyStreamDownloadManager(DownloadManager):
             raise
         if returncode != 0 or not temp.exists() or not temp.stat().st_size:
             err = (stderr or b"").decode("utf-8", "replace").strip()[-500:]
-            raise Exception(f"ffmpeg could not {what}: {err or 'no output'}")
+            if not err:
+                # nothing printed: say how it ended and which ffmpeg it was
+                stopped = stop_reason(returncode)
+                if stopped:
+                    err = f"{cmd[0]} {stopped} without a message"
+                elif returncode:
+                    err = f"{cmd[0]} exited with code {returncode} without a message"
+                else:
+                    err = f"{cmd[0]} finished, but its output file is missing or empty"
+            raise Exception(f"ffmpeg could not {what}: {err}")
 
     async def _replace_silent(self, temp, ele):
         """Downloading a silent video again (see ``silent.recheck``): keep the
