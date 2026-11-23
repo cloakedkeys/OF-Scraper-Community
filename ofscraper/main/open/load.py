@@ -3,6 +3,7 @@ import os
 import platform
 import traceback
 
+import ofscraper.main.close.exit_status as exit_status
 import ofscraper.main.open.run as run
 import ofscraper.utils.config.config as config_
 import ofscraper.utils.dates as dates
@@ -13,25 +14,33 @@ import ofscraper.utils.system.system as system
 import ofscraper.utils.settings as settings
 
 
+def _report_startup_error(error):
+    print(error)
+    print(traceback.format_exc())
+    try:
+        logging.getLogger("shared").debug(traceback.format_exc())
+        logging.getLogger("shared").debug(error)
+    except Exception as E:
+        print(E)
+        print(traceback.format_exc())
+
+
 def main():
     try:
         systemSet()
         settings_loader()
         setdate()
-        readConfig()
+        try:
+            readConfig()
+        except Exception as E:
+            _report_startup_error(E)
+            raise SystemExit(exit_status.CONFIG)
         setLogger()
         make_folder()
         run.main()
     except Exception as E:
-        print(E)
-        print(traceback.format_exc())
-        try:
-            logging.getLogger("shared").debug(traceback.format_exc())
-            logging.getLogger("shared").debug(E)
-        except Exception as E:
-            print(E)
-            print(traceback.format_exc())
-        raise SystemExit(1)
+        _report_startup_error(E)
+        raise SystemExit(exit_status.ERROR)
 
 
 def settings_loader():

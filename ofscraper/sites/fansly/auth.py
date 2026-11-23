@@ -150,8 +150,10 @@ def make_auth(auth=None) -> dict:
     from rich.console import Console
 
     if settings.get_settings().auth_fail:
+        import ofscraper.main.close.exit_status as exit_status
+
         log.info("auth failed quitting on error")
-        quit()
+        raise SystemExit(exit_status.AUTH)
     auth = normalize(auth or read_auth())
     console = Console()
     console.print(

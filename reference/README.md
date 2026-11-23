@@ -82,6 +82,23 @@ Which site a run uses is decided in this order:
 
 The media path comes from `file_options.dir_format` (`{model_username}/{responsetype}/{mediatype}/`) and `file_options.file_format` (`{filename}.{ext}`). See [placeholders.md](placeholders.md).
 
+## Exit codes
+
+When more than one problem happens in a run, the most severe code wins (ordered below from least to most severe):
+
+| Code | Meaning |
+|---|---|
+| `0` | Everything ran. Skipped files are fine. |
+| `4` | Partial: at least one creator, area or download failed. |
+| `5` | Site unavailable (OnlyFans maintenance). Try again later. |
+| `3` | Login failed (`--auth-fail` or an unreadable auth file). |
+| `6` | Configuration error (unreadable config, or a configured database that can't be reached). |
+| `1` | Unexpected error. |
+| `2` | Usage error (command-line mistake). |
+| `130` | Interrupted (Ctrl+C, or SIGTERM outside the daemon). |
+
+In `--daemon` mode, each pass logs its outcome and resets the status for the next pass. Stopping the daemon with `SIGTERM` exits `0`.
+
 ## Features only this fork has
 
 Upstream's docs do not cover these:

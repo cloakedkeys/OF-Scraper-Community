@@ -133,9 +133,237 @@ def test_failed_run_exits_with_status_1_and_logs_the_error(monkeypatch):
     assert any("simulated failure" in r.getMessage() for r in records)
 
 
-def test_successful_run_returns_normally(monkeypatch):
+def test_successful_run_exits_0(monkeypatch):
+    monkeypatch.setattr(run, "check_database", lambda: None)
     monkeypatch.setattr(run, "start_manager", lambda: None)
-    run.main()
+    with pytest.raises(SystemExit) as exit_info:
+        run.main()
+    assert exit_info.value.code == 0
+
+
+def test_exit_status_most_severe_wins_regardless_of_order():
+    import ofscraper.main.close.exit_status as exit_status
+
+    ordered = [
+        exit_status.OK,
+        exit_status.PARTIAL,
+        exit_status.UNAVAILABLE,
+        exit_status.AUTH,
+        exit_status.CONFIG,
+        exit_status.ERROR,
+        exit_status.USAGE,
+        exit_status.INTERRUPTED,
+    ]
+    try:
+        for i, low in enumerate(ordered):
+            for high in ordered[i + 1 :]:
+                exit_status.reset()
+                exit_status.record(low)
+                exit_status.record(high)
+                assert exit_status.code() == int(high)
+
+                exit_status.reset()
+                exit_status.record(high)
+                exit_status.record(low)
+                assert exit_status.code() == int(high)
+    finally:
+        exit_status.reset()
+
+
+def test_run_main_exit_codes(monkeypatch):
+    import ofscraper.commands.utils.command as command_mod
+    import ofscraper.data.posts.post as post_mod
+    import ofscraper.db.postgres as postgres
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.main.close.final.final as final_mod
+    import ofscraper.managers.stats as stats_mod
+
+    monkeypatch.setattr(run, "check_database", lambda: None)
+    monkeypatch.setattr(run.exit_manager, "shutdown", lambda: None)
+    monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: None)
+    monkeypatch.setattr(
+        run.console, "get_shared_console", lambda: SimpleNamespace(print=lambda *a, **k: None)
+    )
+
+    # creator failure -> 4
+    monkeypatch.setattr(
+        run,
+        "start_manager",
+        lambda: command_mod.log_user_failure("a_creator", RuntimeError("boom")),
+    )
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.PARTIAL
+
+    # area failure -> 4
+    monkeypatch.setattr(
+        post_mod,
+        "log",
+        SimpleNamespace(warning=lambda *a: None, traceback_=lambda *a: None),
+    )
+    monkeypatch.setattr(
+        run,
+        "start_manager",
+        lambda: post_mod.log_area_failure("a_creator", "Timeline", RuntimeError("boom")),
+    )
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.PARTIAL
+
+    # download failure via final_action + StatsManager -> 4
+    sm = stats_mod.StatsManager()
+    dl = sm._get_stat_obj("a_creator", "download")
+    dl.failed_count = 1
+    monkeypatch.setattr(final_mod, "final_script", lambda: None)
+    monkeypatch.setattr(final_mod, "printEndValues", lambda: None)
+    monkeypatch.setattr(
+        final_mod.manager,
+        "Manager",
+        SimpleNamespace(stats_manager=sm, _stats_manager=sm),
+    )
+    monkeypatch.setattr(run, "start_manager", final_mod.final_action)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.PARTIAL
+
+    # skipped files only -> 0
+    sm_clean = stats_mod.StatsManager()
+    dl_clean = sm_clean._get_stat_obj("a_creator", "download")
+    dl_clean.skipped_count = 5
+    monkeypatch.setattr(
+        final_mod.manager,
+        "Manager",
+        SimpleNamespace(stats_manager=sm_clean, _stats_manager=sm_clean),
+    )
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.OK
+
+    # auth failure -> 3
+    def auth_fail():
+        raise SystemExit(exit_status.AUTH)
+
+    monkeypatch.setattr(run, "start_manager", auth_fail)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.AUTH
+
+    # maintenance -> 5
+    def maintenance():
+        raise SystemExit(exit_status.UNAVAILABLE)
+
+    monkeypatch.setattr(run, "start_manager", maintenance)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.UNAVAILABLE
+
+    # database configuration error -> 6
+    def db_down():
+        raise postgres.PostgresUnavailable("db unreachable")
+
+    monkeypatch.setattr(run, "start_manager", db_down)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.CONFIG
+
+    # KeyboardInterrupt -> 130
+    def interrupt():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run, "start_manager", interrupt)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.INTERRUPTED
+
+
+def test_auth_fail_and_unreadable_auth_exit_3(monkeypatch):
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.sites.fansly.auth as fansly_auth
+    import ofscraper.utils.auth.file as auth_file
+    import ofscraper.utils.auth.make as auth_make
+
+    monkeypatch.setattr(
+        auth_make.settings, "get_settings", lambda: SimpleNamespace(auth_fail=True)
+    )
+    with pytest.raises(SystemExit) as exc:
+        auth_make.make_auth()
+    assert exc.value.code == exit_status.AUTH
+
+    with pytest.raises(SystemExit) as exc:
+        fansly_auth.make_auth()
+    assert exc.value.code == exit_status.AUTH
+
+    monkeypatch.setattr(
+        auth_file.auth_dict,
+        "get_auth_dict",
+        lambda: (_ for _ in ()).throw(FileNotFoundError("missing")),
+    )
+    monkeypatch.setattr(auth_file.auth_error, "handle_auth_errors", lambda e: "quit")
+    with pytest.raises(SystemExit) as exc:
+        auth_file.read_auth()
+    assert exc.value.code == exit_status.AUTH
+
+
+def test_unreadable_config_in_load_exits_6(monkeypatch):
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.main.open.load as load
+
+    def bad_config():
+        raise ValueError("broken config")
+
+    monkeypatch.setattr(load, "systemSet", lambda: None)
+    monkeypatch.setattr(load, "settings_loader", lambda: None)
+    monkeypatch.setattr(load, "setdate", lambda: None)
+    monkeypatch.setattr(load, "readConfig", bad_config)
+    with pytest.raises(SystemExit) as exc:
+        load.main()
+    assert exc.value.code == exit_status.CONFIG
+
+
+def test_daemon_pass_logs_outcome_and_resets_status(monkeypatch, caplog):
+    import queue
+    import ofscraper.commands.scraper.scraper as scraper
+    import ofscraper.main.close.exit_status as exit_status
+
+    class TwoPassQueue(queue.Queue):
+        def get(self, *args, **kwargs):
+            if self.empty():
+                raise KeyboardInterrupt
+            return super().get(*args, **kwargs)
+
+    pass_num = 0
+
+    def runner():
+        nonlocal pass_num
+        pass_num += 1
+        if pass_num == 1:
+            exit_status.record(exit_status.PARTIAL)
+
+    jobs = TwoPassQueue()
+    monkeypatch.setattr(scraper, "jobqueue", jobs)
+    monkeypatch.setattr(scraper.exit, "sigterm_as_keyboard_interrupt", lambda: None)
+    monkeypatch.setattr(scraper.checkers, "check_auth", lambda: None)
+    monkeypatch.setattr(scraper, "scraperManager", lambda: SimpleNamespace(runner=runner))
+    monkeypatch.setattr(
+        scraper.settings, "get_settings", lambda: SimpleNamespace(output_level="NORMAL")
+    )
+    monkeypatch.setattr(
+        scraper.manager,
+        "Manager",
+        SimpleNamespace(current_model_manager=SimpleNamespace(sync_models=lambda: None)),
+    )
+    monkeypatch.setattr(scraper.actions, "select_areas", lambda: None)
+    monkeypatch.setattr(scraper, "set_schedule", lambda fn, **kw: jobs.put(fn))
+    monkeypatch.setattr(scraper.live, "watch_enabled", lambda: False)
+    monkeypatch.setattr(scraper.action_prompts, "restore_session_args", lambda: None)
+
+    with caplog.at_level(logging.INFO, logger="shared"):
+        with pytest.raises(KeyboardInterrupt):
+            scraper.daemon_process()
+
+    assert "Daemon pass finished with status 4 (partial)" in caplog.text
+    assert "Daemon pass finished with status 0 (ok)" in caplog.text
+    assert exit_status.code() == exit_status.OK
 
 
 def test_keyboard_interrupt_in_run_exits_130(monkeypatch):

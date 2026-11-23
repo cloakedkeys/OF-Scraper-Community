@@ -248,6 +248,29 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
 - **Record OnlyFans livestreams:** `--live` records the selected creators who are live now, and `--live-watch` keeps checking and records them as they go live. OnlyFans streams are recorded in a Chromium browser, so install the optional extra first: `pip install "ofscraper-community[live]"`, then `playwright install chromium`. Recordings are saved as `.webm` under `OnlyFans/{username}/Livestreams/`. Based on [cjb900](https://github.com/cjb900)'s Live Stream Monitor plugin.
 - **Move a creator's files after a rename:** move the files saved under a creator's old name to their current name's folder, and update the database to match. See [Moving files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/MOVING_FILES.md).
 
+## Exit codes and scheduled runs
+
+OF-Scraper exits with a code that scripts, cron jobs and Task Scheduler can check. When more than one problem happens during a run, the most severe code wins:
+
+| Code | Meaning |
+|---|---|
+| `0` | Everything ran. Skipped files are fine. |
+| `4` | Partial: at least one creator, area or download failed. |
+| `5` | Site unavailable (OnlyFans maintenance). Try again later. |
+| `3` | Login failed (`--auth-fail` or an unreadable auth file). |
+| `6` | Configuration error (unreadable config, or a configured database that can't be reached). |
+| `1` | Unexpected error. |
+| `2` | Usage error (command-line mistake). |
+| `130` | Interrupted (Ctrl+C, or SIGTERM outside the daemon). |
+
+In `--daemon` mode, each pass logs its outcome and resets for the next pass; stopping the daemon with `SIGTERM` exits `0`.
+
+Example cron job (every 3 hours, with `--auth-fail` so it never hangs waiting for a prompt):
+
+```sh
+0 */3 * * *  ofscraper --action download -u ALL -o all -p normal --no-rich --auth-fail || echo "ofscraper exited with status $?"
+```
+
 ## Reporting a problem
 
 Open an issue [in this repo](https://github.com/cloakedkeys/OF-Scraper-Community/issues), not upstream's.
