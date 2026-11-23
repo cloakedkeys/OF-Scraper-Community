@@ -403,40 +403,40 @@ Defined in `ofscraper/utils/of_env/values/req/api.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="max_timeline_individual_search"></a>`MAX_TIMELINE_INDIVIDUAL_SEARCH` | `OFSC_MAX_TIMELINE_INDIVIDUAL_SEARCH` | `10` | Max number of timeline posts to search individually. |
-| <a id="max_pinned_individual_search"></a>`MAX_PINNED_INDIVIDUAL_SEARCH` | `OFSC_MAX_PINNED_INDIVIDUAL_SEARCH` | `10` | Max number of pinned posts to search individually. |
-| <a id="max_archived_individual_search"></a>`MAX_ARCHIVED_INDIVIDUAL_SEARCH` | `OFSC_MAX_ARCHIVED_INDIVIDUAL_SEARCH` | `10` | Max number of archived posts to search individually. |
-| <a id="max_messages_individual_search"></a>`MAX_MESSAGES_INDIVIDUAL_SEARCH` | `OFSC_MAX_MESSAGES_INDIVIDUAL_SEARCH` | `10` | Max number of messages to search individually. |
-| <a id="max_streams_individual_search"></a>`MAX_STREAMS_INDIVIDUAL_SEARCH` | `OFSC_MAX_STREAMS_INDIVIDUAL_SEARCH` | `10` | Max number of streams to search individually. |
+| <a id="max_timeline_individual_search"></a>`MAX_TIMELINE_INDIVIDUAL_SEARCH` | `OFSC_MAX_TIMELINE_INDIVIDUAL_SEARCH` | `10` | Maximum number of `--post-id` IDs fetched individually for timeline posts before falling back to a full timeline scan. |
+| <a id="max_pinned_individual_search"></a>`MAX_PINNED_INDIVIDUAL_SEARCH` | `OFSC_MAX_PINNED_INDIVIDUAL_SEARCH` | `10` | Defined but not read anywhere. |
+| <a id="max_archived_individual_search"></a>`MAX_ARCHIVED_INDIVIDUAL_SEARCH` | `OFSC_MAX_ARCHIVED_INDIVIDUAL_SEARCH` | `10` | Maximum number of `--post-id` IDs fetched individually for archived posts before falling back to a full archived scan. |
+| <a id="max_messages_individual_search"></a>`MAX_MESSAGES_INDIVIDUAL_SEARCH` | `OFSC_MAX_MESSAGES_INDIVIDUAL_SEARCH` | `10` | Maximum number of `--post-id` IDs fetched individually for messages before falling back to a full messages scan. |
+| <a id="max_streams_individual_search"></a>`MAX_STREAMS_INDIVIDUAL_SEARCH` | `OFSC_MAX_STREAMS_INDIVIDUAL_SEARCH` | `10` | Maximum number of `--post-id` IDs fetched individually for streams before falling back to a full streams scan. |
 
 ### API Retry Counts
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="api_indvidiual_num_tries"></a>`API_INDVIDIUAL_NUM_TRIES` | `OFSC_API_INDIVIDUAL_NUM_TRIES` | `3` | Number of tries for individual API calls. |
+| <a id="api_indvidiual_num_tries"></a>`API_INDVIDIUAL_NUM_TRIES` | `OFSC_API_INDIVIDUAL_NUM_TRIES` | `3` | Default maximum number of attempts for an API session request (`ofsession`), unless the caller passes `retries`. |
 | <a id="rate_limit_num_tries"></a>`RATE_LIMIT_NUM_TRIES` | `OFSC_RATE_LIMIT_NUM_TRIES` | `8` | Number of tries for a request that keeps getting a 429. The backoff wait grows between tries, so these span minutes. |
-| <a id="api_paid_num_tries"></a>`API_PAID_NUM_TRIES` | `OFSC_API_PAID_NUM_TRIES` | `8` | Number of tries for paid content API calls. |
-| <a id="api_check_num_tries"></a>`API_CHECK_NUM_TRIES` | `OFSC_API_CHECK_NUM_TRIES` | `10` | Number of tries for API checks. |
-| <a id="api_num_tries"></a>`API_NUM_TRIES` | `OFSC_API_NUM_TRIES` | `10` | General number of tries for API calls (for messages, etc.). |
-| <a id="api_like_num_tries"></a>`API_LIKE_NUM_TRIES` | `OFSC_API_LIKE_NUM_TRIES` | `5` | Number of tries for API like operations. |
+| <a id="api_paid_num_tries"></a>`API_PAID_NUM_TRIES` | `OFSC_API_PAID_NUM_TRIES` | `8` | Defined but not read anywhere. |
+| <a id="api_check_num_tries"></a>`API_CHECK_NUM_TRIES` | `OFSC_API_CHECK_NUM_TRIES` | `10` | Defined but not read anywhere. |
+| <a id="api_num_tries"></a>`API_NUM_TRIES` | `OFSC_API_NUM_TRIES` | `10` | Used only as the denominator in `[attempt X/Y]` log messages (`commands/scraper/actions/utils/log.py`); doesn't control retry counts. |
+| <a id="api_like_num_tries"></a>`API_LIKE_NUM_TRIES` | `OFSC_API_LIKE_NUM_TRIES` | `5` | Default maximum number of attempts on the like/unlike session (`like.py`), though individual like/unlike requests override it with `LIKE_MAX_RETRIES`. |
 
 ### API Page Limits
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="api_max_areas"></a>`API_MAX_AREAS` | `OFSC_API_MAX_AREAS` | `2` | Max number of API areas. |
-| <a id="reasonable_max_page"></a>`REASONABLE_MAX_PAGE` | `OFSC_REASONABLE_MAX_PAGE` | `50` | Reasonable max number of pages (e.g., 50 posts per page). |
-| <a id="min_page_post_count"></a>`MIN_PAGE_POST_COUNT` | `OFSC_MIN_PAGE_POST_COUNT` | `50` | Minimum number of posts expected per page. |
-| <a id="reasonable_max_page_messages"></a>`REASONABLE_MAX_PAGE_MESSAGES` | `OFSC_REASONABLE_MAX_PAGE_MESSAGES` | `80` | Reasonable max number of pages for messages. |
+| <a id="api_max_areas"></a>`API_MAX_AREAS` | `OFSC_API_MAX_AREAS` | `2` | Maximum number of post areas scanned at the same time for one creator. |
+| <a id="reasonable_max_page"></a>`REASONABLE_MAX_PAGE` | `OFSC_REASONABLE_MAX_PAGE` | `50` | Target maximum number of concurrent pagination tasks for non-message areas. |
+| <a id="min_page_post_count"></a>`MIN_PAGE_POST_COUNT` | `OFSC_MIN_PAGE_POST_COUNT` | `50` | Minimum number of items per pagination task, to avoid spawning many workers for small accounts. |
+| <a id="reasonable_max_page_messages"></a>`REASONABLE_MAX_PAGE_MESSAGES` | `OFSC_REASONABLE_MAX_PAGE_MESSAGES` | `80` | Target maximum number of concurrent pagination tasks for messages. |
 
 ### API Request Parameters
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="api_timeout_per_task"></a>`API_TIMEOUT_PER_TASK` | `OFSC_API_TIMEOUT_PER_TASK` | `500` | Timeout per API task in milliseconds. |
-| <a id="api_request_threadonly"></a>`API_REQUEST_THREADONLY` | `OFSC_API_REQUEST_THREADONLY` | `['Windows', 'Linux', 'Darwin']` | List of OS names where API requests should be thread-only. |
-| <a id="api_req_sem_max"></a>`API_REQ_SEM_MAX` | `OFSC_API_REQ_SEM_MAX` | `12` | Maximum semaphore for API requests. |
-| <a id="api_req_check_max"></a>`API_REQ_CHECK_MAX` | `OFSC_API_REQ_CHECK_MAX` | `12` | Maximum checks for API requests. |
+| <a id="api_timeout_per_task"></a>`API_TIMEOUT_PER_TASK` | `OFSC_API_TIMEOUT_PER_TASK` | `500` | Total timeout, in seconds, for each API session request in main scraper and metadata runs. |
+| <a id="api_request_threadonly"></a>`API_REQUEST_THREADONLY` | `OFSC_API_REQUEST_THREADONLY` | `['Windows', 'Linux', 'Darwin']` | Defined but not read anywhere. |
+| <a id="api_req_sem_max"></a>`API_REQ_SEM_MAX` | `OFSC_API_REQ_SEM_MAX` | `12` | Maximum concurrent API requests in main scraper and metadata runs. |
+| <a id="api_req_check_max"></a>`API_REQ_CHECK_MAX` | `OFSC_API_REQ_CHECK_MAX` | `12` | Maximum concurrent API requests in check (`*_check`) and `manual` modes. |
 
 ## DRM manifests (MPD)
 
