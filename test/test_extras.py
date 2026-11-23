@@ -45,6 +45,25 @@ def test_the_extras_match_pyproject():
         assert declared[name] == requirements
 
 
+def test_the_postgres_driver_comes_with_the_scraper_where_it_has_wheels():
+    from packaging.requirements import Requirement
+
+    with open(ROOT / "pyproject.toml", "rb") as f:
+        project = tomllib.load(f)["project"]
+    [driver] = [Requirement(r) for r in project["dependencies"] if r.startswith("psycopg")]
+    assert str(driver).split(";")[0] == Requirement(extras.EXTRAS["postgres"][0]).__str__()
+
+    def on(sys_platform, machine):
+        return driver.marker.evaluate({"sys_platform": sys_platform, "platform_machine": machine})
+
+    for where in [("win32", "AMD64"), ("darwin", "arm64"), ("darwin", "x86_64"),
+                  ("linux", "x86_64"), ("linux", "aarch64")]:
+        assert on(*where), where
+    # no prebuilt driver: a required one would make the whole install fail there
+    for where in [("win32", "ARM64"), ("android", "aarch64"), ("linux", "armv7l")]:
+        assert not on(*where), where
+
+
 def test_tests_never_install_anything():
     assert not extras.enabled()
 

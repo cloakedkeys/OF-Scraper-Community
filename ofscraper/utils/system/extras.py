@@ -1,7 +1,8 @@
 """Install an optional extra the first time a feature needs it.
 
 ``--live`` on OnlyFans needs the ``live`` extra (Playwright) and a Chromium
-browser; ``OFSC_DATABASE_URL`` needs the ``postgres`` extra (psycopg). Instead
+browser; ``OFSC_DATABASE_URL`` needs psycopg, which is a dependency wherever it
+has prebuilt wheels and the ``postgres`` extra elsewhere. Instead
 of stopping with an install command, the first run installs them into the
 Python running OF-Scraper, with pip, or with uv when that Python has no pip
 (``uv tool install``). ``OFSC_INSTALL_EXTRAS=False`` turns this off.
