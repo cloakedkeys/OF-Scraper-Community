@@ -62,7 +62,7 @@ Runs when no subcommand is given. The entry point is `ofscraper/__main__.py`. Th
 
 - With `--daemon`, it prompts for actions if none were given, then reruns on a schedule.
 - With `--action` or `--scrape-paid`, it runs those actions once. It repeats with prompts if the infinite-loop config is on.
-- With only Fansly `--live` or `--live-watch`, it records livestreams.
+- With only `--live` or `--live-watch`, it records livestreams (Fansly, or OnlyFans with the optional `live` extra).
 - Otherwise it opens the interactive menu: Action, Auth (edit `auth.json`), Config (edit `config.json`), Profile, Merge databases and Quit.
 
 The run reads `auth.json` and `config.json` from the profile. It writes media under `save_location` and rows to each creator's `user_data.db`.

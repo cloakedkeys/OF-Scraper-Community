@@ -69,12 +69,14 @@ BROWSER_ARGS = [
 STEALTH_JS = """
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-const _getParam = WebGLRenderingContext.prototype.getParameter;
-WebGLRenderingContext.prototype.getParameter = function(p) {
-    if (p === 37445) return 'Intel Open Source Technology Center';
-    if (p === 37446) return 'Mesa DRI Intel(R) HD Graphics 520 (Skylake GT2)';
-    return _getParam.call(this, p);
-};
+if (typeof WebGLRenderingContext !== 'undefined') {
+    const _getParam = WebGLRenderingContext.prototype.getParameter;
+    WebGLRenderingContext.prototype.getParameter = function(p) {
+        if (p === 37445) return 'Intel Open Source Technology Center';
+        if (p === 37446) return 'Mesa DRI Intel(R) HD Graphics 520 (Skylake GT2)';
+        return _getParam.call(this, p);
+    };
+}
 window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
 const _origQuery = navigator.permissions.query;
 navigator.permissions.query = (params) =>
@@ -252,16 +254,20 @@ START_RECORDER_JS = """() => {
     const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
     try {
         const rec = new MediaRecorder(new MediaStream(tracks), {mimeType});
+        // one chain, so chunks are queued in the order they were recorded
+        window._lsm_chain = Promise.resolve();
         rec.ondataavailable = (e) => {
             if (!e.data || e.data.size === 0) return;
-            e.data.arrayBuffer().then(ab => {
+            const data = e.data;
+            window._lsm_chain = window._lsm_chain.then(() => data.arrayBuffer()).then(ab => {
                 const bytes = new Uint8Array(ab);
                 let binary = '';
                 for (let i = 0; i < bytes.length; i += 8192)
                     binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
                 (window._lsm_chunks = window._lsm_chunks || []).push(btoa(binary));
-            });
+            }).catch(() => {});
         };
+        window._lsm_stopped = new Promise(resolve => { rec.onstop = resolve; });
         rec.start(5000);
         window._lsm_recorder = rec;
         return {ok: true, video: !!videoTrack, audio: audioSource, mimeType};
@@ -271,13 +277,33 @@ START_RECORDER_JS = """() => {
 }"""
 
 DRAIN_JS = "() => { const c = window._lsm_chunks || []; window._lsm_chunks = []; return c; }"
-STOP_RECORDER_JS = (
-    "() => { if (window._lsm_recorder && window._lsm_recorder.state !== 'inactive') "
-    "window._lsm_recorder.stop(); }"
-)
+# Stop, then wait (at most 10 s) until the last chunk is queued.
+STOP_RECORDER_JS = """async () => {
+    const rec = window._lsm_recorder;
+    if (!rec) return;
+    if (rec.state !== 'inactive') rec.stop();
+    const done = (window._lsm_stopped || Promise.resolve())
+        .then(() => window._lsm_chain || Promise.resolve());
+    await Promise.race([done, new Promise(r => setTimeout(r, 10000))]);
+}"""
 
 
 # ------------------------------------------------------------------ plain helpers
+
+class BrowserMissing(Exception):
+    """Playwright is installed but its Chromium isn't."""
+
+
+def browser_proxy(proxy: str) -> dict:
+    """``OFSC_PROXY`` as Playwright wants it: login details apart from the address."""
+    from urllib.parse import unquote, urlsplit
+
+    u = urlsplit(proxy)
+    if not u.username:
+        return {"server": proxy}
+    server = f"{u.scheme}://{u.hostname}" + (f":{u.port}" if u.port else "")
+    return {"server": server, "username": unquote(u.username), "password": unquote(u.password or "")}
+
 
 def playwright_ready() -> bool:
     """Whether Playwright is installed; logs how to install it when it isn't."""
@@ -378,8 +404,10 @@ class EndWatch:
         if self.page_ended_since is not None:
             # the words alone could be in chat: ask OnlyFans
             if self.last_page_check is None or now - self.last_page_check >= PAGE_ENDED_CHECK_SECONDS:
-                self.last_page_check = now
+                # this answer also counts as the minute check
+                self.last_page_check = self.last_check = now
                 self.page_answer = self.check()
+                self.not_live = self.not_live + 1 if self.page_answer is False else 0
                 if self.page_answer is False:
                     return "the page says the live video has ended and OnlyFans agrees"
             if self.page_answer is None and now - self.page_ended_since >= PAGE_ENDED_STOP_SECONDS:
@@ -404,7 +432,7 @@ def remux(ffmpeg, path: pathlib.Path) -> bool:
     try:
         proc = subprocess.run(
             [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(path), "-c", "copy", str(tmp)],
-            capture_output=True, timeout=int(max(300, size_mb / 10)),
+            capture_output=True, stdin=subprocess.DEVNULL, timeout=int(max(300, size_mb / 10)),
         )
         if proc.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
             os.replace(tmp, path)
@@ -460,7 +488,7 @@ def close_alert(page) -> str:
     return note
 
 
-def launch(p, profile: str, auth: dict):
+def launch(p, profile: str, auth: dict, proxy=None):
     no_sandbox = needs_no_sandbox()
     kwargs = {
         "user_data_dir": profile,
@@ -474,7 +502,15 @@ def launch(p, profile: str, auth: dict):
     # OnlyFans ties sess to the user agent it was made with
     if auth.get("user_agent"):
         kwargs["user_agent"] = auth["user_agent"]
-    ctx = p.chromium.launch_persistent_context(**kwargs)
+    if proxy:
+        # the browser goes through the same proxy as the API requests
+        kwargs["proxy"] = browser_proxy(proxy)
+    try:
+        ctx = p.chromium.launch_persistent_context(**kwargs)
+    except Exception as e:
+        if "executable doesn't exist" in str(e).lower() or "playwright install" in str(e).lower():
+            raise BrowserMissing(INSTALL_HINT) from e
+        raise
     ctx.add_cookies(login_cookies(auth))
     script = xbc_script(auth)
     if script:
@@ -486,7 +522,9 @@ def launch(p, profile: str, auth: dict):
 
 def join(page, username, halt) -> bool:
     """Open the live page and join; False (with a log line) if it can't be done."""
-    url = f"https://onlyfans.com/{username}/live"
+    from urllib.parse import quote
+
+    url = f"https://onlyfans.com/{quote(username, safe='')}/live"
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
     except Exception as e:
@@ -576,7 +614,7 @@ def drain(page, file) -> int:
     return written
 
 
-def capture(username: str, out: pathlib.Path, auth: dict, halt, still_live, ffmpeg=None):
+def capture(username: str, out: pathlib.Path, auth: dict, halt, still_live, ffmpeg=None, proxy=None):
     """Record ``username``'s livestream to ``out`` until it ends or ``halt`` is set.
 
     Returns the saved path, or None when nothing was recorded.
@@ -590,7 +628,7 @@ def capture(username: str, out: pathlib.Path, auth: dict, halt, still_live, ffmp
     saved = False
     try:
         with sync_playwright() as p:
-            ctx = launch(p, profile, auth)
+            ctx = launch(p, profile, auth, proxy)
             try:
                 page = ctx.new_page()
                 if not join(page, username, halt):
@@ -615,6 +653,13 @@ def capture(username: str, out: pathlib.Path, auth: dict, halt, still_live, ffmp
     if not saved:
         log.info(f"{username}: no livestream data was recorded")
         return None
+    if halt.is_set():
+        # stopped by hand: don't hold up the exit with a remux of a big file
+        log.info(
+            f"{username}: livestream saved to {out.name}. Players may not show its length; "
+            f"to add it, run: ffmpeg -i {out.name} -c copy fixed.webm"
+        )
+        return out
     remux(ffmpeg, out)
     log.info(f"{username}: livestream saved to {out.name}")
     return out
@@ -650,7 +695,6 @@ def record_loop(page, username, out, halt, end_watch) -> bool:
         # let MediaRecorder hand over its last chunk, then save it
         try:
             page.evaluate(STOP_RECORDER_JS)
-            page.wait_for_timeout(3000)
             total += drain(page, file)
         except Exception:
             pass

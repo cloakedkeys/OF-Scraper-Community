@@ -22,11 +22,13 @@ import datetime
 import logging
 import pathlib
 import threading
+from urllib.parse import quote
 
 from ofscraper.sites.fansly import live as shared
 
 log = logging.getLogger("shared")
 
+CHECK_TIMEOUT = 15
 STREAM_ACTIVE_URL = "https://onlyfans.com/api2/v2/users/{}/streams/active?view=full_with_check"
 
 
@@ -39,13 +41,22 @@ def recording_path(save_location, username, now=None) -> pathlib.Path:
 
 
 def live_subscriptions(pages) -> list:
-    """The creators in subscription pages who are live now, as watcher streams."""
-    return [
-        {"accountId": user.get("id"), "username": user.get("username")}
-        for page in pages
-        for user in page
-        if user.get("hasStream") and user.get("username")
-    ]
+    """The creators in subscription pages who are live now, as watcher streams.
+
+    Paging by offset can list a creator twice when subscriptions change
+    during the scan, so each one is kept once.
+    """
+    out, seen = [], set()
+    for page in pages:
+        for user in page:
+            if not (user.get("hasStream") and user.get("username")):
+                continue
+            key = user.get("id") or user.get("username")
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"accountId": key, "username": user["username"]})
+    return out
 
 
 def stream_is_active(data):
@@ -65,7 +76,7 @@ async def get_online_streams(c) -> list:
 async def still_live(c, username):
     """True / False from OnlyFans; None when the check fails."""
     try:
-        async with c.requests_async(url=STREAM_ACTIVE_URL.format(username)) as r:
+        async with c.requests_async(url=STREAM_ACTIVE_URL.format(quote(username, safe=""))) as r:
             if r.status == 404:
                 return False
             if not (200 <= r.status < 300):
@@ -100,17 +111,20 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
     import ofscraper.utils.system.ffmpeg as ffmpeg_finder
     from ofscraper.sites.onlyfans import live_capture
     from ofscraper.utils.auth.file import read_auth
+    import ofscraper.utils.of_env.of_env as of_env
 
     opts = shared.options()
     if opts["chat"]:
         log.warning("--live-chat only applies to Fansly; OnlyFans recordings have no chat file")
     if not live_capture.playwright_ready():
         return
-    auth = read_auth()
     save_location = common_paths.get_save_location()
     ffmpeg = ffmpeg_finder.get_ffmpeg()
 
-    async with manager.Manager.session.aget_ofsession() as c:
+    # live checks get one attempt: a failed check counts as "don't know" and
+    # the next one comes a minute later, so retries would only hold up the recording
+    async with manager.Manager.session.aget_ofsession() as c, \
+            manager.Manager.session.aget_ofsession(retries=1) as checks:
         loop = asyncio.get_running_loop()
 
         async def fetch_online():
@@ -121,20 +135,26 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
             username = stream["username"]
 
             def check_live():
-                future = asyncio.run_coroutine_threadsafe(still_live(c, username), loop)
+                future = asyncio.run_coroutine_threadsafe(still_live(checks, username), loop)
                 try:
-                    return future.result(timeout=60)
+                    return future.result(timeout=CHECK_TIMEOUT)
                 except Exception:
+                    future.cancel()
                     return None
 
-            await record_in_thread(
-                live_capture.capture, stop_event,
-                username=username,
-                out=recording_path(save_location, username),
-                auth=auth,
-                still_live=check_live,
-                ffmpeg=ffmpeg,
-            )
+            try:
+                await record_in_thread(
+                    live_capture.capture, stop_event,
+                    username=username,
+                    out=recording_path(save_location, username),
+                    # read each time: auth.json may be renewed during --live-watch
+                    auth=read_auth(),
+                    still_live=check_live,
+                    ffmpeg=ffmpeg,
+                    proxy=of_env.getattr("PROXY"),
+                )
+            except live_capture.BrowserMissing as e:
+                log.warning(str(e))
 
         watcher = shared.LiveWatcher(
             fetch_online, record,

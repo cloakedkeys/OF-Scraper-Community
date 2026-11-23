@@ -37,6 +37,18 @@ def test_only_subscriptions_with_a_stream_count_as_live():
     ]
 
 
+def test_a_creator_listed_twice_is_recorded_once():
+    pages = [
+        [{"id": 1, "username": "creator_a", "hasStream": True}],
+        [{"id": 1, "username": "creator_a", "hasStream": True},
+         {"username": "creator_e", "hasStream": True}],
+    ]
+    assert live.live_subscriptions(pages) == [
+        {"accountId": 1, "username": "creator_a"},
+        {"accountId": "creator_e", "username": "creator_e"},
+    ]
+
+
 def test_live_creators_go_through_the_usual_username_selection():
     online = live.live_subscriptions([[
         {"id": 1, "username": "creator_a", "hasStream": True},
@@ -132,6 +144,15 @@ def test_is_live_page(url, expected):
     assert live_capture.is_live_page(url, "creator_a") is expected
 
 
+@pytest.mark.parametrize("proxy, expected", [
+    ("http://proxy.example.invalid:8080", {"server": "http://proxy.example.invalid:8080"}),
+    ("http://user%40x:p%3Ass@proxy.example.invalid:8080",
+     {"server": "http://proxy.example.invalid:8080", "username": "user@x", "password": "p:ss"}),
+])
+def test_the_browser_uses_the_same_proxy(proxy, expected):
+    assert live_capture.browser_proxy(proxy) == expected
+
+
 # ------------------------------------------------------------------ when to stop
 
 class Clock:
@@ -152,7 +173,7 @@ def test_two_not_live_answers_in_a_row_stop_the_recording():
         assert watch.reason() == expected
 
 
-def test_a_failed_check_counts_neither_way():
+def test_a_failed_check_starts_the_count_again():
     clock = Clock()
     answers = iter([False, None, False])
     watch = live_capture.EndWatch(lambda: next(answers), clock)
@@ -182,6 +203,25 @@ def test_the_end_message_stops_after_a_while_when_onlyfans_cant_be_asked():
     clock.now += live_capture.PAGE_ENDED_STOP_SECONDS
     watch.got_data()
     assert "live video ended" in watch.reason()
+
+
+def test_the_end_message_check_also_counts_as_the_minute_check():
+    clock = Clock()
+    calls = []
+
+    def check():
+        calls.append(clock.now)
+        return False
+
+    watch = live_capture.EndWatch(check, clock)
+    clock.now += live_capture.LIVE_CHECK_SECONDS - 1
+    watch.page_shows_ended(True)
+    assert watch.reason() == "the page says the live video has ended and OnlyFans agrees"
+    assert len(calls) == 1
+    watch.page_shows_ended(False)
+    clock.now += 1
+    watch.got_data()
+    assert watch.reason() is None and len(calls) == 1  # no second check in the same minute
 
 
 def test_no_data_for_five_minutes_stops_the_recording():
@@ -271,8 +311,12 @@ def test_live_records_each_selected_live_creator_once(monkeypatch, onlyfans_sett
         ]])
 
     recorded = []
+    reads = []
+    import ofscraper.utils.auth.file as auth_file
 
-    def capture(halt, username, out, auth, still_live, ffmpeg):
+    monkeypatch.setattr(auth_file, "read_auth", lambda: reads.append(1) or dict(AUTH))
+
+    def capture(halt, username, out, auth, still_live, ffmpeg, proxy):
         recorded.append((username, out.parent, auth["sess"], ffmpeg, still_live()))
         return out
 
@@ -285,6 +329,25 @@ def test_live_records_each_selected_live_creator_once(monkeypatch, onlyfans_sett
         ("creator_a", folder / "creator_a" / "Livestreams", "s" * 30, "ffmpeg", False),
         ("creator_d", folder / "creator_d" / "Livestreams", "s" * 30, "ffmpeg", False),
     ]
+    assert len(reads) == 2  # auth.json is read for each recording
+
+
+def test_a_missing_chromium_says_how_to_install_it(monkeypatch, onlyfans_settings, caplog):
+    onlyfans_settings(live=True)
+    install_session(monkeypatch, Client(Response(404)))
+
+    async def online(c):
+        return [{"accountId": 1, "username": "creator_a"}]
+
+    def capture(**kwargs):
+        raise live_capture.BrowserMissing(live_capture.INSTALL_HINT)
+
+    monkeypatch.setattr(live, "get_online_streams", online)
+    monkeypatch.setattr(live_capture, "playwright_ready", lambda: True)
+    monkeypatch.setattr(live_capture, "capture", capture)
+    with caplog.at_level("WARNING", logger="shared"):
+        asyncio.run(live.run(False, asyncio.Event()))
+    assert "playwright install chromium" in caplog.text
 
 
 def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypatch, onlyfans_settings, caplog):
