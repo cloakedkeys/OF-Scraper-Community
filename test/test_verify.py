@@ -302,3 +302,57 @@ def test_command_line_apply_and_undo(library, capsys, tmp_path):
         with pytest.raises(SystemExit) as e:
             verify.main(wrong)
         assert e.value.code == 2
+
+
+# --- --untracked ---
+
+def test_untracked_lists_files_no_row_points_to(library, tmp_path):
+    db, lib = library
+    (lib / "stray.jpg").write_bytes(b"x")
+    (lib / "notyet.jpg").write_bytes(b"abc")  # a row names it, not downloaded yet
+    for name in ("post.txt", "a.mp4.part", "b.jpg.duplicate", "c.jpg.bad", "show_live.mp4",
+                 "show_live_part2.mp4", "show_chat.jsonl", "user_data.db.verify-undo-1.json", "Thumbs.db"):
+        (lib / name).write_bytes(b"x")
+    (lib / "sub").mkdir()
+    before = snapshot(tmp_path)
+    (creator,) = verify.verify([db], untracked=True)["creators"]
+    assert creator["untracked_files"] == [str(lib / "stray.jpg")]
+    assert creator["untracked"] == 1 and creator["not_in_database"] == 9
+    assert snapshot(tmp_path) == before
+    assert "untracked" not in verify.verify([db])["creators"][0]
+
+
+# --- --hash ---
+
+def set_hash(db, media_id, value):
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute("UPDATE medias SET hash = ? WHERE media_id = ?", (value, media_id))
+
+
+def test_hash_finds_a_changed_file_of_the_right_size(tmp_path):
+    db, lib = make_library(tmp_path, [
+        (1, 100, "same.jpg", 3, b"abc", "Timeline", {}),
+        (2, 101, "changed.jpg", 3, b"xyz", "Timeline", {}),
+        (3, 102, "nohash.jpg", 3, b"abc", "Timeline", {}),
+    ])
+    set_hash(db, 1, verify.file_hash(lib / "same.jpg"))
+    set_hash(db, 2, verify.file_hash(lib / "same.jpg"))
+    # off by default: the files are the recorded size
+    assert verify.verify([db])["totals"]["ok"] == 3
+    (creator,) = verify.verify([db], hash=True)["creators"]
+    assert creator["hash_differs"] == 1 and creator["ok"] == 2
+    assert creator["hash_not_recorded"] == 1
+    assert creator["findings"][0]["path"] == str(lib / "changed.jpg")
+    # not reset unless asked
+    (creator,) = verify.verify([db], apply=True, hash=True)["creators"]
+    assert creator["media_reset"] == 0
+    (creator,) = verify.verify([db], apply=True, reset_hash_differs=True)["creators"]
+    assert creator["media_reset"] == 1 and (lib / "changed.jpg.bad").exists()
+
+
+def test_the_hash_is_the_one_the_scraper_records(tmp_path):
+    import xxhash
+
+    path = tmp_path / "f"
+    path.write_bytes(b"some bytes" * 100000)
+    assert verify.file_hash(path) == xxhash.xxh128(path.read_bytes()).hexdigest()

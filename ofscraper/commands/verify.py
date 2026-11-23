@@ -10,8 +10,10 @@ next normal run downloads it again. See VERIFY.md.
 """
 
 import argparse
+import io
 import json
 import os
+import re
 import sqlite3
 import sys
 import uuid
@@ -30,24 +32,32 @@ from ofscraper.commands.recover_collisions import (
 )
 from ofscraper.commands.stash_sync import map_path
 
-MISSING, EMPTY, SIZE_DIFFERS, NO_FILE_RECORDED, OK = (
-    "missing", "empty", "size_differs", "no_file_recorded", "ok"
+MISSING, EMPTY, SIZE_DIFFERS, HASH_DIFFERS, NO_FILE_RECORDED, OK = (
+    "missing", "empty", "size_differs", "hash_differs", "no_file_recorded", "ok"
 )
-FINDINGS = (MISSING, EMPTY, SIZE_DIFFERS, NO_FILE_RECORDED, OK)
+FINDINGS = (MISSING, EMPTY, SIZE_DIFFERS, HASH_DIFFERS, NO_FILE_RECORDED, OK)
 # a media with several files is as bad as its worst one
-WORST_FIRST = (MISSING, EMPTY, SIZE_DIFFERS, OK)
+WORST_FIRST = (MISSING, EMPTY, SIZE_DIFFERS, HASH_DIFFERS, OK)
 # areas whose items go away: a reset can't bring them back
 GONE_AREAS = {"stories", "highlights"}
 # profile pictures and headers are also blocked by a cache entry this can't clear
 PROFILE_AREAS = {"profile", "avatar", "header"}
 MEDIA_COLUMNS = ["media_id", "post_id", "directory", "filename", "size", "downloaded", "api_type"]
-OPTIONAL = ["skip_permanent", "unlocked"]
+OPTIONAL = ["skip_permanent", "unlocked", "hash"]
 # what an undo file holds of each PostgreSQL row; the last two say the row
 # is still the one that was reset
 PG_ROW = ["media_id", "post_id", "directory", "filename"]
 SQLITE, POSTGRESQL = "sqlite", "postgresql"
 BAD = ".bad"
 MOSTLY_MISSING = 0.5
+# files the scraper writes that never get a medias row: post text, live
+# recordings and their chat, unfinished downloads, files moved aside, undo files
+NOT_IN_DATABASE = re.compile(
+    r"(\.txt|\.part|\.duplicate|\.bad|\.json|\.jsonl"
+    r"|_live(_part\d+)?\.\w+)$",
+    re.IGNORECASE,
+)
+SYSTEM_FILES = {"thumbs.db", "desktop.ini", ".ds_store"}
 
 
 def _optional(rows, table, column):
@@ -70,7 +80,18 @@ def _full_path(directory, filename, path_root, mappings):
     return os.path.abspath(path)
 
 
-def _check(path, recorded_size):
+def file_hash(path):
+    """The hash the scraper records with remove_hash_match (utils/hash.py)."""
+    import xxhash
+
+    hasher = xxhash.xxh128()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(io.DEFAULT_BUFFER_SIZE * 128), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
+def _check(path, recorded_size, recorded_hash=None, hashing=False):
     try:
         actual = os.stat(path).st_size
     except (FileNotFoundError, NotADirectoryError):
@@ -79,6 +100,8 @@ def _check(path, recorded_size):
         return EMPTY, 0
     if recorded_size not in (None, 0) and int(recorded_size) != actual:
         return SIZE_DIFFERS, actual
+    if hashing and recorded_hash and file_hash(path) != str(recorded_hash):
+        return HASH_DIFFERS, actual
     return OK, actual
 
 
@@ -96,10 +119,11 @@ def _not_recoverable(api_type, post_id, unlocked, deleted_posts):
     return None
 
 
-def scan(rows, path_root=None, mappings=()):
+def scan(rows, options):
     """Every media marked downloaded, with its finding: {media_id: {...}}.
     Each has "finding", "paths" ({path: (finding, size on disk)}) and, for a
     finding other than ok, what the report shows of it."""
+    path_root, mappings, hashing = options["path_root"], options["mappings"], options["hash"]
     columns = MEDIA_COLUMNS + [_optional(rows, "medias", c) for c in OPTIONAL]
     media = rows.select("medias", columns, "downloaded = TRUE AND media_id IS NOT NULL")
     deleted = _deleted_posts(rows)
@@ -115,17 +139,19 @@ def scan(rows, path_root=None, mappings=()):
             continue
         paths = {}
         first = {}
-        for _, post_id, directory, filename, size, _, api_type, _, unlocked in group:
+        no_hash = False
+        for _, post_id, directory, filename, size, _, api_type, _, unlocked, recorded in group:
             if not (filename or "").strip():
                 continue
             path = _full_path(directory, filename, path_root, mappings)
             if path not in paths:
-                paths[path] = _check(path, size)
+                paths[path] = _check(path, size, recorded, hashing)
                 first[path] = (size, post_id, api_type, unlocked)
+                no_hash = no_hash or (hashing and not recorded)
         path = min(paths, key=lambda p: WORST_FIRST.index(paths[p][0]))
         finding, actual = paths[path]
         size, post_id, api_type, unlocked = first[path]
-        entry = {"finding": finding, "paths": paths}
+        entry = {"finding": finding, "paths": paths, "no_hash": no_hash}
         if finding != OK:
             entry["shown"] = {"finding": finding, "media_id": media_id, "post_id": str(post_id),
                               "area": api_type, "path": path, "recorded_size": size, "size": actual}
@@ -156,17 +182,21 @@ def _guard(found):
             " connected? Give --allow-mostly-missing to reset all the same")
 
 
-def _to_reset(found, reset_size_differs):
+def _to_reset(found, options):
     """The media --apply resets, and the files it moves aside as
     [path, new name]."""
     resetting, moving = [], []
-    wanted = {MISSING, EMPTY} | ({SIZE_DIFFERS} if reset_size_differs else set())
+    wanted = {MISSING, EMPTY}
+    if options["reset_size_differs"]:
+        wanted.add(SIZE_DIFFERS)
+    if options["reset_hash_differs"]:
+        wanted.add(HASH_DIFFERS)
     for media_id, entry in found.items():
         if entry["finding"] not in wanted or entry.get("not_recoverable"):
             continue
         resetting.append(media_id)
         for path, (finding, _) in entry["paths"].items():
-            if finding == EMPTY or (finding == SIZE_DIFFERS and reset_size_differs):
+            if finding in wanted - {MISSING}:
                 moving.append(path)
     return resetting, [[path, _bad_name(path)] for path in sorted(moving)]
 
@@ -180,10 +210,45 @@ def _bad_name(path):
     return target
 
 
-def _report(rows, found, sample):
+def untracked(rows, options):
+    """Files in the folders this creator's rows name that no row points to,
+    and how many files there are that never get a row."""
+    known = set()
+    folders = set()
+    for directory, filename in rows.select("medias", ["directory", "filename"]):
+        if not (filename or "").strip():
+            continue
+        path = _full_path(directory, filename, options["path_root"], options["mappings"])
+        known.add(os.path.normcase(path))
+        folders.add(os.path.dirname(path))
+    found, not_in_database = [], 0
+    for folder in sorted(folders):
+        try:
+            names = sorted(os.listdir(folder))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        for name in names:
+            path = os.path.join(folder, name)
+            if os.path.normcase(path) in known or not os.path.isfile(path):
+                continue
+            if NOT_IN_DATABASE.search(name) or name.lower() in SYSTEM_FILES:
+                not_in_database += 1
+            else:
+                found.append(path)
+    return {"untracked": len(found), "untracked_files": found[: options["sample"]],
+            "not_in_database": not_in_database}
+
+
+def _report(rows, found, options):
+    sample = options["sample"]
     counts = Counter(e["finding"] for e in found.values())
     shown = [e["shown"] for e in found.values() if "shown" in e]
     folders = {os.path.dirname(p) for e in found.values() for p in e["paths"]}
+    extra = {}
+    if options["hash"]:
+        extra["hash_not_recorded"] = sum(1 for e in found.values() if e.get("no_hash"))
+    if options["untracked"]:
+        extra.update(untracked(rows, options))
     return {
         "database": rows.name,
         "site": rows.site,
@@ -194,14 +259,15 @@ def _report(rows, found, sample):
         "skip_permanent": sum(1 for e in found.values() if e.get("skip_permanent")),
         "folders_missing": sorted(f for f in folders if not os.path.isdir(f))[:sample],
         "findings": shown[:sample],
+        **extra,
     }
 
 
 def _preview(rows, options):
     if "medias" not in rows.tables():
         return {"database": rows.name, "skipped": "no medias table"}
-    found = scan(rows, options["path_root"], options["mappings"])
-    report = _report(rows, found, options["sample"])
+    found = scan(rows, options)
+    report = _report(rows, found, options)
     _plan(report, found, options)
     return report
 
@@ -209,7 +275,7 @@ def _preview(rows, options):
 def _plan(report, found, options):
     """Fill in what --apply would do for this creator; the media and files
     to change, or None when the guard leaves the creator alone."""
-    resetting, moving = _to_reset(found, options["reset_size_differs"])
+    resetting, moving = _to_reset(found, options)
     report["media_to_reset"] = len(resetting)
     report["files_to_move_aside"] = len(moving)
     report["media_reset"] = 0
@@ -269,8 +335,8 @@ def _apply_file(path, options):
         if "medias" not in rows.tables():
             rows._conn.rollback()
             return {"database": rows.name, "skipped": "no medias table"}
-        found = scan(rows, options["path_root"], options["mappings"])
-        report = _report(rows, found, options["sample"])
+        found = scan(rows, options)
+        report = _report(rows, found, options)
         planned = _plan(report, found, options)
         conn = rows._connection()
         if not planned or not planned[0]:
@@ -319,12 +385,19 @@ def _apply_file(path, options):
         rows.close()
 
 
-def verify(databases, path_root=None, mappings=(), sample=20, apply=False,
-           reset_size_differs=False, allow_mostly_missing=False):
+def _options(path_root=None, mappings=(), sample=20, reset_size_differs=False,
+             allow_mostly_missing=False, hash=False, reset_hash_differs=False,
+             untracked=False):
+    return {"path_root": path_root, "mappings": mappings, "sample": sample,
+            "reset_size_differs": reset_size_differs,
+            "allow_mostly_missing": allow_mostly_missing,
+            "hash": hash or reset_hash_differs, "reset_hash_differs": reset_hash_differs,
+            "untracked": untracked}
+
+
+def verify(databases, path_root=None, mappings=(), sample=20, apply=False, **choices):
     """Check every creator in these files or folders; with apply, reset."""
-    options = {"path_root": path_root, "mappings": mappings, "sample": sample,
-               "reset_size_differs": reset_size_differs,
-               "allow_mostly_missing": allow_mostly_missing}
+    options = _options(path_root, mappings, sample, **choices)
     report = {"applied": apply, "creators": [], "totals": Counter()}
     for rows in creator_rows.files(databases):
         if apply:
@@ -337,8 +410,8 @@ def verify(databases, path_root=None, mappings=(), sample=20, apply=False,
 
 
 def _apply_postgres(rows, options, undo_dir, database):
-    found = scan(rows, options["path_root"], options["mappings"])
-    report = _report(rows, found, options["sample"])
+    found = scan(rows, options)
+    report = _report(rows, found, options)
     planned = _plan(report, found, options)
     if not planned or not planned[0]:
         return report
@@ -390,11 +463,8 @@ def _database_name(database_url):
 
 
 def verify_postgres(database_url, creator, site=None, path_root=None, mappings=(), sample=20,
-                    apply=False, undo_dir=None, reset_size_differs=False,
-                    allow_mostly_missing=False):
-    options = {"path_root": path_root, "mappings": mappings, "sample": sample,
-               "reset_size_differs": reset_size_differs,
-               "allow_mostly_missing": allow_mostly_missing}
+                    apply=False, undo_dir=None, **choices):
+    options = _options(path_root, mappings, sample, **choices)
     if undo_dir is not None:
         undo_dir = _undo_folder(undo_dir)
     elif apply:
@@ -518,7 +588,8 @@ def undo_postgres(database_url, creator, undo_file, site=None, apply=False):
 
 def _add(report, result):
     report["creators"].append(result)
-    for key in (*FINDINGS, "not_recoverable", "media_checked", "media_to_reset", "media_reset"):
+    for key in (*FINDINGS, "not_recoverable", "media_checked", "media_to_reset", "media_reset",
+                "hash_not_recorded", "untracked", "not_in_database"):
         if key in result:
             report["totals"][key] += result[key]
     if result.get("left_alone"):
@@ -536,6 +607,9 @@ def main(argv=None):
     parser.add_argument("--apply", action="store_true", help="Mark missing and empty files as not downloaded, so the next run downloads them again; writes an undo file first")
     parser.add_argument("--reset-size-differs", action="store_true", help="With --apply, also reset files whose size isn't the recorded one (moved aside with .bad added)")
     parser.add_argument("--allow-mostly-missing", action="store_true", help="With --apply, reset a creator even when most of its files are missing (otherwise left alone: the drive may not be connected)")
+    parser.add_argument("--hash", action="store_true", help="Also compare each file's hash with the recorded one, where one was recorded (only with remove_hash_match on); reads every file, so slow")
+    parser.add_argument("--reset-hash-differs", action="store_true", help="With --apply, also reset files whose hash isn't the recorded one (moved aside with .bad added); implies --hash")
+    parser.add_argument("--untracked", action="store_true", help="Also list files in the creator's folders that no database row points to; nothing is moved or deleted")
     parser.add_argument("--undo", metavar="FILE", help="Preview putting back what an --apply changed, from its undo file; with --apply, put it back")
     parser.add_argument("--path-map", action="append", default=[], metavar="RECORDED=HERE", help="read a recorded path prefix as another, e.g. a library recorded in Docker and checked from the host; repeatable")
     parser.add_argument("--path-root", type=Path, help="Original working directory for relative recorded paths")
@@ -553,7 +627,8 @@ def main(argv=None):
         mappings.append(tuple(item.split("=", 1)))
     if args.undo is not None and not args.undo.strip():
         parser.error("--undo needs the path of an undo file")
-    if args.undo is not None and (args.reset_size_differs or args.allow_mostly_missing or args.undo_dir):
+    if args.undo is not None and (args.reset_size_differs or args.allow_mostly_missing or args.undo_dir
+                                  or args.hash or args.reset_hash_differs or args.untracked):
         parser.error("--undo puts back an earlier --apply; it takes no other --apply options")
 
     database_url = os.environ.get(postgres.URL_KEY, "").strip()
@@ -577,6 +652,9 @@ def main(argv=None):
     elif not args.databases:
         parser.error("give user_data.db files or folders, or --postgres and --creator")
 
+    choices = {"reset_size_differs": args.reset_size_differs,
+               "allow_mostly_missing": args.allow_mostly_missing, "hash": args.hash,
+               "reset_hash_differs": args.reset_hash_differs, "untracked": args.untracked}
     try:
         if args.undo is not None and args.postgres:
             result = undo_postgres(database_url, args.creator, args.undo, args.site, args.apply)
@@ -585,15 +663,11 @@ def main(argv=None):
         elif args.postgres:
             result = verify_postgres(
                 database_url, args.creator, args.site, args.path_root, mappings, args.sample,
-                apply=args.apply, undo_dir=args.undo_dir,
-                reset_size_differs=args.reset_size_differs,
-                allow_mostly_missing=args.allow_mostly_missing,
+                apply=args.apply, undo_dir=args.undo_dir, **choices,
             )
         else:
             result = verify(
-                args.databases, args.path_root, mappings, args.sample, apply=args.apply,
-                reset_size_differs=args.reset_size_differs,
-                allow_mostly_missing=args.allow_mostly_missing,
+                args.databases, args.path_root, mappings, args.sample, apply=args.apply, **choices,
             )
     except postgres.Unconfirmed as error:
         parser.exit(130 if error.interrupted else 1, f"Verify failed: {error}\n")

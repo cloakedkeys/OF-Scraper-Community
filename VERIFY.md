@@ -57,6 +57,22 @@ ofscraper verify --undo "<...>.json" --apply
 
 The first line previews; `--apply` does it. Rows still marked not downloaded are marked downloaded again, and files moved aside get their names back. Rows downloaded again since are left as they are, so it's safe to run at any time, and running it twice changes nothing the second time.
 
+## Files the database doesn't know
+
+```sh
+ofscraper verify "<profile>/.data" --untracked
+```
+
+Lists files in each creator's folders that no database row points to, such as files you copied in by hand. Files the scraper writes without a row (post text, live recordings and their chat, unfinished `.part` downloads, `.duplicate` and `.bad` files, undo files) are only counted, as `not_in_database`. Nothing is moved or deleted.
+
+## Checking file contents
+
+```sh
+ofscraper verify "<profile>/.data" --hash
+```
+
+A file can be the right size and still be damaged. `--hash` compares each file with the hash recorded when it was saved, and reports `hash_differs`. Hashes are only recorded while `remove_hash_match` is on, so `hash_not_recorded` says how many files couldn't be checked. It reads every file, so it takes a while on a big library. Add `--reset-hash-differs --apply` to download those again; the damaged files are moved aside with `.bad` added.
+
 ## Libraries seen from elsewhere
 
 If the database was written in Docker and you run `verify` on the host, the recorded paths are the container's. Map them:
