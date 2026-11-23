@@ -39,6 +39,14 @@ dry_run_option = click.option(
     default=False,
 )
 
+dry_run_json_option = click.option(
+    "--dry-run-json",
+    "dry_run_json",
+    help="Also write the dry run's report to this file as JSON; implies --dry-run",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+)
+
 # Livestream recording (Fansly, and OnlyFans with the optional "live" extra).
 live_option = click.option(
     "--live",

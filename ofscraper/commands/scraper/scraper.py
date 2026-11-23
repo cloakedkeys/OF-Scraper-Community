@@ -221,8 +221,14 @@ def main():
                 scrapper()
             finally:
                 if dry_run.active():
-                    log.warning(dry_run.report())
-                    dry_run.cleanup()
+                    try:
+                        log.warning(dry_run.report())
+                        json_path = getattr(settings.get_settings(), "dry_run_json", None)
+                        if json_path:
+                            dry_run.write_json(json_path)
+                            log.warning(f"Dry run report written to {json_path}")
+                    finally:
+                        dry_run.cleanup()
             paths.temp_cleanup()
             paths.cleanDB()
         except KeyboardInterrupt:

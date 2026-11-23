@@ -10,6 +10,7 @@ never opened.
 
 import atexit
 import hashlib
+import json
 import logging
 import pathlib
 import shutil
@@ -23,12 +24,16 @@ log = logging.getLogger("shared")
 _lock = threading.Lock()
 _root = None
 _copies = {}
+# per creator: {(area, type): {"count": n, "protected": n}} and sample paths
 _counts = {}
+_samples = {}
+SAMPLES_PER_CREATOR = 3
 
 
 def active():
     try:
-        return bool(getattr(settings.get_settings(), "dry_run", False))
+        s = settings.get_settings()
+        return bool(getattr(s, "dry_run", False) or getattr(s, "dry_run_json", None))
     except Exception:
         return False
 
@@ -110,31 +115,140 @@ def refuse_reason():
     return None
 
 
-def record(username, media):
-    """Count what a download would have attempted for a creator."""
+def _extension(ele):
+    """The extension a download would most likely get: from the link for an
+    ordinary file (the real one comes from the reply), mp4 for protected
+    video."""
+    if getattr(ele, "protected", False):
+        return "mp4"
+    try:
+        suffix = pathlib.PurePosixPath((ele.url or ele.link or "").split("?")[0]).suffix
+    except Exception:
+        suffix = ""
+    if suffix and len(suffix) <= 6:
+        return suffix[1:].lower()
+    from ofscraper.commands.scraper.actions.utils.general import get_unknown_content_type
+
+    return get_unknown_content_type(ele) or "bin"
+
+
+async def _expected_path(ele):
+    import ofscraper.classes.placeholder as placeholder
+
+    holder = await placeholder.Placeholders(ele, _extension(ele)).init(create=False)
+    return str(holder.filepath)
+
+
+async def record(username, media):
+    """Count what a download would have attempted for a creator, by area and
+    type, and work out a few expected paths."""
+    media = list(media or [])
     with _lock:
-        _counts[username] = _counts.get(username, 0) + len(media or [])
+        areas = _counts.setdefault(username, {})
+        for ele in media:
+            key = (str(getattr(ele, "responsetype", "") or "unknown").lower(),
+                   str(getattr(ele, "mediatype", "") or "unknown").lower())
+            entry = areas.setdefault(key, {"count": 0, "protected": 0})
+            entry["count"] += 1
+            if getattr(ele, "protected", False):
+                entry["protected"] += 1
+        samples = _samples.setdefault(username, [])
+        wanted = SAMPLES_PER_CREATOR - len(samples)
+    # one sample per area first, then any
+    picked, seen = [], set()
+    for ele in media:
+        area = getattr(ele, "responsetype", None)
+        if len(picked) < wanted and area not in seen:
+            picked.append(ele)
+            seen.add(area)
+    for ele in media:
+        if len(picked) >= wanted:
+            break
+        if ele not in picked:
+            picked.append(ele)
+    for ele in picked:
+        try:
+            path = await _expected_path(ele)
+        except Exception as e:
+            log.debug(f"dry run: no expected path for media {getattr(ele, 'id', '?')}: {e}")
+            continue
+        with _lock:
+            _samples[username].append(path)
 
 
 def reset():
     with _lock:
         _counts.clear()
+        _samples.clear()
+
+
+def data():
+    """The report as data (--dry-run-json)."""
+    s = settings.get_settings()
+    with _lock:
+        creators = []
+        for username in sorted(_counts, key=str.lower):
+            areas = [
+                {"area": area, "type": kind, **entry}
+                for (area, kind), entry in sorted(_counts[username].items())
+            ]
+            creators.append({
+                "username": username,
+                "to_download": sum(a["count"] for a in areas),
+                "areas": areas,
+                "sample_paths": list(_samples.get(username, [])),
+            })
+    return {
+        "dry_run": True,
+        "to_download": sum(c["to_download"] for c in creators),
+        "creators": creators,
+        "limits_not_applied": [
+            name for name in ("size_max", "size_min", "skip_download_script")
+            if getattr(s, name, None)
+        ],
+    }
+
+
+def _plural(n, word):
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
 def report():
-    """What the dry run would have done, one line."""
-    with _lock:
-        total = sum(_counts.values())
-        creators = len(_counts)
-    noun = "file" if total == 1 else "files"
-    who = "creator" if creators == 1 else "creators"
-    text = (
-        f"Dry run: nothing was downloaded and nothing was changed. "
-        f"A download would attempt up to {total} {noun} from {creators} {who}."
+    """What the dry run would have done, as text."""
+    d = data()
+    lines = ["Dry run: nothing was downloaded and nothing was changed."]
+    for creator in d["creators"]:
+        lines.append("")
+        lines.append(creator["username"])
+        by_area = {}
+        for a in creator["areas"]:
+            by_area.setdefault(a["area"], []).append(a)
+        for area, kinds in by_area.items():
+            total = sum(k["count"] for k in kinds)
+            parts = ", ".join(f"{k['count']} {k['type']}" for k in kinds)
+            protected = sum(k["protected"] for k in kinds)
+            extra = f", {protected} protected" if protected else ""
+            lines.append(f"  {area:<12}{total:>5} to download ({parts}{extra})")
+        if creator["sample_paths"]:
+            lines.append("  Sample paths (expected):")
+            lines.extend(f"    {p}" for p in creator["sample_paths"])
+    lines.append("")
+    lines.append(
+        f"A download would attempt up to {_plural(d['to_download'], 'file')} "
+        f"from {_plural(len(d['creators']), 'creator')}."
     )
-    s = settings.get_settings()
-    if getattr(s, "size_max", None) or getattr(s, "size_min", None) or getattr(
-        s, "skip_download_script", None
-    ):
-        text += " (Size limits and skip_download_script are decided during a download, so they aren't applied here.)"
-    return text
+    if d["limits_not_applied"]:
+        lines.append(
+            'Counts are "up to": size limits and skip_download_script are decided '
+            "during a download, so they aren't applied here."
+        )
+    lines.append(
+        "Paths are expected paths: the extension comes from the link (mp4 for "
+        "protected video), and naming_script isn't run."
+    )
+    return "\n".join(lines)
+
+
+def write_json(path):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data(), f, indent=2, ensure_ascii=False)

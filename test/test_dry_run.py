@@ -180,7 +180,7 @@ def test_download_is_counted_not_run(monkeypatch, library, event_loop_for_app):
     monkeypatch.setattr(library.settings, "dry_run", True)
     assert download.download_process("a creator", 5, [object(), object()], []) == (0, 0, 0, 0, 0)
     assert called == []
-    assert "up to 2 files from 1 creator" in dry_run.report()
+    assert dry_run.data()["to_download"] == 2
 
     monkeypatch.setattr(library.settings, "dry_run", False)
     download.download_process("a creator", 5, [object()], [])
@@ -192,6 +192,124 @@ def test_report_says_size_limits_are_not_applied(monkeypatch, library):
     monkeypatch.setattr(library.settings, "size_max", 1000, raising=False)
     dry_run.reset()
     assert "aren't applied" in dry_run.report()
+    assert dry_run.data()["limits_not_applied"] == ["size_max"]
+
+
+# --- the report -------------------------------------------------------------
+
+
+def media(area, kind, media_id, protected=False, url=None):
+    return SimpleNamespace(
+        id=media_id, responsetype=area, mediatype=kind, protected=protected,
+        url=url, link=url,
+    )
+
+
+@pytest.fixture
+def report_env(monkeypatch, library):
+    """Expected paths from a stand-in Placeholders that records how it was built."""
+    built = []
+
+    class FakePlaceholders:
+        def __init__(self, ele, ext):
+            self.ele, self.ext = ele, ext
+
+        async def init(self, create=True):
+            built.append((self.ele.id, self.ext, create))
+            self.filepath = f"lib/{self.ele.responsetype}/{self.ele.id}.{self.ext}"
+            return self
+
+    import ofscraper.classes.placeholder as placeholder_module
+
+    monkeypatch.setattr(placeholder_module, "Placeholders", FakePlaceholders)
+    for name in ("size_max", "size_min", "skip_download_script"):
+        monkeypatch.setattr(library.settings, name, None, raising=False)
+    dry_run.reset()
+    yield built
+    dry_run.reset()
+
+
+def test_report_by_creator_area_and_type(report_env):
+    asyncio.run(dry_run.record("b creator", [
+        media("Timeline", "Images", 1, url="https://cdn.example/a/1.jpeg?sig=x"),
+        media("Timeline", "Images", 2, url="https://cdn.example/a/2.jpg"),
+        media("Timeline", "Videos", 3, url="https://cdn.example/a/3.mp4"),
+        media("Messages", "Videos", 4, protected=True),
+    ]))
+    asyncio.run(dry_run.record("a creator", [media("Timeline", "Images", 5, url="https://x/5.png")]))
+
+    d = dry_run.data()
+    assert d["to_download"] == 5
+    assert [c["username"] for c in d["creators"]] == ["a creator", "b creator"]
+    b = d["creators"][1]
+    assert b["areas"] == [
+        {"area": "messages", "type": "videos", "count": 1, "protected": 1},
+        {"area": "timeline", "type": "images", "count": 2, "protected": 0},
+        {"area": "timeline", "type": "videos", "count": 1, "protected": 0},
+    ]
+    # one sample per area first; the link's extension, mp4 for protected video;
+    # and the paths are worked out without making folders
+    assert b["sample_paths"] == ["lib/Timeline/1.jpeg", "lib/Messages/4.mp4", "lib/Timeline/2.jpg"]
+    assert all(create is False for _, _, create in report_env)
+
+    text = dry_run.report()
+    assert text.startswith("Dry run: nothing was downloaded and nothing was changed.")
+    assert "  timeline        3 to download (2 images, 1 videos)" in text
+    assert "  messages        1 to download (1 videos, 1 protected)" in text
+    assert "    lib/Messages/4.mp4" in text
+    assert "A download would attempt up to 5 files from 2 creators." in text
+    assert "aren't applied" not in text
+
+
+def test_samples_stop_at_three_per_creator(report_env):
+    asyncio.run(dry_run.record("a creator", [media("Timeline", "Images", i, url=f"https://x/{i}.jpg") for i in range(10)]))
+    asyncio.run(dry_run.record("a creator", [media("Messages", "Images", 99, url="https://x/99.jpg")]))
+    assert len(dry_run.data()["creators"][0]["sample_paths"]) == 3
+    assert dry_run.data()["to_download"] == 11
+
+
+def test_json_report(report_env, tmp_path):
+    import json
+
+    asyncio.run(dry_run.record("a creator", [media("Timeline", "Images", 1, url="https://x/1.jpg")]))
+    out = tmp_path / "report.json"
+    dry_run.write_json(out)
+    assert json.loads(out.read_text(encoding="utf-8")) == dry_run.data()
+
+
+def test_dry_run_json_implies_dry_run():
+    params = {"dry_run_json": "report.json", "actions": ["download"]}
+    check_dry_run(params)
+    assert params["dry_run"] is True
+    with pytest.raises(UsageError, match="--daemon"):
+        check_dry_run({"dry_run_json": "r.json", "daemon": 5.0, "actions": ["download"]})
+
+
+@pytest.mark.parametrize("dry", [True, False])
+def test_naming_script_runs_only_outside_a_dry_run(monkeypatch, library, tmp_path, dry):
+    import ofscraper.scripts.naming_script as naming
+
+    script = tmp_path / "name.py"
+    script.write_text("", encoding="utf-8")
+    monkeypatch.setattr(library.settings, "naming_script", str(script), raising=False)
+    monkeypatch.setattr(library.settings, "dry_run", dry)
+    ran = []
+
+    async def async_run(*a, **k):
+        ran.append(a)
+        return SimpleNamespace(stdout="", returncode=0)
+
+    monkeypatch.setattr(naming, "async_run", async_run)
+    try:
+        ele = SimpleNamespace(
+            username="a creator", model_id=5, value="free", modified_responsetype="Timeline",
+            label_string="", id=7, post={}, date=None,
+        )
+        monkeypatch.setattr(naming, "Post", SimpleNamespace)  # a post, for the payload
+        asyncio.run(naming.naming_script("dir", "file.jpg", ele))
+    except Exception:
+        pass  # only whether the script was started matters here
+    assert bool(ran) is not dry
 
 
 @pytest.mark.parametrize(

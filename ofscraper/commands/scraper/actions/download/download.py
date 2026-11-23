@@ -149,7 +149,7 @@ async def recheck_silent(username, model_id, all_media):
 async def download_process(username, model_id, medialist, posts):
     if dry_run.active():
         # no text files, no downloads, no duplicate removal: count only
-        dry_run.record(username, [] if settings.get_settings().text_only else medialist)
+        await dry_run.record(username, [] if settings.get_settings().text_only else medialist)
         return (0, 0, 0, 0, 0)
     values = await process_dicts(username, model_id, medialist, posts)
     # off the event loop: it hashes the files it is about to delete

@@ -3,6 +3,7 @@ import cloup as click
 from ofscraper.utils.args.parse.arguments.automatic import (
     action_option,
     daemon_option,
+    dry_run_json_option,
     dry_run_option,
     live_chat_option,
     live_interval_option,
@@ -19,6 +20,7 @@ automatic_options_help = (
 automatic_options_tuple = (
     action_option,
     dry_run_option,
+    dry_run_json_option,
     daemon_option,
     live_option,
     live_watch_option,

@@ -21,6 +21,8 @@ from ofscraper.utils.args.parse.group_bundles.common import common_args
 
 def check_dry_run(params):
     """--dry-run goes with one download run, nothing else that changes things."""
+    if params.get("dry_run_json"):
+        params["dry_run"] = True
     if not params.get("dry_run"):
         return
     if params.get("daemon"):
