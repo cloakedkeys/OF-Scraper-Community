@@ -753,6 +753,22 @@ def env_description(key, comment, notes):
 
 
 ENV_VALUES_DIR = "ofscraper/utils/of_env/values/"
+UNUSED_PREFIX = "Defined but not read anywhere"
+
+
+def unused_note(desc):
+    """the text after "Defined but not read anywhere", or None if desc doesn't start with it"""
+    if not desc.startswith(UNUSED_PREFIX):
+        return None
+    return desc[len(UNUSED_PREFIX) :].lstrip(".").strip()
+
+
+def first_sentence(text):
+    """text up to the first ". ", not counting the dot in e.g. or i.e."""
+    for m in re.finditer(r"\. ", text):
+        if not re.search(r"\b(e\.g|i\.e)$", text[: m.start()]):
+            return text[: m.start()] + "."
+    return text.rstrip(".") + "."
 
 
 def env_section_title(section, notes):
@@ -793,8 +809,9 @@ def render_env(notes):
             if p != path:
                 continue
             desc = env_description(key, comment, notes)
-            if desc.startswith("Defined but not read anywhere"):
-                unused_rows.append((key, p, envs, values[key], desc))
+            note = unused_note(desc)
+            if note is not None:
+                unused_rows.append((key, p, envs, values[key], note))
                 continue
             if section not in active_sections:
                 active_sections.append(section)
@@ -832,11 +849,11 @@ def render_env(notes):
                 if p != path or s != section:
                     continue
                 desc = env_description(key, comment, notes)
-                if desc.startswith("Defined but not read anywhere"):
+                if unused_note(desc) is not None:
                     continue
                 env_text = ", ".join(f"`{e}`" for e in envs) or "none (bare key only)"
                 if len(desc) > 240:
-                    first = desc.split(". ", 1)[0].rstrip(".") + "."
+                    first = first_sentence(desc)
                     table_desc = f"{first} [Details](#{anchor(key)}-details)."
                     detailed.append((key, env_text, values[key], desc))
                 else:
@@ -855,13 +872,13 @@ def render_env(notes):
         out.append("## Unused legacy defaults\n\n")
         out.append(
             "Defined in `ofscraper/utils/of_env/values/` for compatibility, but not currently read anywhere in the app.\n\n"
-            "| Key | Environment variable | Default | Defined in |\n|---|---|---|---|\n"
+            "| Key | Environment variable | Default | Defined in | Note |\n|---|---|---|---|---|\n"
         )
-        for key, p, envs, val, _desc in unused_rows:
+        for key, p, envs, val, note in unused_rows:
             env_text = ", ".join(f"`{e}`" for e in envs) or "none (bare key only)"
             out.append(
                 f'| <a id="{anchor(key)}"></a>`{key}` | {env_text}'
-                f" | {cell(value_text(val))} | `{p}` |\n"
+                f" | {cell(value_text(val))} | `{p}` | {cell(note)} |\n"
             )
         out.append("\n")
     return "".join(out)

@@ -726,12 +726,6 @@ Defined in `ofscraper/utils/of_env/values/prompts.py`.
 |---|---|---|---|
 | <a id="checktablepromptchoices"></a>`checkTablePromptChoices` | none (bare key only) | a dict of 4 entries (see the source) | Menu entries for picking which check table the Action Menu opens. Not read from the environment. |
 
-### Username or List Choices
-
-| Key | Environment variable | Default | Description |
-|---|---|---|---|
-| <a id="usernameorlistchoices"></a>`usernameOrListChoices` | none (bare key only) | a dict of 3 entries (see the source) | Menu entries for picking creators interactively. Not read from the environment. |
-
 ### Profiles Prompt Choices
 
 | Key | Environment variable | Default | Description |
@@ -799,11 +793,9 @@ Defined in `ofscraper/utils/of_env/values/url/url.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="initep"></a>`initEP` | `OFSC_API_INIT_EP` | `'https://onlyfans.com/api2/v2/init'` | Initial API endpoint for session initialisation. |
 | <a id="licence_url"></a>`LICENCE_URL` | `OFSC_API_LICENCE_URL` | `'https://onlyfans.com/api2/v2/users/media/{}/drm/{}/{}?type=widevine'` | URL for media DRM licence acquisition. |
 | <a id="individual_timeline"></a>`INDIVIDUAL_TIMELINE` | `OFSC_API_INDIVIDUAL_TIMELINE` | `'https://onlyfans.com/api2/v2/posts/{}?skip_users=all'` | Endpoint for a single timeline post. |
 | <a id="meep"></a>`meEP` | `OFSC_API_ME_EP` | `'https://onlyfans.com/api2/v2/users/me'` | Endpoint for the current user's profile information. |
-| <a id="subscriptionsep"></a>`subscriptionsEP` | `OFSC_API_SUBSCRIPTIONS_EP` | `'https://onlyfans.com/api2/v2/subscriptions/subscribes?offset={}&limit=10&type=all&format=infinite'` | Endpoint for all subscriptions. |
 | <a id="subscriptionsactiveep"></a>`subscriptionsActiveEP` | `OFSC_API_SUBSCRIPTIONS_ACTIVE_EP` | `'https://onlyfans.com/api2/v2/subscriptions/subscribes?offset={}&limit=10&type=active&format=infinite'` | Endpoint for active subscriptions. |
 | <a id="subscriptionsexpiredep"></a>`subscriptionsExpiredEP` | `OFSC_API_SUBSCRIPTIONS_EXPIRED_EP` | `'https://onlyfans.com/api2/v2/subscriptions/subscribes?offset={}&limit=10&type=expired&format=infinite'` | Endpoint for expired subscriptions. |
 | <a id="subscribecountep"></a>`subscribeCountEP` | `OFSC_API_SUBSCRIBE_COUNT_EP` | `'https://onlyfans.com/api2/v2/subscriptions/count/all'` | Endpoint for subscription count. |
@@ -822,14 +814,9 @@ Defined in `ofscraper/utils/of_env/values/url/url.py`.
 | <a id="messagesep"></a>`messagesEP` | `OFSC_API_MESSAGES_EP` | `'https://onlyfans.com/api2/v2/chats/{}/messages?limit=100&order=desc&skip_users=all&skip_users_dups=1'` | Endpoint for chat messages. |
 | <a id="messagesnextep"></a>`messagesNextEP` | `OFSC_API_MESSAGES_NEXT_EP` | `'https://onlyfans.com/api2/v2/chats/{}/messages?limit=100&id={}&order=desc&skip_users=all&skip_users_dups=1'` | Endpoint for next set of chat messages. |
 | <a id="favoriteep"></a>`favoriteEP` | `OFSC_API_FAVORITE_EP` | `'https://onlyfans.com/api2/v2/posts/{}/favorites/{}'` | Endpoint for liking or unliking a post. |
-| <a id="posturl"></a>`postURL` | `OFSC_POST_URL` | `'https://onlyfans.com/{}/{}'` | Base URL for a post on OnlyFans. |
-| <a id="donateep"></a>`donateEP` | `OFSC_DONATE_EP` | `'https://www.buymeacoffee.com/excludedBittern'` | The original author's donation link. |
 | <a id="purchased_contentep"></a>`purchased_contentEP` | `OFSC_PURCHASED_CONTENT_EP` | `'https://onlyfans.com/api2/v2/posts/paid/all?limit=100&skip_users=all&format=infinite&offset={}&author={}'` | Endpoint for purchased content by user ID. |
 | <a id="purchased_contentall"></a>`purchased_contentALL` | `OFSC_PURCHASED_CONTENT_ALL_EP` | `'https://onlyfans.com/api2/v2/posts/paid/all?limit=100&skip_users=all&format=infinite&offset={}'` | Endpoint for all purchased content. |
-| <a id="highlightspecific"></a>`highlightSPECIFIC` | `OFSC_HIGHLIGHT_SPECIFIC_EP` | `'https://onlyfans.com/api2/v2/stories/highlights/{}'` | Endpoint for a specific highlight story. |
-| <a id="storiesspecific"></a>`storiesSPECIFIC` | `OFSC_STORIES_SPECIFIC_EP` | `'https://onlyfans.com/api2/v2/stories/{}'` | Endpoint for a specific story. |
 | <a id="messagespecific"></a>`messageSPECIFIC` | `OFSC_MESSAGE_SPECIFIC_EP` | `'https://onlyfans.com/api2/v2/chats/{}/messages?limit=10&order=desc&skip_users=all&firstId={}'` | Endpoint for specific chat messages (by first ID). |
-| <a id="messagetablespecific"></a>`messageTableSPECIFIC` | `OFSC_MESSAGE_TABLE_SPECIFIC_URL` | `'https://onlyfans.com/my/chats/{}/?id={}'` | Web UI URL for specific messages. |
 | <a id="labelsep"></a>`labelsEP` | `OFSC_LABELS_EP` | `'https://onlyfans.com/api2/v2/users/{}/labels?limit=100&offset={}&order=desc&non-empty=1'` | Endpoint for user's labels. |
 | <a id="labelledpostsep"></a>`labelledPostsEP` | `OFSC_LABELLED_POSTS_EP` | `'https://onlyfans.com/api2/v2/users/{}/posts?limit=100&offset={}&order=publish_date_desc&skip_users=all&counters=0&format=infinite&label={}'` | Endpoint for posts under a specific label. |
 | <a id="listep"></a>`listEP` | `OFSC_LIST_EP` | `'https://onlyfans.com/api2/v2/lists?offset={}&skip_users=all&limit=100&format=infinite'` | Endpoint for user's custom lists. |
@@ -884,65 +871,73 @@ Extra domains (added to the built-in `onlyfans.com`) allowed to receive OnlyFans
 
 Defined in `ofscraper/utils/of_env/values/` for compatibility, but not currently read anywhere in the app.
 
-| Key | Environment variable | Default | Defined in |
-|---|---|---|---|
-| <a id="download_thread_min"></a>`DOWNLOAD_THREAD_MIN` | `DOWNLOAD_THREAD_MIN` | `35` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="max_progress_bars"></a>`MAX_PROGRESS_BARS` | `MAX_PROGRESS_BARS` | `60` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="min_add_progress_bars"></a>`MIN_ADD_PROGRESS_BARS` | `MIN_ADD_PROGRESS_BARS` | `40` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="multiprogress_job_update_freq"></a>`MULTIPROGRESS_JOB_UPDATE_FREQ` | `MULTIPROGRESS_JOB_UPDATE_FREQ` | `1.5` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="progress_job_update_freq"></a>`PROGRESS_JOB_UPDATE_FREQ` | `PROGRESS_JOB_UPDATE_FREQ` | `2.5` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="overall_multi_progress_thread_sleep"></a>`OVERALL_MULTI_PROGRESS_THREAD_SLEEP` | `OVERALL_MULTI_PROGRESS_THREAD_SLEEP` | `0.1` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="job_multi_progress_thread_sleep"></a>`JOB_MULTI_PROGRESS_THREAD_SLEEP` | `JOB_MULTI_PROGRESS_THREAD_SLEEP` | `0.1` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="cdm_force_key"></a>`CDM_FORCE_KEY` | `CDM_FORCE_KEY` | `True` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="meta_force_key"></a>`META_FORCE_KEY` | `META_FORCE_KEY` | `True` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="download_force_key"></a>`DOWNLOAD_FORCE_KEY` | `DOWNLOAD_FORCE_KEY` | `True` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="mpd_force_key"></a>`MPD_FORCE_KEY` | `MPD_FORCE_KEY` | `True` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="profile_force_key"></a>`PROFILE_FORCE_KEY` | `PROFILE_FORCE_KEY` | `False` | `ofscraper/utils/of_env/values/action/download.py` |
-| <a id="remove_unviewable_metadata"></a>`REMOVE_UNVIEWABLE_METADATA` | `REMOVE_UNVIEWABLE_METADATA` | `False` | `ofscraper/utils/of_env/values/action/metadata.py` |
-| <a id="proxy_mounts"></a>`PROXY_MOUNTS` | `OFSC_PROXY_MOUNTS` | `None` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="proxy_auth"></a>`PROXY_AUTH` | `OFSC_PROXY_AUTH` | `None` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="max_chunk_size"></a>`MAX_CHUNK_SIZE` | `OFSC_MAX_CHUNK_SIZE` | `134217728` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="min_chunk_size"></a>`MIN_CHUNK_SIZE` | `OFSC_MIN_CHUNK_SIZE` | `65536` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="chunk_update_count"></a>`CHUNK_UPDATE_COUNT` | `OFSC_CHUNK_UPDATE_COUNT` | `12` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="chunk_size_update_count"></a>`CHUNK_SIZE_UPDATE_COUNT` | `OFSC_CHUNK_SIZE_UPDATE_COUNT` | `15` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="chunk_memory_split"></a>`CHUNK_MEMORY_SPLIT` | `OFSC_CHUNK_MEMORY_SPLIT` | `64` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="chunk_file_split"></a>`CHUNK_FILE_SPLIT` | `OFSC_CHUNK_FILE_SPLIT` | `64` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="max_read_size"></a>`MAX_READ_SIZE` | `OFSC_MAX_READ_SIZE` | `16777216` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="req_semaphore_multi"></a>`REQ_SEMAPHORE_MULTI` | `OFSC_REQ_SEMAPHORE_MULTI` | `5` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="like_max_sems"></a>`LIKE_MAX_SEMS` | `OFSC_LIKE_MAX_SEMS` | `12` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="max_sems_batch_download"></a>`MAX_SEMS_BATCH_DOWNLOAD` | `OFSC_MAX_SEMS_BATCH_DOWNLOAD` | `12` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="max_sems_single_thread_download"></a>`MAX_SEMS_SINGLE_THREAD_DOWNLOAD` | `OFSC_MAX_SEMS_SINGLE_THREAD_DOWNLOAD` | `50` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="max_thread_workers"></a>`MAX_THREAD_WORKERS` | `OFSC_MAX_THREAD_WORKERS` | `20` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="of_auth_min_wait"></a>`OF_AUTH_MIN_WAIT` | `OFSC_AUTH_MIN_WAIT` | `3.0` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="of_auth_max_wait"></a>`OF_AUTH_MAX_WAIT` | `OFSC_AUTH_MAX_WAIT` | `3.0` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="auth_num_tries"></a>`AUTH_NUM_TRIES` | `OFSC_AUTH_NUM_TRIES` | `3` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="message_sleep_default"></a>`MESSAGE_SLEEP_DEFAULT` | `OFSC_MESSAGE_SLEEP_DEFAULT` | `0` | `ofscraper/utils/of_env/values/req/req.py` |
-| <a id="max_pinned_individual_search"></a>`MAX_PINNED_INDIVIDUAL_SEARCH` | `OFSC_MAX_PINNED_INDIVIDUAL_SEARCH` | `10` | `ofscraper/utils/of_env/values/req/api.py` |
-| <a id="api_paid_num_tries"></a>`API_PAID_NUM_TRIES` | `OFSC_API_PAID_NUM_TRIES` | `8` | `ofscraper/utils/of_env/values/req/api.py` |
-| <a id="api_check_num_tries"></a>`API_CHECK_NUM_TRIES` | `OFSC_API_CHECK_NUM_TRIES` | `10` | `ofscraper/utils/of_env/values/req/api.py` |
-| <a id="api_request_threadonly"></a>`API_REQUEST_THREADONLY` | `OFSC_API_REQUEST_THREADONLY` | `['Windows', 'Linux', 'Darwin']` | `ofscraper/utils/of_env/values/req/api.py` |
-| <a id="mpd_session_sleep_init"></a>`MPD_SESSION_SLEEP_INIT` | `OFSC_MPD_SESSION_SLEEP_INIT` | `45` | `ofscraper/utils/of_env/values/req/mpd.py` |
-| <a id="cdm_test_timeout"></a>`CDM_TEST_TIMEOUT` | `OFSC_CDM_TEST_TIMEOUT` | `30` | `ofscraper/utils/of_env/values/req/cdm.py` |
-| <a id="cdm_min_wait"></a>`CDM_MIN_WAIT` | `OFSC_CDM_MIN_WAIT` | `1.5` | `ofscraper/utils/of_env/values/req/cdm.py` |
-| <a id="cdm_max_wait"></a>`CDM_MAX_WAIT` | `OFSC_CDM_MAX_WAIT` | `6.0` | `ofscraper/utils/of_env/values/req/cdm.py` |
-| <a id="cdm_test_num_tries"></a>`CDM_TEST_NUM_TRIES` | `OFSC_CDM_TEST_NUM_TRIES` | `2` | `ofscraper/utils/of_env/values/req/cdm.py` |
-| <a id="refreshscreen"></a>`refreshScreen` | `OFSC_REFRESH_SCREEN` | `50` | `ofscraper/utils/of_env/values/general.py` |
-| <a id="large_trace_chunk_size"></a>`LARGE_TRACE_CHUNK_SIZE` | `OFSC_LARGE_TRACE_CHUNK_SIZE` | `100` | `ofscraper/utils/of_env/values/general.py` |
-| <a id="suppress_log_level"></a>`SUPPRESS_LOG_LEVEL` | `OFSC_SUPPRESS_LOG_LEVEL` | `21` | `ofscraper/utils/of_env/values/main.py` |
-| <a id="premium_default"></a>`PREMIUM_DEFAULT` | `OFSC_PREMIUM_DEFAULT` | `'Premium'` | `ofscraper/utils/of_env/values/main.py` |
-| <a id="threads_default"></a>`THREADS_DEFAULT` | `OFSC_THREADS_DEFAULT` | `2` | `ofscraper/utils/of_env/values/main.py` |
-| <a id="avatar_default"></a>`AVATAR_DEFAULT` | `OFSC_AVATAR_DEFAULT` | `True` | `ofscraper/utils/of_env/values/main.py` |
-| <a id="discord_thread_override"></a>`DISCORD_THREAD_OVERRIDE` | `OFSC_DISCORD_THREAD_OVERRIDE` | `False` | `ofscraper/utils/of_env/values/main.py` |
-| <a id="env_files_default"></a>`ENV_FILES_DEFAULT` | `OFSC_ENV_FILES_DEFAULT` | `''` | `ofscraper/utils/of_env/values/main.py` |
-| <a id="empty_media_default"></a>`EMPTY_MEDIA_DEFAULT` | `OFSC_EMPTY_MEDIA_DEFAULT` | `{}` | `ofscraper/utils/of_env/values/main.py` |
-| <a id="hourly_expiry"></a>`HOURLY_EXPIRY` | `OFSC_HOURLY_EXPIRY` | `3600` | `ofscraper/utils/of_env/values/time.py` |
-| <a id="size_timeout"></a>`SIZE_TIMEOUT` | `OFSC_SIZE_TIMEOUT` | `1209600` | `ofscraper/utils/of_env/values/time.py` |
-| <a id="download_live_display"></a>`DOWNLOAD_LIVE_DISPLAY` | `OFSC_DOWNLOAD_LIVE_DISPLAY` | `True` | `ofscraper/utils/of_env/values/live.py` |
-| <a id="logger_timeout"></a>`LOGGER_TIMEOUT` | `OFSC_LOGGER_TIMEOUT` | `0.4` | `ofscraper/utils/of_env/values/logger.py` |
-| <a id="forced_thread_timeout"></a>`FORCED_THREAD_TIMEOUT` | `OFSC_FORCED_THREAD_TIMEOUT` | `5` | `ofscraper/utils/of_env/values/logger.py` |
-| <a id="logname"></a>`logname` | `OFSC_LOGNAME` | `'ofscraper'` | `ofscraper/utils/of_env/values/logger.py` |
-| <a id="preferences"></a>`preferences` | `OFSC_PREFERENCES_FILE` | `'pref_config.py'` | `ofscraper/utils/of_env/values/path/files.py` |
-| <a id="databasefile"></a>`databaseFile` | `OFSC_DATABASE_FILE_NAME` | `'models.db'` | `ofscraper/utils/of_env/values/path/files.py` |
-| <a id="requestauth"></a>`requestAuth` | `OFSC_REQUEST_AUTH_FILE_NAME` | `'request_auth.json'` | `ofscraper/utils/of_env/values/path/files.py` |
-| <a id="max_text_worker"></a>`MAX_TEXT_WORKER` | `OFSC_MAX_TEXT_WORKER` | `30` | `ofscraper/utils/of_env/values/path/length.py` |
+| Key | Environment variable | Default | Defined in | Note |
+|---|---|---|---|---|
+| <a id="download_thread_min"></a>`DOWNLOAD_THREAD_MIN` | `DOWNLOAD_THREAD_MIN` | `35` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="max_progress_bars"></a>`MAX_PROGRESS_BARS` | `MAX_PROGRESS_BARS` | `60` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="min_add_progress_bars"></a>`MIN_ADD_PROGRESS_BARS` | `MIN_ADD_PROGRESS_BARS` | `40` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="multiprogress_job_update_freq"></a>`MULTIPROGRESS_JOB_UPDATE_FREQ` | `MULTIPROGRESS_JOB_UPDATE_FREQ` | `1.5` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="progress_job_update_freq"></a>`PROGRESS_JOB_UPDATE_FREQ` | `PROGRESS_JOB_UPDATE_FREQ` | `2.5` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="overall_multi_progress_thread_sleep"></a>`OVERALL_MULTI_PROGRESS_THREAD_SLEEP` | `OVERALL_MULTI_PROGRESS_THREAD_SLEEP` | `0.1` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="job_multi_progress_thread_sleep"></a>`JOB_MULTI_PROGRESS_THREAD_SLEEP` | `JOB_MULTI_PROGRESS_THREAD_SLEEP` | `0.1` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="cdm_force_key"></a>`CDM_FORCE_KEY` | `CDM_FORCE_KEY` | `True` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="meta_force_key"></a>`META_FORCE_KEY` | `META_FORCE_KEY` | `True` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="download_force_key"></a>`DOWNLOAD_FORCE_KEY` | `DOWNLOAD_FORCE_KEY` | `True` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="mpd_force_key"></a>`MPD_FORCE_KEY` | `MPD_FORCE_KEY` | `True` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="profile_force_key"></a>`PROFILE_FORCE_KEY` | `PROFILE_FORCE_KEY` | `False` | `ofscraper/utils/of_env/values/action/download.py` |  |
+| <a id="remove_unviewable_metadata"></a>`REMOVE_UNVIEWABLE_METADATA` | `REMOVE_UNVIEWABLE_METADATA` | `False` | `ofscraper/utils/of_env/values/action/metadata.py` |  |
+| <a id="proxy_mounts"></a>`PROXY_MOUNTS` | `OFSC_PROXY_MOUNTS` | `None` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="proxy_auth"></a>`PROXY_AUTH` | `OFSC_PROXY_AUTH` | `None` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="max_chunk_size"></a>`MAX_CHUNK_SIZE` | `OFSC_MAX_CHUNK_SIZE` | `134217728` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="min_chunk_size"></a>`MIN_CHUNK_SIZE` | `OFSC_MIN_CHUNK_SIZE` | `65536` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="chunk_update_count"></a>`CHUNK_UPDATE_COUNT` | `OFSC_CHUNK_UPDATE_COUNT` | `12` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="chunk_size_update_count"></a>`CHUNK_SIZE_UPDATE_COUNT` | `OFSC_CHUNK_SIZE_UPDATE_COUNT` | `15` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="chunk_memory_split"></a>`CHUNK_MEMORY_SPLIT` | `OFSC_CHUNK_MEMORY_SPLIT` | `64` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="chunk_file_split"></a>`CHUNK_FILE_SPLIT` | `OFSC_CHUNK_FILE_SPLIT` | `64` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="max_read_size"></a>`MAX_READ_SIZE` | `OFSC_MAX_READ_SIZE` | `16777216` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="req_semaphore_multi"></a>`REQ_SEMAPHORE_MULTI` | `OFSC_REQ_SEMAPHORE_MULTI` | `5` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="like_max_sems"></a>`LIKE_MAX_SEMS` | `OFSC_LIKE_MAX_SEMS` | `12` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="max_sems_batch_download"></a>`MAX_SEMS_BATCH_DOWNLOAD` | `OFSC_MAX_SEMS_BATCH_DOWNLOAD` | `12` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="max_sems_single_thread_download"></a>`MAX_SEMS_SINGLE_THREAD_DOWNLOAD` | `OFSC_MAX_SEMS_SINGLE_THREAD_DOWNLOAD` | `50` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="max_thread_workers"></a>`MAX_THREAD_WORKERS` | `OFSC_MAX_THREAD_WORKERS` | `20` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="of_auth_min_wait"></a>`OF_AUTH_MIN_WAIT` | `OFSC_AUTH_MIN_WAIT` | `3.0` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="of_auth_max_wait"></a>`OF_AUTH_MAX_WAIT` | `OFSC_AUTH_MAX_WAIT` | `3.0` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="auth_num_tries"></a>`AUTH_NUM_TRIES` | `OFSC_AUTH_NUM_TRIES` | `3` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="message_sleep_default"></a>`MESSAGE_SLEEP_DEFAULT` | `OFSC_MESSAGE_SLEEP_DEFAULT` | `0` | `ofscraper/utils/of_env/values/req/req.py` |  |
+| <a id="max_pinned_individual_search"></a>`MAX_PINNED_INDIVIDUAL_SEARCH` | `OFSC_MAX_PINNED_INDIVIDUAL_SEARCH` | `10` | `ofscraper/utils/of_env/values/req/api.py` |  |
+| <a id="api_paid_num_tries"></a>`API_PAID_NUM_TRIES` | `OFSC_API_PAID_NUM_TRIES` | `8` | `ofscraper/utils/of_env/values/req/api.py` |  |
+| <a id="api_check_num_tries"></a>`API_CHECK_NUM_TRIES` | `OFSC_API_CHECK_NUM_TRIES` | `10` | `ofscraper/utils/of_env/values/req/api.py` |  |
+| <a id="api_request_threadonly"></a>`API_REQUEST_THREADONLY` | `OFSC_API_REQUEST_THREADONLY` | `['Windows', 'Linux', 'Darwin']` | `ofscraper/utils/of_env/values/req/api.py` |  |
+| <a id="mpd_session_sleep_init"></a>`MPD_SESSION_SLEEP_INIT` | `OFSC_MPD_SESSION_SLEEP_INIT` | `45` | `ofscraper/utils/of_env/values/req/mpd.py` | MPD requests use the standard `SESSION_*` values. |
+| <a id="cdm_test_timeout"></a>`CDM_TEST_TIMEOUT` | `OFSC_CDM_TEST_TIMEOUT` | `30` | `ofscraper/utils/of_env/values/req/cdm.py` |  |
+| <a id="cdm_min_wait"></a>`CDM_MIN_WAIT` | `OFSC_CDM_MIN_WAIT` | `1.5` | `ofscraper/utils/of_env/values/req/cdm.py` |  |
+| <a id="cdm_max_wait"></a>`CDM_MAX_WAIT` | `OFSC_CDM_MAX_WAIT` | `6.0` | `ofscraper/utils/of_env/values/req/cdm.py` |  |
+| <a id="cdm_test_num_tries"></a>`CDM_TEST_NUM_TRIES` | `OFSC_CDM_TEST_NUM_TRIES` | `2` | `ofscraper/utils/of_env/values/req/cdm.py` |  |
+| <a id="refreshscreen"></a>`refreshScreen` | `OFSC_REFRESH_SCREEN` | `50` | `ofscraper/utils/of_env/values/general.py` |  |
+| <a id="large_trace_chunk_size"></a>`LARGE_TRACE_CHUNK_SIZE` | `OFSC_LARGE_TRACE_CHUNK_SIZE` | `100` | `ofscraper/utils/of_env/values/general.py` |  |
+| <a id="suppress_log_level"></a>`SUPPRESS_LOG_LEVEL` | `OFSC_SUPPRESS_LOG_LEVEL` | `21` | `ofscraper/utils/of_env/values/main.py` |  |
+| <a id="premium_default"></a>`PREMIUM_DEFAULT` | `OFSC_PREMIUM_DEFAULT` | `'Premium'` | `ofscraper/utils/of_env/values/main.py` |  |
+| <a id="threads_default"></a>`THREADS_DEFAULT` | `OFSC_THREADS_DEFAULT` | `2` | `ofscraper/utils/of_env/values/main.py` |  |
+| <a id="avatar_default"></a>`AVATAR_DEFAULT` | `OFSC_AVATAR_DEFAULT` | `True` | `ofscraper/utils/of_env/values/main.py` |  |
+| <a id="discord_thread_override"></a>`DISCORD_THREAD_OVERRIDE` | `OFSC_DISCORD_THREAD_OVERRIDE` | `False` | `ofscraper/utils/of_env/values/main.py` |  |
+| <a id="env_files_default"></a>`ENV_FILES_DEFAULT` | `OFSC_ENV_FILES_DEFAULT` | `''` | `ofscraper/utils/of_env/values/main.py` |  |
+| <a id="empty_media_default"></a>`EMPTY_MEDIA_DEFAULT` | `OFSC_EMPTY_MEDIA_DEFAULT` | `{}` | `ofscraper/utils/of_env/values/main.py` |  |
+| <a id="hourly_expiry"></a>`HOURLY_EXPIRY` | `OFSC_HOURLY_EXPIRY` | `3600` | `ofscraper/utils/of_env/values/time.py` |  |
+| <a id="size_timeout"></a>`SIZE_TIMEOUT` | `OFSC_SIZE_TIMEOUT` | `1209600` | `ofscraper/utils/of_env/values/time.py` |  |
+| <a id="download_live_display"></a>`DOWNLOAD_LIVE_DISPLAY` | `OFSC_DOWNLOAD_LIVE_DISPLAY` | `True` | `ofscraper/utils/of_env/values/live.py` |  |
+| <a id="logger_timeout"></a>`LOGGER_TIMEOUT` | `OFSC_LOGGER_TIMEOUT` | `0.4` | `ofscraper/utils/of_env/values/logger.py` |  |
+| <a id="forced_thread_timeout"></a>`FORCED_THREAD_TIMEOUT` | `OFSC_FORCED_THREAD_TIMEOUT` | `5` | `ofscraper/utils/of_env/values/logger.py` |  |
+| <a id="logname"></a>`logname` | `OFSC_LOGNAME` | `'ofscraper'` | `ofscraper/utils/of_env/values/logger.py` |  |
+| <a id="usernameorlistchoices"></a>`usernameOrListChoices` | none (bare key only) | a dict of 3 entries (see the source) | `ofscraper/utils/of_env/values/prompts.py` | Menu entries for picking creators interactively. Not read from the environment. |
+| <a id="preferences"></a>`preferences` | `OFSC_PREFERENCES_FILE` | `'pref_config.py'` | `ofscraper/utils/of_env/values/path/files.py` |  |
+| <a id="databasefile"></a>`databaseFile` | `OFSC_DATABASE_FILE_NAME` | `'models.db'` | `ofscraper/utils/of_env/values/path/files.py` |  |
+| <a id="requestauth"></a>`requestAuth` | `OFSC_REQUEST_AUTH_FILE_NAME` | `'request_auth.json'` | `ofscraper/utils/of_env/values/path/files.py` |  |
+| <a id="max_text_worker"></a>`MAX_TEXT_WORKER` | `OFSC_MAX_TEXT_WORKER` | `30` | `ofscraper/utils/of_env/values/path/length.py` |  |
+| <a id="initep"></a>`initEP` | `OFSC_API_INIT_EP` | `'https://onlyfans.com/api2/v2/init'` | `ofscraper/utils/of_env/values/url/url.py` | Initial API endpoint for session initialisation. |
+| <a id="subscriptionsep"></a>`subscriptionsEP` | `OFSC_API_SUBSCRIPTIONS_EP` | `'https://onlyfans.com/api2/v2/subscriptions/subscribes?offset={}&limit=10&type=all&format=infinite'` | `ofscraper/utils/of_env/values/url/url.py` | Endpoint for all subscriptions. |
+| <a id="posturl"></a>`postURL` | `OFSC_POST_URL` | `'https://onlyfans.com/{}/{}'` | `ofscraper/utils/of_env/values/url/url.py` | Base URL for a post on OnlyFans. |
+| <a id="donateep"></a>`donateEP` | `OFSC_DONATE_EP` | `'https://www.buymeacoffee.com/excludedBittern'` | `ofscraper/utils/of_env/values/url/url.py` | The original author's donation link. |
+| <a id="highlightspecific"></a>`highlightSPECIFIC` | `OFSC_HIGHLIGHT_SPECIFIC_EP` | `'https://onlyfans.com/api2/v2/stories/highlights/{}'` | `ofscraper/utils/of_env/values/url/url.py` | Endpoint for a specific highlight story. |
+| <a id="storiesspecific"></a>`storiesSPECIFIC` | `OFSC_STORIES_SPECIFIC_EP` | `'https://onlyfans.com/api2/v2/stories/{}'` | `ofscraper/utils/of_env/values/url/url.py` | Endpoint for a specific story. |
+| <a id="messagetablespecific"></a>`messageTableSPECIFIC` | `OFSC_MESSAGE_TABLE_SPECIFIC_URL` | `'https://onlyfans.com/my/chats/{}/?id={}'` | `ofscraper/utils/of_env/values/url/url.py` | Web UI URL for specific messages. |
 
