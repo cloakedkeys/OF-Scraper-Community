@@ -28,7 +28,7 @@ def main():
         if exc.code == 130:
             exit_manager.shutdown()
         raise
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as exc:
         console.get_shared_console().print("handling force closing of script")
         try:
             with exit_context.DelayedKeyboardInterrupt():
@@ -36,6 +36,8 @@ def main():
         except KeyboardInterrupt:
             with exit_context.DelayedKeyboardInterrupt():
                 exit_manager.forcedShutDown()
+        if not isinstance(exc, exit_context.SigtermInterrupt):
+            raise SystemExit(130)
     except Exception as E:
         logging.getLogger("shared").debug(traceback.format_exc())
         logging.getLogger("shared").error(E)

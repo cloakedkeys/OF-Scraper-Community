@@ -31,6 +31,7 @@ def main():
         except Exception as E:
             print(E)
             print(traceback.format_exc())
+        raise SystemExit(1)
 
 
 def settings_loader():

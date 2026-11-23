@@ -296,7 +296,7 @@ def daemon_process():
             if live_interrupted:
                 raise
             pass  # stop with the original error, not the Ctrl+C during cleanup
-        if live_interrupted:
+        if live_interrupted and not isinstance(exc, exit.SigtermInterrupt):
             raise SystemExit(130)
         raise
     finally:

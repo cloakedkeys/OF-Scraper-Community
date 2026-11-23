@@ -137,6 +137,51 @@ def test_successful_run_returns_normally(monkeypatch):
     monkeypatch.setattr(run, "start_manager", lambda: None)
     run.main()
 
+
+def test_keyboard_interrupt_in_run_exits_130(monkeypatch):
+    def interrupt():
+        raise KeyboardInterrupt
+
+    shutdowns = []
+    monkeypatch.setattr(run, "check_database", lambda: None)
+    monkeypatch.setattr(run, "start_manager", interrupt)
+    monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: shutdowns.append(1))
+    monkeypatch.setattr(
+        run.console, "get_shared_console", lambda: SimpleNamespace(print=lambda *a, **k: None)
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run.main()
+    assert exit_info.value.code == 130
+    assert shutdowns == [1]
+
+
+def test_sigterm_interrupt_in_run_exits_0(monkeypatch):
+    def sigterm():
+        raise run.exit_context.SigtermInterrupt
+
+    shutdowns = []
+    monkeypatch.setattr(run, "check_database", lambda: None)
+    monkeypatch.setattr(run, "start_manager", sigterm)
+    monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: shutdowns.append(1))
+    monkeypatch.setattr(
+        run.console, "get_shared_console", lambda: SimpleNamespace(print=lambda *a, **k: None)
+    )
+    run.main()
+    assert shutdowns == [1]
+
+
+def test_startup_error_in_load_exits_1(monkeypatch):
+    import ofscraper.main.open.load as load
+
+    def boom():
+        raise RuntimeError("startup failed")
+
+    monkeypatch.setattr(load, "systemSet", lambda: None)
+    monkeypatch.setattr(load, "settings_loader", boom)
+    with pytest.raises(SystemExit) as exit_info:
+        load.main()
+    assert exit_info.value.code == 1
+
 # ----------------------------------------------------------------------
 # From test_url_log.py
 # ----------------------------------------------------------------------
