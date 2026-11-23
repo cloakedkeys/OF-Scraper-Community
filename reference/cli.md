@@ -456,7 +456,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Also:** `-pv`, `-npv`, `--no-preview`
 - **Dest:** `preview` · **Type:** flag · **Default:** none
 - **Commands:** `db`
-- Flag for filtering accounts based on preview status. [select one --preview or --no-preview]
+- Filter media by preview status. [select one --preview or --no-preview]
 
 #### `--created-before`
 
@@ -464,7 +464,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `created_before` · **Type:** Arrow · **Default:** none
 - **Commands:** `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/metadata_filters.py`
-- Process media created at or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads
+- Only media created on or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago').
 
 #### `--created-after`
 
@@ -472,7 +472,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `created_after` · **Type:** Arrow · **Default:** none
 - **Commands:** `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/metadata_filters.py`
-- Process media created at or after the given date (MM/DD/YYYY) for likes, unlikes, and downloads
+- Only media created on or after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago').
 
 ### Filename Modification Options
 
@@ -1152,7 +1152,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `check_usernames` · **Type:** text; repeatable · **Default:** none
 - **Commands:** `story_check`, `paid_check`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/check.py`, `ofscraper/utils/args/parse/arguments/user_select.py`
-- Scan stories/highlights via username(s)
+- Creators to scan, by username (name,name2).
 
 #### `--file` (`file_usernames`)
 
@@ -1185,14 +1185,14 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Also:** `-ucl`, `-lc`, `--locked`
 - **Dest:** `unlocked` · **Type:** flag · **Default:** none
 - **Commands:** `msg_check`, `story_check`, `paid_check`, `post_check`, `db`
-- Flag for filtering accounts based on whether media is unlocked [select one --unlocked or --locked]
+- Filter media by whether it's unlocked. [select one --unlocked or --locked]
 
 #### `--downloaded`
 
 - **Also:** `-dwl`, `-ndw`, `--not-downloaded`
 - **Dest:** `downloaded` · **Type:** flag · **Default:** none
 - **Commands:** `msg_check`, `story_check`, `paid_check`, `post_check`, `db`
-- Flag for filtering accounts based on whether media is downloaded [select one --downloaded or --not-downloaded]
+- Filter media by whether it's downloaded. [select one --downloaded or --not-downloaded]
 
 #### `--posted-after`
 
@@ -1200,7 +1200,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `posted_after` · **Type:** Arrow · **Default:** none
 - **Commands:** `msg_check`, `story_check`, `paid_check`, `post_check`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/metadata_filters.py`
-- Filter out posts posted on or after the given date (MM/DD/YYYY) for likes, unlikes, and downloads
+- Only media from posts posted on or after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago').
 
 #### `--posted-before`
 
@@ -1208,7 +1208,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `posted_before` · **Type:** Arrow · **Default:** none
 - **Commands:** `msg_check`, `story_check`, `paid_check`, `post_check`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/metadata_filters.py`
-- Filter out posts posted at or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads
+- Only media from posts posted on or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago').
 
 ### Content Options
 

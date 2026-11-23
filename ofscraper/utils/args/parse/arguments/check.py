@@ -62,7 +62,7 @@ user_option = click.option(
     "--users",
     "--user",
     "check_usernames",
-    help="Scan stories/highlights via username(s)",
+    help="Creators to scan, by username (name,name2).",
     default=None,
     multiple=True,
     callback=StringSplitParse,
