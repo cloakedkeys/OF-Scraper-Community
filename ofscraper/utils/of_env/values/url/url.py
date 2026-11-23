@@ -171,7 +171,7 @@ def load_api_endpoints_config():
     # Default: "https://onlyfans.com/{}/{}"
     config["postURL"] = os.getenv("OFSC_POST_URL", "https://onlyfans.com/{}/{}")
 
-    # donateEP: Upstream author's donation link.
+    # donateEP: The original author's donation link.
     # Default: "https://www.buymeacoffee.com/excludedBittern"
     config["donateEP"] = os.getenv(
         "OFSC_DONATE_EP", "https://www.buymeacoffee.com/excludedBittern"

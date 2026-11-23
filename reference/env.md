@@ -832,7 +832,7 @@ Defined in `ofscraper/utils/of_env/values/url/url.py`.
 | <a id="messagesnextep"></a>`messagesNextEP` | `OFSC_API_MESSAGES_NEXT_EP` | `'https://onlyfans.com/api2/v2/chats/{}/messages?limit=100&id={}&order=desc&skip_users=all&skip_users_dups=1'` | Endpoint for next set of chat messages. |
 | <a id="favoriteep"></a>`favoriteEP` | `OFSC_API_FAVORITE_EP` | `'https://onlyfans.com/api2/v2/posts/{}/favorites/{}'` | Endpoint for liking or unliking a post. |
 | <a id="posturl"></a>`postURL` | `OFSC_POST_URL` | `'https://onlyfans.com/{}/{}'` | Base URL for a post on OnlyFans. |
-| <a id="donateep"></a>`donateEP` | `OFSC_DONATE_EP` | `'https://www.buymeacoffee.com/excludedBittern'` | Upstream author's donation link. |
+| <a id="donateep"></a>`donateEP` | `OFSC_DONATE_EP` | `'https://www.buymeacoffee.com/excludedBittern'` | The original author's donation link. |
 | <a id="purchased_contentep"></a>`purchased_contentEP` | `OFSC_PURCHASED_CONTENT_EP` | `'https://onlyfans.com/api2/v2/posts/paid/all?limit=100&skip_users=all&format=infinite&offset={}&author={}'` | Endpoint for purchased content by user ID. |
 | <a id="purchased_contentall"></a>`purchased_contentALL` | `OFSC_PURCHASED_CONTENT_ALL_EP` | `'https://onlyfans.com/api2/v2/posts/paid/all?limit=100&skip_users=all&format=infinite&offset={}'` | Endpoint for all purchased content. |
 | <a id="highlightspecific"></a>`highlightSPECIFIC` | `OFSC_HIGHLIGHT_SPECIFIC_EP` | `'https://onlyfans.com/api2/v2/stories/highlights/{}'` | Endpoint for a specific highlight story. |
