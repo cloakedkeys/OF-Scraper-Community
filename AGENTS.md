@@ -73,7 +73,7 @@ PYTHONIOENCODING=utf-8 PYTHONPATH=. .venv/Scripts/python -c "from ofscraper.__ma
 - **If a check fails with no steps run, read its annotation.** A billing or spending-limit refusal isn't a code failure. Report it, and run the test job locally on the PR head instead.
 
 ## PRs
-- **Reference:** a PR that adds, renames or removes a command-line option, `config.json` key, environment default, placeholder or database column updates `scripts/reference/notes.py` and reruns `scripts/reference/build_reference.py`. `test/test_reference.py` fails until it does.
+- **Reference:** a PR that adds, renames or removes a command-line option, `config.json` key, environment default, placeholder or database column updates `scripts/reference/notes.py` and reruns `scripts/reference/build_reference.py`. `test/test_reference.py` fails until it does. New `help=` text and `# KEY: description` comments in `ofscraper/utils/of_env/values/` follow the style notes at the top of `notes.py`, and a setting nothing reads says "Defined but not read anywhere."
 - **Scope:** one fix per PR, and link the issue (`Fixes #N`) when the PR fully fixes it. Keep diffs minimal and match the surrounding style.
 - **Title:** conventional-commit style, e.g. `fix(drm): ...`. Squash merges reuse it as `title (#N)`.
 - **Merge strategy:** squash by default. Tests run on a PR's head, not on each commit, and most PRs are one fix with follow-up commits, so only the squashed result is known to work. Use a rebase merge only when a PR's commits are deliberately separate steps and each one passes the test suite on its own (tidy the branch with `git commit --fixup` and `git rebase --autosquash` first). Avoid plain merge commits on `main`.
