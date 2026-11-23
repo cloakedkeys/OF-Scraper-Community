@@ -158,12 +158,12 @@ Defined in `ofscraper/utils/of_env/values/req/req.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="connect_timeout"></a>`CONNECT_TIMEOUT` | `OFSC_CONNECT_TIMEOUT` | `15` | Connection timeout for general network operations (seconds). |
-| <a id="pool_connect_timeout"></a>`POOL_CONNECT_TIMEOUT` | `OFSC_POOL_CONNECT_TIMEOUT` | `15` | Connection timeout for pooled connections (seconds). |
+| <a id="connect_timeout"></a>`CONNECT_TIMEOUT` | `OFSC_CONNECT_TIMEOUT` | `15` | Default connection timeout, in seconds, for HTTP sessions that don't pass their own. |
+| <a id="pool_connect_timeout"></a>`POOL_CONNECT_TIMEOUT` | `OFSC_POOL_CONNECT_TIMEOUT` | `15` | Default timeout, in seconds, to acquire a connection from the pool for HTTP sessions that don't pass their own. |
 | <a id="of_read_timeout"></a>`OF_READ_TIMEOUT` | `OFSC_READ_TIMEOUT` | `60` | Longest wait for the next piece of a response (seconds), for requests that don't pass their own read timeout. It isn't a limit on the whole response: a slow response that keeps sending is fine. On a kept connection that has answered before, a GET's answer must start within a third of this, or that connection is dropped and the request is retried. 0 means no limit (the session manager turns it into None). |
-| <a id="max_connections"></a>`MAX_CONNECTIONS` | `OFSC_MAX_CONNECTIONS` | `200` | Maximum number of simultaneous network connections. |
-| <a id="api_max_connection"></a>`API_MAX_CONNECTION` | `OFSC_API_MAX_CONNECTION` | `100` | Maximum number of API connections. |
-| <a id="total_timeout"></a>`TOTAL_TIMEOUT` | `OFSC_TOTAL_TIMEOUT` | `None` | Total timeout for operations (seconds). Defaults to None. |
+| <a id="max_connections"></a>`MAX_CONNECTIONS` | `OFSC_MAX_CONNECTIONS` | `200` | Default maximum simultaneous connections for HTTP sessions that don't pass their own limit. |
+| <a id="api_max_connection"></a>`API_MAX_CONNECTION` | `OFSC_API_MAX_CONNECTION` | `100` | Maximum simultaneous connections for OnlyFans API sessions (`ofsession`). |
+| <a id="total_timeout"></a>`TOTAL_TIMEOUT` | `OFSC_TOTAL_TIMEOUT` | `None` | Default total request timeout, in seconds, for HTTP sessions that don't pass their own (`None` means no limit). |
 | <a id="keep_alive"></a>`KEEP_ALIVE` | `OFSC_KEEP_ALIVE` | `20` | The most idle connections the sync client keeps open to use again. A count, not a time. The async client, which downloads, has no such limit. |
 | <a id="keep_alive_exp"></a>`KEEP_ALIVE_EXP` | `OFSC_KEEP_ALIVE_EXP` | `10` | How long an idle connection is kept open to use again (seconds). Applies to both clients. 0 keeps none: each connection is closed after use. |
 
@@ -171,57 +171,57 @@ Defined in `ofscraper/utils/of_env/values/req/req.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="proxy"></a>`PROXY` | `OFSC_PROXY` | `None` | Proxy URL. Defaults to None. |
-| <a id="proxy_mounts"></a>`PROXY_MOUNTS` | `OFSC_PROXY_MOUNTS` | `None` | Unused at present. Defaults to None. |
-| <a id="proxy_auth"></a>`PROXY_AUTH` | `OFSC_PROXY_AUTH` | `None` | Unused at present. Defaults to None. |
+| <a id="proxy"></a>`PROXY` | `OFSC_PROXY` | `None` | Proxy URL passed to HTTP sessions (`None` means no proxy). |
+| <a id="proxy_mounts"></a>`PROXY_MOUNTS` | `OFSC_PROXY_MOUNTS` | `None` | Defined but not read anywhere. |
+| <a id="proxy_auth"></a>`PROXY_AUTH` | `OFSC_PROXY_AUTH` | `None` | Defined but not read anywhere. |
 
 ### Chunking
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="max_chunk_size"></a>`MAX_CHUNK_SIZE` | `OFSC_MAX_CHUNK_SIZE` | `134217728` | Maximum size of a download chunk (bytes). |
-| <a id="min_chunk_size"></a>`MIN_CHUNK_SIZE` | `OFSC_MIN_CHUNK_SIZE` | `65536` | Minimum size of a download chunk (bytes). |
-| <a id="chunk_update_count"></a>`CHUNK_UPDATE_COUNT` | `OFSC_CHUNK_UPDATE_COUNT` | `12` | Number of chunks before updating progress. |
-| <a id="chunk_size_update_count"></a>`CHUNK_SIZE_UPDATE_COUNT` | `OFSC_CHUNK_SIZE_UPDATE_COUNT` | `15` | Number of chunks before updating chunk size dynamically. |
-| <a id="chunk_memory_split"></a>`CHUNK_MEMORY_SPLIT` | `OFSC_CHUNK_MEMORY_SPLIT` | `64` | Ideal memory split for chunk processing (e.g., in MB). |
-| <a id="chunk_file_split"></a>`CHUNK_FILE_SPLIT` | `OFSC_CHUNK_FILE_SPLIT` | `64` | Ideal file split size for chunk processing (e.g., in MB). |
-| <a id="max_read_size"></a>`MAX_READ_SIZE` | `OFSC_MAX_READ_SIZE` | `16777216` | Maximum size to read at once (bytes). |
-| <a id="chunk_timeout_sec"></a>`CHUNK_TIMEOUT_SEC` | `OFSC_CHUNK_TIMEOUT_SEC` | `30` | Timeout for individual chunk downloads (seconds). |
+| <a id="max_chunk_size"></a>`MAX_CHUNK_SIZE` | `OFSC_MAX_CHUNK_SIZE` | `134217728` | Defined but not read anywhere. |
+| <a id="min_chunk_size"></a>`MIN_CHUNK_SIZE` | `OFSC_MIN_CHUNK_SIZE` | `65536` | Defined but not read anywhere. |
+| <a id="chunk_update_count"></a>`CHUNK_UPDATE_COUNT` | `OFSC_CHUNK_UPDATE_COUNT` | `12` | Defined but not read anywhere. |
+| <a id="chunk_size_update_count"></a>`CHUNK_SIZE_UPDATE_COUNT` | `OFSC_CHUNK_SIZE_UPDATE_COUNT` | `15` | Defined but not read anywhere. |
+| <a id="chunk_memory_split"></a>`CHUNK_MEMORY_SPLIT` | `OFSC_CHUNK_MEMORY_SPLIT` | `64` | Defined but not read anywhere. |
+| <a id="chunk_file_split"></a>`CHUNK_FILE_SPLIT` | `OFSC_CHUNK_FILE_SPLIT` | `64` | Defined but not read anywhere. |
+| <a id="max_read_size"></a>`MAX_READ_SIZE` | `OFSC_MAX_READ_SIZE` | `16777216` | Defined but not read anywhere. |
+| <a id="chunk_timeout_sec"></a>`CHUNK_TIMEOUT_SEC` | `OFSC_CHUNK_TIMEOUT_SEC` | `30` | Read timeout, in seconds, for download and Fansly stream requests (overrides `OF_READ_TIMEOUT` for downloads). |
 
 ### Semaphore and Concurrency
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="req_semaphore_multi"></a>`REQ_SEMAPHORE_MULTI` | `OFSC_REQ_SEMAPHORE_MULTI` | `5` | Semaphore limit for multiple requests. |
-| <a id="scrape_paid_sems"></a>`SCRAPE_PAID_SEMS` | `OFSC_SCRAPE_PAID_SEMS` | `10` | Semaphore limit for scraping paid content. |
-| <a id="subscription_sems"></a>`SUBSCRIPTION_SEMS` | `OFSC_SUBSCRIPTION_SEMS` | `5` | Semaphore limit for subscription-related operations. |
-| <a id="like_max_sems"></a>`LIKE_MAX_SEMS` | `OFSC_LIKE_MAX_SEMS` | `12` | Maximum semaphores for like operations. |
-| <a id="max_sems_batch_download"></a>`MAX_SEMS_BATCH_DOWNLOAD` | `OFSC_MAX_SEMS_BATCH_DOWNLOAD` | `12` | Maximum semaphores for batch downloads. |
-| <a id="max_sems_single_thread_download"></a>`MAX_SEMS_SINGLE_THREAD_DOWNLOAD` | `OFSC_MAX_SEMS_SINGLE_THREAD_DOWNLOAD` | `50` | Maximum semaphores for single-thread downloads. |
-| <a id="session_manager_sync_sem_default"></a>`SESSION_MANAGER_SYNC_SEM_DEFAULT` | `OFSC_SESSION_MANAGER_SYNC_SEM_DEFAULT` | `3` | Default semaphore for session manager sync operations. |
-| <a id="session_manager_sem_default"></a>`SESSION_MANAGER_SEM_DEFAULT` | `OFSC_SESSION_MANAGER_SEM_DEFAULT` | `10` | Default semaphore for general session manager operations. |
-| <a id="max_thread_workers"></a>`MAX_THREAD_WORKERS` | `OFSC_MAX_THREAD_WORKERS` | `20` | Maximum number of threads for worker pools. |
+| <a id="req_semaphore_multi"></a>`REQ_SEMAPHORE_MULTI` | `OFSC_REQ_SEMAPHORE_MULTI` | `5` | Defined but not read anywhere. |
+| <a id="scrape_paid_sems"></a>`SCRAPE_PAID_SEMS` | `OFSC_SCRAPE_PAID_SEMS` | `10` | Maximum concurrent requests when scraping the paid page (`--scrape-paid`). |
+| <a id="subscription_sems"></a>`SUBSCRIPTION_SEMS` | `OFSC_SUBSCRIPTION_SEMS` | `5` | Maximum concurrent requests when fetching subscription lists and profiles. |
+| <a id="like_max_sems"></a>`LIKE_MAX_SEMS` | `OFSC_LIKE_MAX_SEMS` | `12` | Defined but not read anywhere. |
+| <a id="max_sems_batch_download"></a>`MAX_SEMS_BATCH_DOWNLOAD` | `OFSC_MAX_SEMS_BATCH_DOWNLOAD` | `12` | Defined but not read anywhere. |
+| <a id="max_sems_single_thread_download"></a>`MAX_SEMS_SINGLE_THREAD_DOWNLOAD` | `OFSC_MAX_SEMS_SINGLE_THREAD_DOWNLOAD` | `50` | Defined but not read anywhere. |
+| <a id="session_manager_sync_sem_default"></a>`SESSION_MANAGER_SYNC_SEM_DEFAULT` | `OFSC_SESSION_MANAGER_SYNC_SEM_DEFAULT` | `3` | Default maximum concurrent synchronous requests per `sessionManager`. |
+| <a id="session_manager_sem_default"></a>`SESSION_MANAGER_SEM_DEFAULT` | `OFSC_SESSION_MANAGER_SEM_DEFAULT` | `10` | Default maximum concurrent async requests per `sessionManager`. |
+| <a id="max_thread_workers"></a>`MAX_THREAD_WORKERS` | `OFSC_MAX_THREAD_WORKERS` | `20` | Defined but not read anywhere. |
 
 ### Retry and Wait
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="of_min_wait_session_default"></a>`OF_MIN_WAIT_SESSION_DEFAULT` | `OFSC_MIN_WAIT_SESSION_DEFAULT` | `2.0` | Minimum wait time for session operations (seconds). |
-| <a id="of_max_wait_session_default"></a>`OF_MAX_WAIT_SESSION_DEFAULT` | `OFSC_MAX_WAIT_SESSION_DEFAULT` | `3.0` | Maximum wait time for session operations (seconds). |
-| <a id="of_num_retries_session_default"></a>`OF_NUM_RETRIES_SESSION_DEFAULT` | `OFSC_NUM_RETRIES_SESSION_DEFAULT` | `10` | Number of retries for session operations. |
-| <a id="of_min_wait_api"></a>`OF_MIN_WAIT_API` | `OFSC_MIN_WAIT_API` | `2.0` | Minimum wait time for API calls (seconds). |
-| <a id="of_max_wait_api"></a>`OF_MAX_WAIT_API` | `OFSC_MAX_WAIT_API` | `3.0` | Maximum wait time for API calls (seconds). |
-| <a id="of_auth_min_wait"></a>`OF_AUTH_MIN_WAIT` | `OFSC_AUTH_MIN_WAIT` | `3.0` | Minimum wait time for authentication operations (seconds). |
-| <a id="of_auth_max_wait"></a>`OF_AUTH_MAX_WAIT` | `OFSC_AUTH_MAX_WAIT` | `3.0` | Maximum wait time for authentication operations (seconds). |
-| <a id="download_num_tries_req"></a>`DOWNLOAD_NUM_TRIES_REQ` | `OFSC_DOWNLOAD_NUM_TRIES_REQ` | `5` | Number of download retries for requests. |
-| <a id="download_num_tries_check_req"></a>`DOWNLOAD_NUM_TRIES_CHECK_REQ` | `OFSC_DOWNLOAD_NUM_TRIES_CHECK_REQ` | `2` | Number of download check retries for requests. |
-| <a id="auth_num_tries"></a>`AUTH_NUM_TRIES` | `OFSC_AUTH_NUM_TRIES` | `3` | Number of retries for authentication attempts. |
+| <a id="of_min_wait_session_default"></a>`OF_MIN_WAIT_SESSION_DEFAULT` | `OFSC_MIN_WAIT_SESSION_DEFAULT` | `2.0` | Default minimum wait, in seconds, between retries in `sessionManager`. |
+| <a id="of_max_wait_session_default"></a>`OF_MAX_WAIT_SESSION_DEFAULT` | `OFSC_MAX_WAIT_SESSION_DEFAULT` | `3.0` | Default maximum wait, in seconds, between retries in `sessionManager`. |
+| <a id="of_num_retries_session_default"></a>`OF_NUM_RETRIES_SESSION_DEFAULT` | `OFSC_NUM_RETRIES_SESSION_DEFAULT` | `10` | Default maximum number of attempts for a request in `sessionManager`. |
+| <a id="of_min_wait_api"></a>`OF_MIN_WAIT_API` | `OFSC_MIN_WAIT_API` | `2.0` | Minimum wait, in seconds, between retries for API, download, MPD and CDM key requests. |
+| <a id="of_max_wait_api"></a>`OF_MAX_WAIT_API` | `OFSC_MAX_WAIT_API` | `3.0` | Maximum wait, in seconds, between retries for API, download, MPD and CDM key requests. |
+| <a id="of_auth_min_wait"></a>`OF_AUTH_MIN_WAIT` | `OFSC_AUTH_MIN_WAIT` | `3.0` | Defined but not read anywhere. |
+| <a id="of_auth_max_wait"></a>`OF_AUTH_MAX_WAIT` | `OFSC_AUTH_MAX_WAIT` | `3.0` | Defined but not read anywhere. |
+| <a id="download_num_tries_req"></a>`DOWNLOAD_NUM_TRIES_REQ` | `OFSC_DOWNLOAD_NUM_TRIES_REQ` | `5` | Maximum request-level attempts per download outside check mode. |
+| <a id="download_num_tries_check_req"></a>`DOWNLOAD_NUM_TRIES_CHECK_REQ` | `OFSC_DOWNLOAD_NUM_TRIES_CHECK_REQ` | `2` | Maximum request-level attempts per download in check mode (`*_check` commands). |
+| <a id="auth_num_tries"></a>`AUTH_NUM_TRIES` | `OFSC_AUTH_NUM_TRIES` | `3` | Defined but not read anywhere. |
 
 ### Other
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="message_sleep_default"></a>`MESSAGE_SLEEP_DEFAULT` | `OFSC_MESSAGE_SLEEP_DEFAULT` | `0` | Default sleep duration for messages (seconds). |
+| <a id="message_sleep_default"></a>`MESSAGE_SLEEP_DEFAULT` | `OFSC_MESSAGE_SLEEP_DEFAULT` | `0` | Defined but not read anywhere. |
 
 ## Rate-limit values per request type
 
