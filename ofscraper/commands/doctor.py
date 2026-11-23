@@ -4,6 +4,13 @@ key files, folders, free space and the database setting.
 It reads config.json as it is, changes nothing, makes no connection and
 never asks a question. Each line is PASS, WARN, FAIL or SKIP; the exit status
 is 1 when anything fails. No login value, password or key is printed.
+
+--online also connects: to PostgreSQL, to the site to check the login (with
+the scraper's own session), to the signing rule sources and to Stash. It
+isn't read-only: it starts the scraper as a run does, which may rewrite
+config.json and create folders, and the signing rule and Fansly's device id
+are kept as a run keeps them. It is skipped where the offline checks found
+something that would make the start ask a question.
 """
 
 import argparse
@@ -272,8 +279,116 @@ def check_database(report):
     report.add(PASS, "database", f"PostgreSQL at {where}; the connection is checked with --online")
 
 
-def run(config=None, profile=None, site=None):
-    """Every offline check; the Report."""
+def _status(report, check):
+    found = [r for r in report.results if r["check"] == check]
+    return found[0]["status"] if found else None
+
+
+def check_postgres(report):
+    import ofscraper.db.postgres as postgres
+
+    if not postgres.url():
+        return
+    if _status(report, "database") == FAIL:
+        report.add(SKIP, "PostgreSQL", "the database setting failed above")
+        return
+    try:
+        version = postgres.POSTGRES.check()
+    except Exception as error:
+        report.add(FAIL, "PostgreSQL", str(error))
+        return
+    report.add(PASS, "PostgreSQL", f"{postgres.describe()}, server version {version}")
+
+
+def start(config, profile, site):
+    """The normal start up to where a run would begin, without running one."""
+    import ofscraper.main.open.load as load
+    import ofscraper.managers.manager as manager
+
+    argv = ["ofscraper"]
+    for flag, value in (("--config", config), ("--profile", profile), ("--site", site)):
+        if value:
+            argv += [flag, value]
+    sys.argv = argv
+    load.settings_loader()
+    load.setdate()
+    load.readConfig()
+    load.setLogger()
+    load.make_folder()
+    if not isinstance(manager.Manager, manager.mainManager):
+        manager.Manager = manager.mainManager()
+
+
+def check_login(report, site_name):
+    import ofscraper.data.api.init as init
+
+    status, message = init.auth_status()
+    if status == "UP":
+        report.add(PASS, f"{site_name} login", "logged in")
+    elif status == "DOWN":
+        report.add(FAIL, f"{site_name} login", "the site rejected the login: update the auth file")
+    else:
+        report.add(WARN, f"{site_name} login", f"couldn't be checked: {message}")
+
+
+def check_signing_rules(report):
+    import ofscraper.utils.auth.request as request
+
+    used, failed = request.last_attempt["used"], request.last_attempt["failed"]
+    detail = "; ".join(f"{source}: {reason}" for source, reason in failed)
+    if used and not failed:
+        report.add(PASS, "signing rules", f"from {used}")
+    elif used:
+        report.add(WARN, "signing rules", f"from {used}, after others gave none ({detail})")
+    elif failed:
+        report.add(FAIL, "signing rules", f"no source gave a rule ({detail})")
+    else:
+        report.add(SKIP, "signing rules", "not fetched")
+
+
+def check_stash(report):
+    url = os.environ.get("STASH_URL", "").strip()
+    if not url:
+        return
+    from ofscraper.commands.stash_sync import StashClient, StashError
+
+    try:
+        data = StashClient(url, os.environ.get("STASH_API_KEY"), timeout=15).call(
+            "query { version { version } }", retries=0
+        )
+    except (StashError, OSError, ValueError) as error:
+        report.add(FAIL, "Stash", str(error))
+        return
+    version = ((data or {}).get("version") or {}).get("version") or "version unknown"
+    report.add(PASS, "Stash", f"{url}, {version}")
+
+
+def run_online(report, config=None, profile=None, site=None):
+    """--online: the checks that connect, each skipped with its reason when
+    an offline check found what it needs broken."""
+    import ofscraper.sites as sites
+
+    check_postgres(report)
+    site_name = sites.SITE_NAMES[site]
+    auth_check = "OnlyFans auth" if site == sites.ONLYFANS else "Fansly auth"
+    login = f"{site_name} login"
+    if _status(report, "config file") == FAIL:
+        report.add(SKIP, login, "the config file failed above: a run would stop to ask about it")
+    elif _status(report, auth_check) == FAIL:
+        report.add(SKIP, login, "the auth file failed above: a run would stop to ask for it")
+    else:
+        try:
+            start(config, profile, site)
+            check_login(report, site_name)
+        except (Exception, SystemExit) as error:
+            report.add(FAIL, login, f"the start failed: {error}")
+        if site == sites.ONLYFANS:
+            check_signing_rules(report)
+    check_stash(report)
+
+
+def run(config=None, profile=None, site=None, online=False):
+    """Every offline check, and with online the ones that connect; the Report."""
     import ofscraper.sites as sites
 
     report = Report()
@@ -288,6 +403,10 @@ def run(config=None, profile=None, site=None):
     check_keys(settings, report)
     check_folders(settings, report)
     check_database(report)
+    if online:
+        run_online(report, config, profile, site)
+    else:
+        report.add(SKIP, "login", "run with --online to check the login, PostgreSQL and Stash")
     return report
 
 
@@ -299,9 +418,10 @@ def main(argv=None):
     parser.add_argument("--profile", metavar="NAME", help="The profile to check (default: the config's main profile)")
     parser.add_argument("--site", choices=list(sites.SITES), help="Check this site's auth file, not the profile's site")
     parser.add_argument("--json", action="store_true", help="Print the results as JSON")
+    parser.add_argument("--online", action="store_true", help="Also connect: PostgreSQL, the login, the signing rules and Stash. Not read-only: it starts the scraper as a run does")
     args = parser.parse_args(argv)
     try:
-        report = run(args.config, args.profile, args.site)
+        report = run(args.config, args.profile, args.site, online=args.online)
     except KeyboardInterrupt:
         parser.exit(130, "Stopped\n")
     if args.json:

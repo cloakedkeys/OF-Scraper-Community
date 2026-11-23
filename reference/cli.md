@@ -137,18 +137,20 @@ Run `ofscraper creator_names [--all | --find NAME | --add MODEL_ID NAME [--seen 
 
 ### `doctor` (separate entry point)
 
-`ofscraper doctor [--config PATH] [--profile NAME] [--site SITE] [--json]` (or `python -m ofscraper.commands.doctor`). Offline tool using argparse. Checks the setup and prints one line per check: `PASS`, `WARN`, `FAIL` or `SKIP`. Exits 1 when any check fails, else 0. Changes nothing, makes no connection and never asks a question: `config.json` is read as plain JSON (a missing or broken file is a finding, and the rest is checked with the defaults), not through the normal start.
+`ofscraper doctor [--config PATH] [--profile NAME] [--site SITE] [--json] [--online]` (or `python -m ofscraper.commands.doctor`). Offline tool using argparse. Checks the setup and prints one line per check: `PASS`, `WARN`, `FAIL` or `SKIP`. Exits 1 when any check fails, else 0. Changes nothing, makes no connection and never asks a question: `config.json` is read as plain JSON (a missing or broken file is a finding, and the rest is checked with the defaults), not through the normal start.
 
 - **Checks:** the config file (`--config` is found as a run finds it); the profile and its site (`site.json`, or `--site`); that site's auth file (OnlyFans: `auth.json` present with `sess`, `auth_id`, `user_agent` and `x-bc` set; Fansly: `fansly_auth.json` as `problems()` judges it), the other site's being `SKIP`; ffmpeg, found as a download finds it (config, pyffmpeg, `PATH`) and failing below version 6, with its version and where it was found; ffprobe beside it or in `PATH` (`WARN` if missing); the key files in `manual` key mode, which must exist and load as a Widevine device (`cdrm` mode is reported, and its server isn't contacted); the save folder and the temp folder (when set) exist, with free space; the free-space limit (`system_free_min`), warning when `OFSC_DISK_SPACE_CHECK_PATH` is on another disk than the save folder; and the database setting (`OFSC_DATABASE_URL`, shown without the login, failing when its driver isn't installed).
+- **`--online`:** also connects. PostgreSQL is checked first (`POSTGRES.check()`: the server version, or why it can't be used), then the scraper is started as a run starts (settings, config, logs, folders, no scrape), the login is checked with the scraper's own session (`auth_status`: logged in, rejected, or couldn't be checked), and for OnlyFans it says which signing-rule source answered and why others didn't. With `STASH_URL` set, Stash is asked for its version. It isn't read-only: the start may rewrite `config.json` and create folders, and the signing rule and Fansly's device id are kept as a run keeps them. The login check is skipped when the config file or the auth file failed offline, since the start would stop to ask about them.
 - **Secrets:** auth values, the database password and key contents are never printed; fields are named.
 - **`--json`:** prints `{"ok": ..., "results": [{"status", "check", "detail"}]}`.
 
-Run `ofscraper doctor [--config PATH] [--profile NAME] [--site SITE] [--json]` (or `python -m ofscraper.commands.doctor [--config PATH] [--profile NAME] [--site SITE] [--json]`).
+Run `ofscraper doctor [--config PATH] [--profile NAME] [--site SITE] [--json] [--online]` (or `python -m ofscraper.commands.doctor [--config PATH] [--profile NAME] [--site SITE] [--json] [--online]`).
 
 - `--config`: The config file or folder, as for a run's --config
 - `--profile`: The profile to check (default: the config's main profile)
 - `--site`: Check this site's auth file, not the profile's site
 - `--json`: Print the results as JSON
+- `--online`: Also connect: PostgreSQL, the login, the signing rules and Stash. Not read-only: it starts the scraper as a run does
 
 ### `move_creator_files` (separate entry point)
 

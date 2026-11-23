@@ -513,7 +513,7 @@ SEPARATE_COMMANDS = {
         "List and record the usernames each creator account has had.",
     ),
     "doctor": (
-        "[--config PATH] [--profile NAME] [--site SITE] [--json]",
+        "[--config PATH] [--profile NAME] [--site SITE] [--json] [--online]",
         "Check the setup without running a scrape.",
     ),
     "move_creator_files": (

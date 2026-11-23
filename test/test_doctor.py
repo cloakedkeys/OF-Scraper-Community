@@ -189,3 +189,75 @@ def test_config_path_follows_the_runs_rule(home, tmp_path):
     assert doctor.config_path("other.json") == config_dir(home) / "other.json"
     assert doctor.config_path(None) == config_dir(home) / "config.json"
     assert os.path.basename(doctor.config_path(str(tmp_path / "x" / "my.json"))) == "my.json"
+
+
+# --- --online ---
+
+def test_online_with_a_blank_auth_file_skips_the_login_and_never_prompts(home, monkeypatch):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, sess="")
+    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked a question"))
+    monkeypatch.setattr(doctor, "start", lambda *a: pytest.fail("started"))
+    status, detail = result(doctor.run(online=True), "Onlyfans login")
+    assert status == "SKIP" and "auth file failed" in detail
+
+
+def test_online_reports_postgresql_down_and_goes_on(home, monkeypatch):
+    import ofscraper.data.api.init as init
+
+    monkeypatch.setenv(postgres.URL_KEY, f"postgresql://scraper:{SECRET}@db.example:5432/library")
+    monkeypatch.setitem(sys.modules, "psycopg", sys.modules.get("psycopg") or object())
+    monkeypatch.setitem(sys.modules, "psycopg_pool", sys.modules.get("psycopg_pool") or object())
+
+    def down():
+        raise postgres.PostgresUnavailable("Can't use the PostgreSQL database at db.example:5432/library")
+
+    monkeypatch.setattr(postgres.POSTGRES, "check", down)
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home)
+    monkeypatch.setattr(doctor, "start", lambda *a: None)
+    monkeypatch.setattr(init, "auth_status", lambda: ("UP", None))
+    report = doctor.run(online=True)
+    assert result(report, "PostgreSQL")[0] == "FAIL"
+    assert result(report, "Onlyfans login") == ("PASS", "logged in")
+    assert SECRET not in json.dumps(report.results)
+
+
+@pytest.mark.parametrize("answer, status", [
+    (("DOWN", None), "FAIL"),
+    (("UNAVAILABLE", "couldn't reach the site"), "WARN"),
+])
+def test_online_tells_a_rejected_login_from_one_not_checked(home, monkeypatch, answer, status):
+    import ofscraper.data.api.init as init
+
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home)
+    monkeypatch.setattr(doctor, "start", lambda *a: None)
+    monkeypatch.setattr(init, "auth_status", lambda: answer)
+    assert result(doctor.run(online=True), "Onlyfans login")[0] == status
+
+
+def test_online_says_which_signing_rule_source_answered(home, monkeypatch):
+    import ofscraper.data.api.init as init
+    import ofscraper.utils.auth.request as request
+
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home)
+    monkeypatch.setattr(doctor, "start", lambda *a: None)
+    monkeypatch.setattr(init, "auth_status", lambda: ("UP", None))
+    monkeypatch.setattr(request, "last_attempt", {"used": "rafa", "failed": [("xagler", "couldn't reach the rule host (timed out)")]})
+    status, detail = result(doctor.run(online=True), "signing rules")
+    assert status == "WARN" and "from rafa" in detail and "xagler" in detail
+
+
+def test_online_stash_unreachable(home, monkeypatch):
+    monkeypatch.setenv("STASH_URL", "http://127.0.0.1:9/graphql")
+    monkeypatch.setenv("STASH_API_KEY", SECRET)
+    write_config(home, {"main_profile": "main_profile"})
+    report = doctor.run(online=True)
+    status, detail = result(report, "Stash")
+    assert status == "FAIL" and SECRET not in detail
+
+
+def test_offline_points_at_online(home):
+    assert result(doctor.run(), "login")[0] == "SKIP"
