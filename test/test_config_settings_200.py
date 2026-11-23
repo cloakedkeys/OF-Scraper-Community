@@ -97,6 +97,25 @@ def test_responsetype_message_renames_message_folder(config):
     assert post.modified_responsetype == "Chats"
 
 
+def test_responsetype_archived_is_capitalised_like_the_others(config):
+    import ofscraper.classes.of.posts as posts
+
+    config["responsetype"] = {"archived": "old stuff", "timeline": "wall"}
+    archived = posts.Post({"id": 1, "isArchived": True}, 1, "a_creator")
+    timeline = posts.Post({"id": 2}, 1, "a_creator", responsetype="Timeline")
+    assert timeline.modified_responsetype == "Wall"
+    assert archived.modified_responsetype == "Old stuff"
+
+
+def test_post_both_pinned_and_archived_is_archived_like_its_folder(config):
+    import ofscraper.classes.of.posts as posts
+
+    config["responsetype"] = {"archived": "Archived", "pinned": "Posts"}
+    post = posts.Post({"id": 1, "isPinned": True, "isArchived": True}, 1, "a_creator")
+    assert post.responsetype == "Archived"
+    assert post.modified_responsetype == "Archived"
+
+
 # 4. download_sems <= 0
 
 
@@ -154,24 +173,20 @@ def test_rejected_dynamic_rule_is_logged_once(config, caplog, monkeypatch):
     assert f"'{default}'" in warnings[0].getMessage()
 
 
-def test_saved_datawhores_falls_back_and_says_why(config, caplog, monkeypatch):
+def test_saved_datawhores_is_kept_as_an_alias(config, caplog, monkeypatch):
     import logging
 
     import ofscraper.utils.settings as settings
 
     monkeypatch.setattr(settings, "_warned_dynamic_rule", None)
-    config["advanced_options"] = {"dynamic-mode-default": "datawhores"}
+    config["advanced_options"] = {"dynamic-mode-default": "DataWhores"}
     with caplog.at_level(logging.WARNING, logger="shared"):
         merged = settings.merged_settings()
-    default = data.of_env.getattr("DYNAMIC_RULE_DEFAULT")
-    assert merged.dynamic_rules == default
-    assert (
-        "dynamic-mode-default 'datawhores' is not accepted (removed: OnlyFans no "
-        f"longer accepts its rule); using '{default}'"
-    ) in caplog.text
-    # the file is rewritten with the default, not left naming datawhores
+    assert merged.dynamic_rules == "datawhores"
+    assert "dynamic-mode-default" not in caplog.text
+    # the file keeps naming datawhores, not the default
     new = schema.get_current_config_schema(config)
-    assert new["advanced_options"]["dynamic-mode-default"] == default
+    assert new["advanced_options"]["dynamic-mode-default"] == "datawhores"
 
 
 def test_accepted_dynamic_rule_is_not_logged(config, caplog):
@@ -196,6 +211,7 @@ def test_every_accepted_dynamic_alias_picks_its_rule(monkeypatch):
         "digital": "digitalcriminals",
         "digitals": "digitalcriminals",
         "digitalcriminal": "digitalcriminals",
+        "datawhores": "digitalcriminals",
         "manual": "manual",
         "generic": "generic",
     }

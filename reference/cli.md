@@ -521,7 +521,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `posts` · **Type:** one of `Highlights`, `All`, `Archived`, `Messages`, `Timeline`, `Pinned`, `Streams`, `Stories`, `Purchased`, `Profile`, `Labels`, `Labels+`, `Labels*`; repeatable · **Default:** `[]`
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/check.py`, `ofscraper/utils/args/parse/arguments/post_content.py`
-- Select areas for batch actions (comma or space separated). Note: 'all' excludes labels. To include them, use 'all,labels' or specific tags like 'labels+' or 'labels*'.
+- Select areas for batch actions (comma or space separated). Note: 'all' excludes labels unless OFSC_INCLUDE_LABELS_ALL is on. To include them, use 'all,labels' or specific tags like 'labels+' or 'labels*'.
 
 #### `--download-area`
 
@@ -973,7 +973,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Also:** `-fi`, `--user-individual-search`, `-fl`, `--username-list-search`, `--user-list-search`
 - **Dest:** `username_search` · **Type:** flag · **Default:** none
 - **Commands:** main program, `metadata`
-- Set the search strategy when --username is provided. --individual: Search each username as a separate request. --list: Search entire enabled lists before filtering (default).
+- How to find the --username creators. -fi: look up each username on its own. -fl: fetch your subscriptions and lists, then pick the names. With neither, -fi is used when --username has no more than one name per 12 subscriptions, otherwise -fl.
 
 ### Program Scripts
 
@@ -1058,7 +1058,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Config fallback:** `cdm_options.key-mode-default`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
 - Key mode for decrypting content (cdrm is deprecated: its service no longer works)
-- **Note:** `manual` uses the local CDM files (`--private-key`, `--client-id`). `cdrm` is deprecated: its service, cdrm-project.com, no longer works (it was also sent the request headers, cookies included), and each run that uses it warns.
+- **Note:** `manual` uses the local CDM files (`--private-key`, `--client-id`). `cdrm` is deprecated: its service, cdrm-project.com, no longer works, and each run that uses it warns. It isn't contacted: protected videos fail with a message to switch to `manual`. Only a server of your own set in `OFSC_CDRM_URL` is still sent the request headers, cookies included.
 
 #### `--private-key`
 
@@ -1081,7 +1081,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 #### `--dynamic-rules`
 
 - **Also:** `-dr`, `--dynamic-rule`
-- **Dest:** `dynamic_rules` · **Type:** one of `digitalcriminals`, `manual`, `generic`, `xagler`, `rafa`, `dc`, `digital`, `digitals`, `digitalcriminal` · **Default:** none
+- **Dest:** `dynamic_rules` · **Type:** one of `digitalcriminals`, `manual`, `generic`, `xagler`, `rafa`, `dc`, `digital`, `digitals`, `digitalcriminal`, `datawhores` · **Default:** none
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Config fallback:** `advanced_options.dynamic-mode-default`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`

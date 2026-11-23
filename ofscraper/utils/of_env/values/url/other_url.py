@@ -11,7 +11,7 @@ def load_other_urls_config():
     config = {}
 
     # --- CDM URL Configuration ---
-    # CDRM: URL of a self-hosted CDM decryption server for the deprecated `cdrm` key mode. The default `cdrm-project.com` address is never contacted; use `manual` key mode instead.
+    # CDRM: URL of a self-hosted decryption server for the deprecated `cdrm` key mode. It is sent the request headers, cookies included. The default, `cdrm-project.com`, isn't contacted: protected videos fail with a message to use `manual` key mode. Set it only to a server you run yourself.
     # Default: "https://cdrm-project.com/api/decrypt"
     config["CDRM"] = os.getenv("OFSC_CDRM_URL", "https://cdrm-project.com/api/decrypt")
 

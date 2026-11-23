@@ -646,7 +646,7 @@ Defined in `ofscraper/utils/of_env/values/dynamic.py`.
 |---|---|---|---|
 | <a id="dynamic_rule_manual"></a>`DYNAMIC_RULE_MANUAL` | `OFSC_DYNAMIC_RULE_MANUAL` | `None` | JSON object containing custom OnlyFans dynamic signing rules, used when `dynamic-mode-default` is `manual`. |
 | <a id="dynamic_options"></a>`DYNAMIC_OPTIONS` | `OFSC_DYNAMIC_OPTIONS` | `['digitalcriminals', 'manual', 'generic', 'xagler', 'rafa']` | Dynamic rule sources shown in the interactive config menu. |
-| <a id="dynamic_options_all"></a>`DYNAMIC_OPTIONS_ALL` | `OFSC_DYNAMIC_OPTIONS_ALL` | a list of 12 items (see the source) | Accepted values (including aliases) when validating `advanced_options.dynamic-mode-default`. |
+| <a id="dynamic_options_all"></a>`DYNAMIC_OPTIONS_ALL` | `OFSC_DYNAMIC_OPTIONS_ALL` | a list of 13 items (see the source) | Accepted values (including aliases) when validating `advanced_options.dynamic-mode-default`. |
 | <a id="dynamic_rule_default"></a>`DYNAMIC_RULE_DEFAULT` | `OFSC_DYNAMIC_RULE_DEFAULT` | `'digital'` | Default for `advanced_options.dynamic-mode-default` when unset or invalid. |
 
 ## List names
@@ -863,7 +863,7 @@ Defined in `ofscraper/utils/of_env/values/url/other_url.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="cdrm"></a>`CDRM` | `OFSC_CDRM_URL` | `'https://cdrm-project.com/api/decrypt'` | URL of a self-hosted CDM decryption server for the deprecated `cdrm` key mode. The default `cdrm-project.com` address is never contacted; use `manual` key mode instead. |
+| <a id="cdrm"></a>`CDRM` | `OFSC_CDRM_URL` | `'https://cdrm-project.com/api/decrypt'` | URL of a self-hosted decryption server for the deprecated `cdrm` key mode. It is sent the request headers, cookies included. The default, `cdrm-project.com`, isn't contacted: protected videos fail with a message to use `manual` key mode. Set it only to a server you run yourself. |
 
 ### Bad URL Host
 
