@@ -11,7 +11,7 @@ def load_date_config():
     config = {}
 
     # --- Date Format Configuration ---
-    # PROMPT_DATE_FORMAT: Arrow date format used to show the saved last-seen after/before dates as defaults in the interactive account filter prompts.
+    # PROMPT_DATE_FORMAT: Arrow date format for default last-seen dates in the interactive account filter prompts.
     # Default: "YYYY-MM-DD"
     config["PROMPT_DATE_FORMAT"] = os.getenv("OFSC_PROMPT_DATE_FORMAT", "YYYY-MM-DD")
 

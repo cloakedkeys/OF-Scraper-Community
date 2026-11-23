@@ -617,7 +617,7 @@ Defined in `ofscraper/utils/of_env/values/date.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="prompt_date_format"></a>`PROMPT_DATE_FORMAT` | `OFSC_PROMPT_DATE_FORMAT` | `'YYYY-MM-DD'` | Arrow date format used to show the saved last-seen after/before dates as defaults in the interactive account filter prompts. |
+| <a id="prompt_date_format"></a>`PROMPT_DATE_FORMAT` | `OFSC_PROMPT_DATE_FORMAT` | `'YYYY-MM-DD'` | Arrow date format for default last-seen dates in the interactive account filter prompts. |
 | <a id="api_date_format"></a>`API_DATE_FORMAT` | `OFSC_API_DATE_FORMAT` | `'YYYY-MM-DD HH:mm:ss'` | Arrow date/time format used for scan-range logs and `ofscraper db` date columns. |
 
 ## Expiry and timeouts
