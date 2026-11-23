@@ -1,0 +1,106 @@
+"""Optional extras installed on first use (``ofscraper.utils.system.extras``).
+
+No package is installed: ``subprocess.run`` is replaced, and conftest sets
+``OFSC_INSTALL_EXTRAS=False`` so no other test can start a real install.
+"""
+
+import pathlib
+import subprocess
+import sys
+import tomllib
+from types import SimpleNamespace
+
+import pytest
+
+from ofscraper.utils.system import extras
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def runs(monkeypatch):
+    """Turn installs on and record each command instead of running it."""
+    monkeypatch.setenv("INSTALL_EXTRAS", "True")
+    extras.install.cache_clear()
+    extras.install_chromium.cache_clear()
+    calls = []
+    result = {"code": 0, "stderr": ""}
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=result["code"], stdout="", stderr=result["stderr"])
+
+    monkeypatch.setattr(extras.subprocess, "run", run)
+    # whether this venv has pip or uv doesn't matter here
+    monkeypatch.setattr(extras, "pip_command", lambda reqs: [sys.executable, "-m", "pip", "install", *reqs])
+    yield SimpleNamespace(calls=calls, result=result)
+    extras.install.cache_clear()
+    extras.install_chromium.cache_clear()
+
+
+def test_the_extras_match_pyproject():
+    with open(ROOT / "pyproject.toml", "rb") as f:
+        declared = tomllib.load(f)["project"]["optional-dependencies"]
+    for name, requirements in extras.EXTRAS.items():
+        assert declared[name] == requirements
+
+
+def test_tests_never_install_anything():
+    assert not extras.enabled()
+
+
+def test_installs_the_extra_into_the_running_python_once(runs, monkeypatch):
+    monkeypatch.setattr(extras, "pip_command", lambda reqs: [sys.executable, "-m", "pip", "install", *reqs])
+    assert extras.install("postgres") is True
+    assert extras.install("postgres") is True
+    assert runs.calls == [[sys.executable, "-m", "pip", "install", "psycopg[binary,pool]>=3.3.9,<3.4"]]
+
+
+def test_uses_uv_when_this_python_has_no_pip(monkeypatch):
+    monkeypatch.setattr(extras.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(extras.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
+    assert extras.pip_command(["x"]) == ["/bin/uv", "pip", "install", "--python", sys.executable, "x"]
+
+
+def test_without_pip_or_uv_nothing_runs(runs, monkeypatch, caplog):
+    monkeypatch.setattr(extras, "pip_command", lambda reqs: None)
+    with caplog.at_level("WARNING", logger="shared"):
+        assert extras.install("live") is False
+    assert runs.calls == []
+    assert "neither pip nor uv" in caplog.text
+
+
+def test_the_standalone_download_installs_nothing(runs, monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert extras.install("live") is False
+    assert runs.calls == []
+
+
+def test_turned_off_installs_nothing(runs, monkeypatch):
+    monkeypatch.setenv("INSTALL_EXTRAS", "False")
+    assert extras.install("live") is False
+    assert extras.install_chromium() is False
+    assert runs.calls == []
+
+
+def test_a_failed_install_says_why_and_is_not_retried(runs, caplog):
+    runs.result.update(code=1, stderr="line 1\nERROR: no matching distribution")
+    with caplog.at_level("WARNING", logger="shared"):
+        assert extras.install("live") is False
+        assert extras.install("live") is False
+    assert len(runs.calls) == 1  # --live-watch polls again; it shouldn't reinstall each time
+    assert "no matching distribution" in caplog.text
+
+
+def test_a_install_that_cannot_start_is_a_failure(runs, monkeypatch):
+    def broken(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 1)
+
+    monkeypatch.setattr(extras.subprocess, "run", broken)
+    assert extras.install("live") is False
+
+
+def test_chromium_is_downloaded_with_this_pythons_playwright(runs):
+    assert extras.install_chromium() is True
+    assert extras.install_chromium() is True
+    assert runs.calls == [[sys.executable, "-m", "playwright", "install", "chromium"]]
