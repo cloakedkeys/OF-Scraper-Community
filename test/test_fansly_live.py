@@ -19,6 +19,8 @@ from urllib.request import urlopen
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 import ofscraper.commands.scraper.scraper as scraper
 import ofscraper.managers.manager as manager
 import ofscraper.utils.paths.common as common_paths

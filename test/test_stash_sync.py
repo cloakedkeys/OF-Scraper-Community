@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+pytestmark = pytest.mark.slow
 from test_fansly_api import DM_CREATOR, DM_CREATOR_ID, FakeSession, both_routes, envelope, fansly, load  # noqa: F401
 
 import ofscraper.classes.of.posts as posts_

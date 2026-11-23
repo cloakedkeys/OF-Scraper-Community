@@ -27,7 +27,7 @@ BODY = b"x" * 100
 READ_TIMEOUT = 3
 
 # each ssl_verify mode, a host resolved to the local server, no auth read
-pytestmark = pytest.mark.usefixtures("ssl_verify")
+pytestmark = [pytest.mark.usefixtures("ssl_verify"), pytest.mark.slow]
 
 
 def _fetch(handle, methods, read_timeout=READ_TIMEOUT):

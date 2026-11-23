@@ -20,6 +20,8 @@ from types import SimpleNamespace
 
 import aiohttp
 import pytest
+
+pytestmark = pytest.mark.slow
 from aiohttp import web
 
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)

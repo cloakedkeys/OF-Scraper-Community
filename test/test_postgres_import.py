@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.commands.postgres_import as importer
 import ofscraper.db.postgres as postgres

@@ -23,6 +23,8 @@ from urllib.parse import urlparse
 
 import aiohttp
 import pytest
+
+pytestmark = pytest.mark.slow
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 

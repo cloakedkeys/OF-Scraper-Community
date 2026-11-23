@@ -18,6 +18,8 @@ from types import SimpleNamespace
 import arrow
 import pytest
 
+pytestmark = pytest.mark.slow
+
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.commands.postgres_export as exporter

@@ -13,6 +13,8 @@ import time
 import psutil
 import pytest
 
+pytestmark = pytest.mark.slow
+
 import ofscraper.utils.context.exit as exit_context
 import ofscraper.utils.system.process_tree as process_tree
 import ofscraper.utils.system.subprocess as subprocess_module

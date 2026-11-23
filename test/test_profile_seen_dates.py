@@ -13,6 +13,8 @@ import sqlite3
 import arrow
 import pytest
 
+pytestmark = pytest.mark.slow
+
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.db.merge as merge

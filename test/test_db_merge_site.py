@@ -14,6 +14,8 @@ import sqlite3
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 import ofscraper.db.merge as merge
 import ofscraper.db.operations as operations
 import ofscraper.sites as sites
