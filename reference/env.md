@@ -755,13 +755,13 @@ Defined in `ofscraper/utils/of_env/values/path/files.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="preferences"></a>`preferences` | `OFSC_PREFERENCES_FILE` | `'pref_config.py'` | Name of the preferences configuration file |
-| <a id="configpath"></a>`configPath` | `OFSC_CONFIG_DIR` | `'.config/ofscraper'` | Base directory for configuration files |
-| <a id="configfile"></a>`configFile` | `OFSC_CONFIG_FILE_NAME` | `'config.json'` | Name of the main configuration JSON file |
-| <a id="authfile"></a>`authFile` | `OFSC_AUTH_FILE_NAME` | `'auth.json'` | Name of the authentication JSON file |
-| <a id="databasefile"></a>`databaseFile` | `OFSC_DATABASE_FILE_NAME` | `'models.db'` | Name of the SQLite database file |
-| <a id="mainprofile"></a>`mainProfile` | `OFSC_MAIN_PROFILE_NAME` | `'main_profile'` | Name of the main profile directory/file |
-| <a id="requestauth"></a>`requestAuth` | `OFSC_REQUEST_AUTH_FILE_NAME` | `'request_auth.json'` | Name of the request authentication JSON file |
+| <a id="preferences"></a>`preferences` | `OFSC_PREFERENCES_FILE` | `'pref_config.py'` | Defined but not read anywhere. |
+| <a id="configpath"></a>`configPath` | `OFSC_CONFIG_DIR` | `'.config/ofscraper'` | Folder relative to the home directory where `config.json` and profiles live. |
+| <a id="configfile"></a>`configFile` | `OFSC_CONFIG_FILE_NAME` | `'config.json'` | Name of the main configuration file inside the config folder. |
+| <a id="authfile"></a>`authFile` | `OFSC_AUTH_FILE_NAME` | `'auth.json'` | Name of the OnlyFans credentials file inside the profile folder. |
+| <a id="databasefile"></a>`databaseFile` | `OFSC_DATABASE_FILE_NAME` | `'models.db'` | Defined but not read anywhere. |
+| <a id="mainprofile"></a>`mainProfile` | `OFSC_MAIN_PROFILE_NAME` | `'main_profile'` | Key name in `config.json` that stores the default profile name. |
+| <a id="requestauth"></a>`requestAuth` | `OFSC_REQUEST_AUTH_FILE_NAME` | `'request_auth.json'` | Defined but not read anywhere. |
 
 ## Filename generation and temp files
 
@@ -769,14 +769,14 @@ Defined in `ofscraper/utils/of_env/values/path/general.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="skip_filename_retrival"></a>`SKIP_FILENAME_RETRIVAL` | `OFSC_SKIP_FILENAME_RETRIVAL` | `False` | Flag to skip basefilename retrieval during filename generation |
-| <a id="skip_mediadir_retrival"></a>`SKIP_MEDIADIR_RETRIVAL` | `OFSC_SKIP_MEDIADIR_RETRIVAL` | `False` | Flag to skip media directory retrieval during filename generation |
+| <a id="skip_filename_retrival"></a>`SKIP_FILENAME_RETRIVAL` | `OFSC_SKIP_FILENAME_RETRIVAL` | `False` | When on, skips looking up previously recorded filenames in the database during filename generation. |
+| <a id="skip_mediadir_retrival"></a>`SKIP_MEDIADIR_RETRIVAL` | `OFSC_SKIP_MEDIADIR_RETRIVAL` | `False` | When on, skips looking up previously recorded media folders in the database during filename generation. |
 
 ### Temporary files
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="batch_tempfile_cleanup"></a>`BATCH_TEMPFILE_CLEANUP` | `OFSC_BATCH_TEMPFILE_CLEANUP` | `False` | Flag to enable or disable cleanup of temporary files in batches. |
+| <a id="batch_tempfile_cleanup"></a>`BATCH_TEMPFILE_CLEANUP` | `OFSC_BATCH_TEMPFILE_CLEANUP` | `False` | When on, removes leftover temporary files during batch cleanup. |
 
 ## Name and path lengths
 
@@ -784,11 +784,11 @@ Defined in `ofscraper/utils/of_env/values/path/length.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="max_text_length"></a>`MAX_TEXT_LENGTH` | `OFSC_MAX_TEXT_LENGTH` | `70` | Maximum allowed length for certain text fields. |
-| <a id="max_text_worker"></a>`MAX_TEXT_WORKER` | `OFSC_MAX_TEXT_WORKER` | `30` | Maximum number of workers for text processing. |
-| <a id="windows_max_path_bytes"></a>`WINDOWS_MAX_PATH_BYTES` | `OFSC_WINDOWS_MAX_PATH_BYTES` | `530` | Maximum path length in bytes for Windows. |
-| <a id="mac_max_path"></a>`MAC_MAX_PATH` | `OFSC_MAC_MAX_PATH` | `255` | Maximum path length for macOS (characters). |
-| <a id="linux_max_file_name_bytes"></a>`LINUX_MAX_FILE_NAME_BYTES` | `OFSC_LINUX_MAX_FILE_NAME_BYTES` | `254` | Maximum file name length in bytes for Linux. |
+| <a id="max_text_length"></a>`MAX_TEXT_LENGTH` | `OFSC_MAX_TEXT_LENGTH` | `70` | Wrap width, in characters, when writing downloaded post text files. |
+| <a id="max_text_worker"></a>`MAX_TEXT_WORKER` | `OFSC_MAX_TEXT_WORKER` | `30` | Defined but not read anywhere. |
+| <a id="windows_max_path_bytes"></a>`WINDOWS_MAX_PATH_BYTES` | `OFSC_WINDOWS_MAX_PATH_BYTES` | `530` | Maximum full path length, in bytes, before truncation on Windows. |
+| <a id="mac_max_path"></a>`MAC_MAX_PATH` | `OFSC_MAC_MAX_PATH` | `255` | Maximum full path length, in characters, before truncation on macOS. |
+| <a id="linux_max_file_name_bytes"></a>`LINUX_MAX_FILE_NAME_BYTES` | `OFSC_LINUX_MAX_FILE_NAME_BYTES` | `254` | Maximum filename length, in bytes, before truncation on Linux. |
 
 ## Character sizes
 
@@ -796,11 +796,11 @@ Defined in `ofscraper/utils/of_env/values/path/bytes.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="normal_char_size_windows"></a>`NORMAL_CHAR_SIZE_WINDOWS` | `NORMAL_CHAR_SIZE_WINDOWS` | `2` | Byte size for normal characters on Windows |
-| <a id="special_char_size_windows"></a>`SPECIAL_CHAR_SIZE_WINDOWS` | `SPECIAL_CHAR_SIZE_WINDOWS` | `4` | Byte size for special characters on Windows |
-| <a id="special_char_size_unix"></a>`SPECIAL_CHAR_SIZE_UNIX` | `SPECIAL_CHAR_SIZE_UNIX` | `4` | Byte size for special characters on Unix-like systems |
-| <a id="normal_char_size_unix"></a>`NORMAL_CHAR_SIZE_UNIX` | `NORMAL_CHAR_SIZE_UNIX` | `2` | Byte size for normal characters on Unix-like systems |
-| <a id="utf"></a>`UTF` | `UTF` | `None` | UTF encoding setting (e.g., "utf-8", "utf-16"). Defaults to None. |
+| <a id="normal_char_size_windows"></a>`NORMAL_CHAR_SIZE_WINDOWS` | `NORMAL_CHAR_SIZE_WINDOWS` | `2` | Estimated byte size per ASCII character when measuring path length on Windows (used when `UTF` is unset). |
+| <a id="special_char_size_windows"></a>`SPECIAL_CHAR_SIZE_WINDOWS` | `SPECIAL_CHAR_SIZE_WINDOWS` | `4` | Estimated byte size per non-ASCII character when measuring path length on Windows (used when `UTF` is unset). |
+| <a id="special_char_size_unix"></a>`SPECIAL_CHAR_SIZE_UNIX` | `SPECIAL_CHAR_SIZE_UNIX` | `4` | Estimated byte size per non-ASCII character when measuring path length on Unix-like systems (used when `UTF` is unset). |
+| <a id="normal_char_size_unix"></a>`NORMAL_CHAR_SIZE_UNIX` | `NORMAL_CHAR_SIZE_UNIX` | `2` | Estimated byte size per ASCII character when measuring path length on Unix-like systems (used when `UTF` is unset). |
+| <a id="utf"></a>`UTF` | `UTF` | `None` | Encoding name (for example `utf-8`) used to measure exact path byte length instead of the `*_CHAR_SIZE_*` estimates. |
 
 ## OnlyFans API addresses
 
@@ -808,8 +808,8 @@ Defined in `ofscraper/utils/of_env/values/url/url.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="initep"></a>`initEP` | `OFSC_API_INIT_EP` | `'https://onlyfans.com/api2/v2/init'` | Initial API endpoint for session initialization. |
-| <a id="licence_url"></a>`LICENCE_URL` | `OFSC_API_LICENCE_URL` | `'https://onlyfans.com/api2/v2/users/media/{}/drm/{}/{}?type=widevine'` | URL for media DRM license acquisition. |
+| <a id="initep"></a>`initEP` | `OFSC_API_INIT_EP` | `'https://onlyfans.com/api2/v2/init'` | Initial API endpoint for session initialisation. |
+| <a id="licence_url"></a>`LICENCE_URL` | `OFSC_API_LICENCE_URL` | `'https://onlyfans.com/api2/v2/users/media/{}/drm/{}/{}?type=widevine'` | URL for media DRM licence acquisition. |
 | <a id="individual_timeline"></a>`INDIVIDUAL_TIMELINE` | `OFSC_API_INDIVIDUAL_TIMELINE` | `'https://onlyfans.com/api2/v2/posts/{}?skip_users=all'` | Endpoint for a single timeline post. |
 | <a id="meep"></a>`meEP` | `OFSC_API_ME_EP` | `'https://onlyfans.com/api2/v2/users/me'` | Endpoint for the current user's profile information. |
 | <a id="subscriptionsep"></a>`subscriptionsEP` | `OFSC_API_SUBSCRIPTIONS_EP` | `'https://onlyfans.com/api2/v2/subscriptions/subscribes?offset={}&limit=10&type=all&format=infinite'` | Endpoint for all subscriptions. |
@@ -830,9 +830,9 @@ Defined in `ofscraper/utils/of_env/values/url/url.py`.
 | <a id="storyep"></a>`storyEP` | `OFSC_API_STORY_EP` | `'https://onlyfans.com/api2/v2/stories/highlights/{}?unf=1'` | Endpoint for a specific story. |
 | <a id="messagesep"></a>`messagesEP` | `OFSC_API_MESSAGES_EP` | `'https://onlyfans.com/api2/v2/chats/{}/messages?limit=100&order=desc&skip_users=all&skip_users_dups=1'` | Endpoint for chat messages. |
 | <a id="messagesnextep"></a>`messagesNextEP` | `OFSC_API_MESSAGES_NEXT_EP` | `'https://onlyfans.com/api2/v2/chats/{}/messages?limit=100&id={}&order=desc&skip_users=all&skip_users_dups=1'` | Endpoint for next set of chat messages. |
-| <a id="favoriteep"></a>`favoriteEP` | `OFSC_API_FAVORITE_EP` | `'https://onlyfans.com/api2/v2/posts/{}/favorites/{}'` | Endpoint for favoriting/unfavoriting a post. |
+| <a id="favoriteep"></a>`favoriteEP` | `OFSC_API_FAVORITE_EP` | `'https://onlyfans.com/api2/v2/posts/{}/favorites/{}'` | Endpoint for liking or unliking a post. |
 | <a id="posturl"></a>`postURL` | `OFSC_POST_URL` | `'https://onlyfans.com/{}/{}'` | Base URL for a post on OnlyFans. |
-| <a id="donateep"></a>`donateEP` | `OFSC_DONATE_EP` | `'https://www.buymeacoffee.com/excludedBittern'` | Donation endpoint (Buy Me A Coffee example). |
+| <a id="donateep"></a>`donateEP` | `OFSC_DONATE_EP` | `'https://www.buymeacoffee.com/excludedBittern'` | Upstream author's donation link. |
 | <a id="purchased_contentep"></a>`purchased_contentEP` | `OFSC_PURCHASED_CONTENT_EP` | `'https://onlyfans.com/api2/v2/posts/paid/all?limit=100&skip_users=all&format=infinite&offset={}&author={}'` | Endpoint for purchased content by user ID. |
 | <a id="purchased_contentall"></a>`purchased_contentALL` | `OFSC_PURCHASED_CONTENT_ALL_EP` | `'https://onlyfans.com/api2/v2/posts/paid/all?limit=100&skip_users=all&format=infinite&offset={}'` | Endpoint for all purchased content. |
 | <a id="highlightspecific"></a>`highlightSPECIFIC` | `OFSC_HIGHLIGHT_SPECIFIC_EP` | `'https://onlyfans.com/api2/v2/stories/highlights/{}'` | Endpoint for a specific highlight story. |
@@ -850,9 +850,9 @@ Defined in `ofscraper/utils/of_env/values/url/dynamic.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="xagler_url"></a>`XAGLER_URL` | `OF_XAGLER_URL` | `'https://raw.githubusercontent.com/xagler/dynamic-rules/main/onlyfans.json'` | "https://raw.githubusercontent.com/xagler/dynamic-rules/main/onlyfans.json" |
-| <a id="rafa_url"></a>`RAFA_URL` | `OF_RAFA_URL` | `'https://raw.githubusercontent.com/rafa-9/dynamic-rules/main/rules.json'` | "https://raw.githubusercontent.com/rafa-9/dynamic-rules/main/rules.json" |
-| <a id="digitalcriminals"></a>`DIGITALCRIMINALS` | `OF_DIGITALCRIMINALS_URL` | `'https://raw.githubusercontent.com/DATAHOARDERS/dynamic-rules/main/onlyfans.json'` | "https://raw.githubusercontent.com/DATAHOARDERS/dynamic-rules/main/onlyfans.json" |
+| <a id="xagler_url"></a>`XAGLER_URL` | `OF_XAGLER_URL` | `'https://raw.githubusercontent.com/xagler/dynamic-rules/main/onlyfans.json'` | URL of the `xagler` OnlyFans dynamic signing rules JSON. |
+| <a id="rafa_url"></a>`RAFA_URL` | `OF_RAFA_URL` | `'https://raw.githubusercontent.com/rafa-9/dynamic-rules/main/rules.json'` | URL of the `rafa` OnlyFans dynamic signing rules JSON. |
+| <a id="digitalcriminals"></a>`DIGITALCRIMINALS` | `OF_DIGITALCRIMINALS_URL` | `'https://raw.githubusercontent.com/DATAHOARDERS/dynamic-rules/main/onlyfans.json'` | URL of the `digitalcriminals` OnlyFans dynamic signing rules JSON. |
 | <a id="dynamic_generic_url"></a>`DYNAMIC_GENERIC_URL` | `OF_DYNAMIC_GENERIC_URL` | `None` | The URL of the dynamic rule that `advanced_options.dynamic-mode-default` `generic` fetches. Unset, `generic` can't be used and the fallback sources are tried instead. |
 
 ## Other addresses
@@ -863,13 +863,13 @@ Defined in `ofscraper/utils/of_env/values/url/other_url.py`.
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="cdrm"></a>`CDRM` | `OFSC_CDRM_URL` | `'https://cdrm-project.com/api/decrypt'` | URL for the CDM decryption API. |
+| <a id="cdrm"></a>`CDRM` | `OFSC_CDRM_URL` | `'https://cdrm-project.com/api/decrypt'` | URL of a self-hosted CDM decryption server for the deprecated `cdrm` key mode. The default `cdrm-project.com` address is never contacted; use `manual` key mode instead. |
 
 ### Bad URL Host
 
 | Key | Environment variable | Default | Description |
 |---|---|---|---|
-| <a id="bad_url_host"></a>`BAD_URL_HOST` | `OFSC_BAD_URL_HOSTS` | a list of 3 items (see the source) | A set of regular expression patterns for "bad" URL hosts. |
+| <a id="bad_url_host"></a>`BAD_URL_HOST` | `OFSC_BAD_URL_HOSTS` | a list of 3 items (see the source) | Regular expressions matching hosts whose media URLs are treated as broken or unusable (accepts a comma-separated list via `OFSC_BAD_URL_HOSTS`). |
 
 ### Media Host
 
