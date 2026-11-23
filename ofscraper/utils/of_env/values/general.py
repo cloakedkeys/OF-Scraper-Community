@@ -63,7 +63,7 @@ def load_general_config():
         "OFSC_APP_TOKEN", "33d57ade8c02dbc5a333db99ff9ae26a"
     )
 
-    # CONTINUE_BOOL: When off, skips the interactive "Do you want to continue with script" prompt and exits.
+    # CONTINUE_BOOL: When off, skips the interactive "Do you want to continue with script" prompt and carries on as if you answered Yes.
     # Default: True
     config["CONTINUE_BOOL"] = os.getenv("OFSC_CONTINUE_BOOL", "True").lower() in (
         "true",
@@ -97,7 +97,7 @@ def load_general_config():
     # Default: "[^/]"
     config["USERNAME_REGEX"] = os.getenv("OFSC_USERNAME_REGEX", "[^/]")
 
-    # BUF_SIZE: Read buffer size, in bytes, used when hashing files and copying or moving files.
+    # BUF_SIZE: Read buffer size, in bytes, used when hashing files (including the duplicate check before a download is moved into place).
     # Default: 1 MB (1024 * 1024)
     config["BUF_SIZE"] = int(os.getenv("OFSC_BUF_SIZE", str(1024 * 1024)))
 

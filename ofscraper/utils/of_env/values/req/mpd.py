@@ -50,7 +50,7 @@ def load_mpd_config():
     # Default: 5
     config["MPD_NUM_TRIES"] = int(os.getenv("OFSC_MPD_NUM_TRIES", "5"))
 
-    # MPD_NUM_TRIES: Time to sleep on mpd 429/504 errors.
+    # MPD_SESSION_SLEEP_INIT: Time to sleep on mpd 429/504 errors.
     # Default: 45
     config["MPD_SESSION_SLEEP_INIT"] = int(
         os.getenv("OFSC_MPD_SESSION_SLEEP_INIT", "45")
