@@ -105,7 +105,7 @@ pip install git+https://github.com/cloakedkeys/OF-Scraper-Community
 
 Run `ofscraper` and follow the prompts. The first run asks for your auth details and creates a config file in `~/.config/ofscraper/`.
 
-📖 **[Read the docs](https://cloakedkeys.gitbook.io/ofsc)** for setup, auth, config options, commands and the full [technical reference](https://cloakedkeys.gitbook.io/ofsc/reference).
+📖 **[Read the docs](https://cloakedkeys.gitbook.io/ofsc)** for setup, auth, config options, commands and the full [technical reference](https://cloakedkeys.gitbook.io/ofsc/reference-and-help/reference).
 
 ## Check table
 
@@ -188,7 +188,7 @@ Usually an auth problem, so check the auth answer above first. Then check you ha
 
 These videos need a CDM to decrypt them.
 
-- Set up `cdm_options` in your config. See the [CDM guide](https://cloakedkeys.gitbook.io/ofsc/cdm-options).
+- Set up `cdm_options` in your config. See the [CDM guide](https://cloakedkeys.gitbook.io/ofsc/setup/cdm-options).
 - Install ffmpeg 6 or newer and put its full path in `binary_options` → `ffmpeg`.
 - Paths copied with Windows' "Copy as path" (with quotes) work.
 
