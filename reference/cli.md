@@ -328,6 +328,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `quality` · **Type:** one of `240`, `720`, `source` · **Default:** none
 - **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/media_content.py`
+- Lowest video quality to accept (downloads the smallest available at or above it, or source)
 - **Note:** The lowest video quality to accept. The smallest available quality at or above it is downloaded, or `source` when none matches (`ofscraper/utils/args/accessors/quality.py`, `classes/of/media.py`). Without this option, `source` is used.
 
 #### `--mediatype`
@@ -430,7 +431,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `before` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `manual`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/media_content.py`
-- Process media from posts at or before the given date (MM/DD/YYYY) for likes, unlikes, and downloads
+- Process media from posts at or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago') for likes, unlikes, and downloads
 - **Note:** On Fansly a timeline or message scan starts at this date instead of at the newest post, so the newer pages are not asked for; with `--after` only the pages of the range are. Walls (the Labels area) and purchases are scanned as without it.
 
 #### `--after`
@@ -439,7 +440,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `after` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `manual`, `metadata`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/media_content.py`
-- Process media from posts at or after the given date (MM/DD/YYYY) for likes, unlikes, and downloads
+- Process media from posts at or after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago') for likes, unlikes, and downloads
 
 #### `--redownload`
 
@@ -560,7 +561,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Commands:** main program
 - **Config fallback:** `download_options.max_post_count`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/post_content.py`
-- Maximum number of posts to process
+- Maximum number of media items to process per creator (same setting as --max-media-count).
 
 #### `--post-sort`
 
@@ -897,7 +898,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `last_seen_before` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_user_filter.py`
-- Filter accounts by last seen being at or before the given date (YYYY-MM-DD format)
+- Filter accounts by last seen being at or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
 #### `--last-seen-after`
 
@@ -905,7 +906,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `last_seen_after` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_user_filter.py`
-- Filter accounts by last seen being at or after the given date (YYYY-MM-DD format)
+- Filter accounts by last seen being at or after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
 #### `--expired-after`
 
@@ -913,7 +914,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `expired_after` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_user_filter.py`
-- Filter accounts by expiration/renewal being at or after the given date (YYYY-MM-DD format)
+- Filter accounts by expiration/renewal being at or after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
 #### `--expired-before`
 
@@ -921,7 +922,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `expired_before` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_user_filter.py`
-- Filter accounts by expiration/renewal being at or before the given date (YYYY-MM-DD format)
+- Filter accounts by expiration/renewal being at or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
 #### `--subscribed-after`
 
@@ -929,7 +930,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `subscribed_after` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_user_filter.py`
-- Filter accounts by subscription date being after the given date (YYYY-MM-DD format)
+- Filter accounts by subscription date being after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
 #### `--subscribed-before`
 
@@ -937,7 +938,7 @@ The main program's `--action` (`-a`) picks what a non-interactive run does; with
 - **Dest:** `subscribed_before` · **Type:** Arrow · **Default:** none
 - **Commands:** main program, `metadata`, `db`
 - **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_user_filter.py`
-- Filter accounts by subscription date being at or before the given date (YYYY-MM-DD format)
+- Filter accounts by subscription date being at or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
 ### Model Sort & Processing Order Options
 

@@ -329,7 +329,7 @@ max_post_count_option = click.option(
     "-xc",
     "--max-post-count",
     "max_count",
-    help="Maximum number of posts to process",
+    help="Maximum number of media items to process per creator (same setting as --max-media-count).",
     default=0,
     type=int,
 )
