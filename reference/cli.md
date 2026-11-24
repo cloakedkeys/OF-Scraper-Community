@@ -348,7 +348,7 @@ Without this option, `ALLOW_DUPE_MEDIA` decides (`merged_settings`); `--no-allow
 
 With --allow-dupes, skip a Purchased copy of media that's in another post or was downloaded from one. Media only in Purchased still downloads
 
-Only with `--allow-dupes`. A Purchased copy of media that is also in another post in the run (Messages, Timeline and so on), or was downloaded from one, is skipped: OnlyFans gives a purchased message a different post id in Purchased, so `--allow-dupes` alone downloads it twice. Media found only in Purchased still downloads, and other posts still get a copy each (`media_key`, `dupefiltermedia` and `downloaded_media_ids` in `ofscraper/filters/media/filters.py`; the Fansly selector in `ofscraper/sites/fansly/pipeline.py`). Without `--allow-dupes` it changes nothing.
+Only with `--allow-dupes`. A Purchased copy of media that is also in another post in the run (Messages, Timeline and so on), or was downloaded from one, is skipped: OnlyFans gives a purchased message a different post id in Purchased, so `--allow-dupes` alone downloads it twice. Media found only in Purchased still downloads (one viewable copy), and other posts still get a copy each. Every copy still gets its own `medias` row; only the download selection leaves Purchased copies out (`media_key`, `skip_purchased_copies` and `downloaded_media_ids` in `ofscraper/filters/media/filters.py`; the Fansly selector in `ofscraper/sites/fansly/pipeline.py`). `manual` downloads every copy of the URLs it is given. Without `--allow-dupes` it changes nothing.
 
 **Dest:** `skip_purchased_dupes` · **Defined in:** `ofscraper/utils/args/parse/arguments/download.py`
 

@@ -303,7 +303,7 @@ def _new_rows(run, posts):
     """
     out = []
     for item in filters.dupefiltermedia([m for p in posts for m in p.all_media]):
-        key = filters.media_key(item)
+        key = filters.row_key(item)
         if key in run.rows:
             continue
         if not item.canview:

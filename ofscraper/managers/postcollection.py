@@ -121,6 +121,7 @@ class PostCollection:
         log.info("Applying final 'download' mode filters to media list...")
         all_media = helpers.seperate_self(all_media)
         all_media = helpers.dupefiltermedia(all_media)
+        all_media = helpers.skip_purchased_copies(all_media)
         all_media = helpers.previous_download_filter(
             all_media, username=self.username, model_id=self.model_id
         )

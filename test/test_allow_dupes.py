@@ -34,6 +34,7 @@ from ofscraper.classes.of.media import Media
 from ofscraper.classes.of.posts import Post
 from ofscraper.db.operations_.media import batch_mediainsert, mark_media_as_downloaded
 from ofscraper.utils.args.parse.arguments.download import allow_dupes_option
+from ofscraper.sites.fansly import pipeline as fansly_pipeline
 
 from test_fansly_pipeline import (  # noqa: F401  (harness and settings_stub are fixtures)
     MODEL_ID as FANSLY_ID,
@@ -171,6 +172,7 @@ def todo(items):
 
     asyncio.run(save())
     media = filters.dupefiltermedia(items)
+    media = filters.skip_purchased_copies(media)
     media = filters.previous_download_filter(media, username=USERNAME, model_id=MODEL_ID)
     return sorted((m.id, m.post_id) for m in media)
 
@@ -277,6 +279,72 @@ def test_skip_purchased_does_nothing_without_allow_dupes(env):
     env.stub.skip_purchased_dupes = True
     # one download per media, as without the flag
     assert todo([item(7, 2, "paid"), item(7, 1, "message"), item(7, 3)]) == [(7, 1)]
+
+
+def collection_of(*posts):
+    """A real PostCollection of (post id, area, media id, viewable) posts."""
+    from ofscraper.managers.postcollection import PostCollection
+
+    collection = PostCollection(model_id=MODEL_ID, username=USERNAME)
+    collection.add_posts(
+        [
+            Post(
+                {"id": post_id, "postedAt": f"2026-01-0{post_id}T03:04:05+00:00",
+                 "text": "", "isOpened": True,
+                 "media": [{"id": media_id, "type": "photo", "canView": viewable,
+                            "files": {"full": {"url": f"https://cdn.example/{media_id}.jpg"}}}]},
+                MODEL_ID, USERNAME, responsetype=area,
+            )
+            for post_id, area, media_id, viewable in posts
+        ],
+        actions=["download"],
+    )
+    return collection
+
+
+def scrape_and_download(*posts):
+    """One run as process_areas does it: save every row, then download what
+    get_media_to_download picks and mark it. Returns the (media, post) pairs."""
+    collection = collection_of(*posts)
+
+    async def save():
+        await batch_mediainsert(collection.all_unique_media, model_id=MODEL_ID, username=USERNAME)
+
+    asyncio.run(save())
+    picked = collection.get_media_to_download()
+    for ele in picked:
+        mark(ele, f"{ele.id}_{ele.post_id}.jpg")
+    return sorted((m.id, m.post_id) for m in picked)
+
+
+@pytest.fixture
+def skip_purchased(env, monkeypatch):
+    env.stub.allow_dupe_downloads = True
+    env.stub.skip_purchased_dupes = True
+    # the account running the scraper, which made none of these posts
+    monkeypatch.setattr(filters.me_util, "get_id", lambda: 999)
+    return env
+
+
+def test_skip_purchased_a_purchase_whose_message_is_locked_downloads_once(skip_purchased):
+    # the message copy is locked, so the Purchased copy is the one to get
+    posts = [(1, "message", 7, False), (2, "paid", 7, True)]
+    assert scrape_and_download(*posts) == [(7, 2)]
+    # its row was saved and marked, so the next run doesn't fetch it again
+    assert (7, 2, 1, "7_2.jpg") in rows(skip_purchased)
+    assert scrape_and_download(*posts) == []
+
+
+def test_skip_purchased_every_copy_gets_a_row(skip_purchased):
+    scrape_and_download((1, "message", 7, True), (2, "paid", 7, True))
+    # the message copy is downloaded; the Purchased copy has a row, not marked
+    assert [r[:3] for r in rows(skip_purchased)] == [(7, 1, 1), (7, 2, None)]
+
+
+def test_skip_purchased_two_purchases_one_locked_download_the_viewable_one(skip_purchased):
+    posts = [(1, "paid", 7, False), (2, "paid", 7, True)]
+    assert scrape_and_download(*posts) == [(7, 2)]
+    assert scrape_and_download(*posts) == []
 
 
 # ------------------------------------------------------------------ records
@@ -529,3 +597,19 @@ def test_fansly_skip_purchased_a_copy_downloaded_earlier_covers_the_purchase(
     got = messages_and_purchased(harness)
     harness.run()
     assert got == []
+
+
+def test_fansly_skip_purchased_every_copy_gets_a_row(harness, settings_stub):
+    # as on OnlyFans (all_unique_media): the skipped Purchased copy has a row
+    settings_stub.allow_dupe_downloads = True
+    settings_stub.skip_purchased_dupes = True
+    saved = []
+
+    async def media_rows(items, **k):
+        saved.extend((m.id, m.post_id) for m in items)
+
+    harness.m.setattr(fansly_pipeline, "batch_mediainsert", media_rows)
+    got = messages_and_purchased(harness)
+    harness.run()
+    assert got == [(101, 1)]
+    assert sorted(saved) == [(101, 1), (101, 2)]

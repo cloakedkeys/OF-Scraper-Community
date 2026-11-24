@@ -46,35 +46,49 @@ def media_key(item):
     return (item.id, item.post_id)
 
 
+def row_key(item):
+    """What gets its own database row: the media, or with allow-dupes each
+    post's copy (Purchased copies too, whatever --skip-purchased-dupes says,
+    so a downloaded Purchased copy always has a row to mark)."""
+    return (item.id, item.post_id) if settings.allow_dupes() else item.id
+
+
 # dupe filters that prioritize viewable
 def dupefiltermedia(media):
     output = defaultdict(lambda: None)
     media = sorted(
         media, key=lambda item: (undated_first(item.post.date), item.id, item.count)
     )
-    if settings.allow_dupes():
-        # --skip-purchased-dupes: a Purchased copy of media in another post
-        # isn't a copy of its own
-        elsewhere = (
-            {item.id for item in media if not is_purchased_copy(item)}
-            if settings.skip_purchased_dupes()
-            else set()
-        )
-        for item in media:
-            if is_purchased_copy(item) and item.id in elsewhere:
-                continue
-            if not output[media_key(item)]:
-                output[media_key(item)] = item
-    else:
-        for item in media:
-            if not output[item.id]:
-                output[item.id] = item
-            elif item.canview and not output[item.id].canview:
-                output[item.id] = item
+    for item in media:
+        key = row_key(item)
+        if not output[key]:
+            output[key] = item
+        elif item.canview and not output[key].canview:
+            output[key] = item
     log.debug(
         f"Number of media after removing duplicated media_ids {len(output.values())}"
     )
     return list(output.values())
+
+
+def skip_purchased_copies(media):
+    """--skip-purchased-dupes, when picking what to download: leave out a
+    Purchased copy of media another post in the list has, and keep one
+    Purchased copy (a viewable one) of media only in Purchased. Rows are
+    still saved for every copy (``dupefiltermedia``)."""
+    if not settings.skip_purchased_dupes():
+        return media
+    elsewhere = {item.id for item in media if not is_purchased_copy(item)}
+    kept = {}
+    for item in media:
+        if not is_purchased_copy(item) or item.id in elsewhere:
+            continue
+        current = kept.get(item.id)
+        if current is None or (item.canview and not current.canview):
+            kept[item.id] = item
+    return [
+        item for item in media if not is_purchased_copy(item) or kept.get(item.id) is item
+    ]
 
 
 def dupefilterPost(post):
