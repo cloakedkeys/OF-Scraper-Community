@@ -30,11 +30,10 @@ def merge_runner():
                 return
         completed, skipped, failed = merge_loop(curr_folder, new_db)
         if postgres.enabled() and completed:
-            folder = str(merge.MergeDatabase().get_new_db(new_db).parent)
-            # a backslash right before the closing quote would escape it on
-            # Windows ("D:\" reads as D:"), so it is doubled
-            if folder.endswith("\\"):
-                folder += "\\"
+            # the file, not its folder: the preview then covers what the
+            # migrate command brings in, and no other user_data.db the folder
+            # holds. It ends in user_data.db, so no backslash is before the
+            # closing quote (on Windows "D:\" reads as D:")
             merged = str(merge.MergeDatabase().get_new_db(new_db))
             console.print("To bring the merged file into PostgreSQL, close the scraper and run:")
             # on one line and as written, so that it can be copied
@@ -47,7 +46,7 @@ def merge_runner():
             )
             console.print("To see what it would do first, without writing anything:")
             console.print(
-                f'python -m ofscraper.commands.postgres_import "{folder}"',
+                f'python -m ofscraper.commands.postgres_import "{merged}"',
                 soft_wrap=True,
                 markup=False,
                 emoji=False,

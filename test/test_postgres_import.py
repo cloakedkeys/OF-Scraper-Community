@@ -1277,3 +1277,20 @@ def test_the_app_runs_the_migration_instead_of_scraping(monkeypatch, tmp_path):
     monkeypatch.setattr(manager.actions, "main", lambda: calls.append(("scrape",)))
     manager.mainManager().pick()
     assert calls == [("migrate", tmp_path)]
+
+
+def test_a_migration_that_failed_still_shuts_down(monkeypatch, tmp_path):
+    """The exit code goes out, after the logs and the cache are closed as
+    on every other way out of a run."""
+    import ofscraper.managers.manager as manager
+
+    calls = []
+    monkeypatch.setattr(
+        settings, "get_settings",
+        lambda: SimpleNamespace(command=None, migrate_sqlite_to_postgres=str(tmp_path / "missing.db")),
+    )
+    monkeypatch.setattr(manager.exit_manager, "shutdown", lambda: calls.append("shutdown"))
+    with pytest.raises(SystemExit) as exit_info:
+        manager.mainManager().pick()
+    assert exit_info.value.code == 2
+    assert calls == ["shutdown"]
