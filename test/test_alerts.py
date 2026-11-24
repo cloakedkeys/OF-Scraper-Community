@@ -243,3 +243,12 @@ def test_status_found_through_the_cause():
     aiohttp_like.status = 403
     assert checkers.http_status(aiohttp_like) == 403
     assert checkers.http_status(ValueError("x")) is None
+
+
+def test_free_space_is_only_checked_when_the_disk_alert_is_open(sent, monkeypatch):
+    # a good pass with no disk-full alert open doesn't stat the disk
+    checked = []
+    sent.settings.system_free_min = 10
+    monkeypatch.setattr(free, "get_free", lambda: checked.append(1) or 50)
+    alerts.after_pass(exit_status.OK)
+    assert checked == [] and sent.script == []

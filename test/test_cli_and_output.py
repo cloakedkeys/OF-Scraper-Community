@@ -457,6 +457,39 @@ def test_keyboard_interrupt_in_run_exits_130(monkeypatch):
 
 
 @pytest.mark.usefixtures("no_profiles")
+def test_second_ctrl_c_during_shutdown_skips_to_the_forced_shutdown(monkeypatch):
+    import signal
+
+    def interrupt():
+        raise KeyboardInterrupt
+
+    steps = []
+
+    def slow_close():
+        steps.append("logs")
+        signal.raise_signal(signal.SIGINT)  # the second Ctrl+C
+        steps.append("logs closed")
+
+    old = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        monkeypatch.setattr(run, "check_database", lambda: None)
+        monkeypatch.setattr(run, "start_manager", interrupt)
+        monkeypatch.setattr(run.exit_manager.time, "sleep", lambda s: None)
+        monkeypatch.setattr(run.exit_manager.close_log, "gracefulClose", slow_close)
+        monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: steps.append("forced"))
+        monkeypatch.setattr(
+            run.console, "get_shared_console", lambda: SimpleNamespace(print=lambda *a, **k: None)
+        )
+        with pytest.raises(SystemExit) as exit_info:
+            run.main()
+    finally:
+        signal.signal(signal.SIGINT, old)
+    assert exit_info.value.code == 130
+    # the second Ctrl+C stops the ordinary shutdown instead of waiting for it
+    assert steps == ["logs", "forced"]
+
+
+@pytest.mark.usefixtures("no_profiles")
 def test_sigterm_interrupt_in_run_exits_0(monkeypatch):
     def sigterm():
         raise run.exit_context.SigtermInterrupt
