@@ -129,7 +129,7 @@ def _auth_value_findings(auth):
         if not isinstance(value, str):
             continue
         value = auth_data.fix_val(value)
-        if key == "sess" and value == "deleted":
+        if key == "sess" and value.lower() == "deleted":
             findings.append('sess is "deleted": the browser session had logged out, so log in and copy it again')
             continue
         found = []
@@ -172,7 +172,8 @@ def check_onlyfans_auth(folder, report):
             report.add(FAIL, "OnlyFans auth", f"{path} is empty")
             return
         auth = auth_dict.get_auth_dict(text)
-    except (OSError, ValueError, AttributeError) as error:
+    except (OSError, ValueError, AttributeError, TypeError) as error:
+        # TypeError: JSON null, a number or true/false, which get_auth_dict can't look in
         report.add(FAIL, "OnlyFans auth", f"{path} can't be read: {type(error).__name__}")
         return
     if not isinstance(auth, dict):
@@ -496,7 +497,9 @@ def _keys_in_auth_file(folder):
         return []
     if not isinstance(auth, dict):
         return []
-    keys = set(auth) | set(auth.get("auth") if isinstance(auth.get("auth"), dict) else {})
+    inner = auth.get("auth") if isinstance(auth.get("auth"), dict) else {}
+    # an empty "" or null is a placeholder, not a key put in the wrong file
+    keys = {k for part in (auth, inner) for k, v in part.items() if v is not None and str(v).strip()}
     return [name for name in KEY_FILE_NAMES if name in keys or name.replace("-", "_") in keys]
 
 
@@ -557,7 +560,10 @@ def check_keys(config, site, report, folder=None):
 
 
 def _free(path):
-    gib = shutil.disk_usage(path).free / 2**30
+    try:
+        gib = shutil.disk_usage(path).free / 2**30
+    except OSError as error:
+        return f"free space can't be read: {error.strerror or type(error).__name__}"
     return f"{gib:.1f} GiB free"
 
 
@@ -571,11 +577,12 @@ def _device(path):
 def _check_path(save):
     """The folder the free-space limit is measured at: OFSC_DISK_SPACE_CHECK_PATH,
     or when that is empty the disk that holds the save folder, measured at
-    its nearest folder that is there (free.get_check_path's rule)."""
+    its nearest folder that is there, a link followed first
+    (free.get_check_path's rule)."""
     measured = of_env.getattr("DISK_SPACE_CHECK_PATH")
     if measured:
         return measured
-    path = save.absolute()
+    path = save.resolve()
     while not path.exists() and path.parent != path:
         path = path.parent
     return path
@@ -710,10 +717,14 @@ def check_stash(report):
         data = StashClient(url, os.environ.get(API_KEY_ENV), timeout=15).call(
             "query { version { version } }", retries=0
         )
+        version = ((data or {}).get("version") or {}).get("version") or "version unknown"
     except (StashError, OSError, ValueError) as error:
         report.add(FAIL, "Stash", str(error))
         return
-    version = ((data or {}).get("version") or {}).get("version") or "version unknown"
+    except (KeyError, AttributeError, TypeError) as error:
+        # JSON that isn't a GraphQL reply: not Stash, or a proxy's page
+        report.add(FAIL, "Stash", f"{url}: unexpected reply ({type(error).__name__})")
+        return
     report.add(PASS, "Stash", f"{url}, {version}")
 
 
