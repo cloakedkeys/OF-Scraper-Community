@@ -7,6 +7,7 @@ are kept only once committed.
 
 import hashlib
 import os
+import re
 import shutil
 import sqlite3
 import stat
@@ -575,7 +576,7 @@ def test_the_files_can_be_checked_without_a_server(tmp_path):
 
     assert code == 0
     assert "onlyfans: 1 file, 1 creator" in said
-    assert "OFSC_DATABASE_URL isn't set: the files were checked" in said
+    assert "OFSC_DATABASE_URL isn't set: the file was checked" in said
 
 
 def test_apply_needs_a_database(tmp_path):
@@ -1225,6 +1226,26 @@ def test_a_merged_file_is_brought_in_by_its_path(tmp_path):
     assert "onlyfans: 1 file, 2 creators" in said
     assert {row["model_id"] for row in target.rows("onlyfans", "posts")} == {111, 222}
     assert snapshot(merged.parent) == before
+
+
+def test_one_file_is_spoken_of_as_one(tmp_path, monkeypatch):
+    monkeypatch.delenv(postgres.URL_KEY, raising=False)
+    merged = merged_file(tmp_path)
+
+    code, said = run(merged, Target(), apply=True)
+    assert code == 0, said
+    assert "Copying the file and checking the copy (the file isn't opened)..." in said
+    assert "Done. The user_data.db file is unchanged and is no longer used." in said
+    assert not re.search(r"\bfiles\b", said)
+
+    code, said = run(merged)
+    assert code == 0, said
+    assert "isn't set: the file was checked, and PostgreSQL wasn't." in said
+    assert not re.search(r"\bfiles\b", said)
+
+    code, said = run(merged, apply=True)
+    assert code == 2
+    assert said.endswith("database to bring the file into. See POSTGRESQL.md.")
 
 
 def test_a_path_that_isnt_there_is_said_so(tmp_path):

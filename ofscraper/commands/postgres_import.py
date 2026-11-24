@@ -678,10 +678,13 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
     if not paths:
         out(f"No user_data.db files were found under {folder}.")
         return 2
+    # one file (as Merge Databases writes) is spoken of as one
+    one = len(paths) == 1
+    the_files = "the file" if one else "the files"
     if apply and not (target or postgres.enabled()):
         out(
             f"{postgres.URL_KEY} isn't set, so there is no PostgreSQL database"
-            " to bring the files into. See POSTGRESQL.md."
+            f" to bring {the_files} into. See POSTGRESQL.md."
         )
         return 2
     if folder.is_dir():
@@ -699,7 +702,11 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
             target.check()
             # the driver's own errors, now that it is known to be installed
             refusals += tuple(target.errors)
-        out("Copying each file and checking the copy (the files aren't opened)...")
+        out(
+            "Copying the file and checking the copy (the file isn't opened)..."
+            if one
+            else "Copying each file and checking the copy (the files aren't opened)..."
+        )
         sources = examine(paths, staging)
         if target:
             target.open(read_only=True)
@@ -710,8 +717,8 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
         good, bad = report(sources, out)
         if not target:
             out(
-                f"\n{postgres.URL_KEY} isn't set: the files were checked, and"
-                " PostgreSQL wasn't."
+                f"\n{postgres.URL_KEY} isn't set: {the_files}"
+                f" {'was' if one else 'were'} checked, and PostgreSQL wasn't."
             )
         if not good:
             out("\nThere is nothing to bring in.")
@@ -751,7 +758,11 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
                 f" {'is' if len(bad) == 1 else 'are'} still only in SQLite."
             )
         else:
-            out("Done. The user_data.db files are unchanged and are no longer used.")
+            out(
+                "Done. The user_data.db file is unchanged and is no longer used."
+                if one
+                else "Done. The user_data.db files are unchanged and are no longer used."
+            )
         return 1 if bad else 0
     except Unconfirmed:
         out(
