@@ -22,7 +22,7 @@ Give a profile's `.data` folder to check every creator in it, or one creator's `
 
 - **`no_file_recorded`** is how the scraper marks an item it has given up on for good (a bad link, an empty file from the server, a permanent skip by your script). Resetting those would make every run try them again, so they're only counted.
 - **`size_differs`** isn't reset by default, because you may have edited or re-encoded the file yourself.
-- **`not_recoverable`** marks a finding that downloading again can't fix: an expired story or highlight, a deleted post, a locked item, or a profile picture or header. `--apply` leaves these alone.
+- **`not_recoverable`** marks a finding that downloading again can't fix: an expired story or highlight, a deleted post, a locked item, or a profile picture or header. A media in several posts is recoverable if any of them is. A recorded path that is a link to a file that isn't there, or a folder, is also `not_recoverable`. `--apply` leaves these alone.
 - **`folders_missing`** lists recorded folders that aren't there, which often means a drive or share isn't connected.
 - **`media_to_reset`** and **`files_to_move_aside`** say what `--apply` would do.
 
@@ -36,9 +36,9 @@ ofscraper verify "<profile>/.data" --apply
 
 - Every database row of each `missing` or `empty` media is set to not downloaded, so the next normal run downloads it again.
 - An `empty` file (or a `size_differs` one, with `--reset-size-differs`) is renamed with `.bad` added, so the new download gets the original name. Delete the `.bad` files once you're happy with the new ones.
-- An undo file is written beside each database first (`user_data.db.verify-undo-<...>.json`), and its path is in the report. If the run is stopped before it finishes, nothing is changed and the files are renamed back.
+- An undo file is written beside each database first (`user_data.db.verify-undo-<...>.json`), and its path is in the report. If the run is stopped before it finishes a creator, nothing is changed for that creator and its files are renamed back. Creators finished before it stay changed: their report is printed, and their undo files are listed.
 
-**If a drive is unplugged:** a creator with more than half of its files missing is left alone, and `left_alone` in the report says why. Connect the drive and run it again. If the files really are gone, add `--allow-mostly-missing`.
+**If a drive is unplugged:** a creator with more than half of its files missing is left alone, and `left_alone` in the report says why (its `media_to_reset` is then 0). Files `--apply` leaves alone anyway, such as expired stories, aren't counted. Connect the drive and run it again. If the files really are gone, add `--allow-mostly-missing`.
 
 ## 3. Download again
 
@@ -55,7 +55,7 @@ ofscraper verify --undo "<profile>/.data/<model_id>/user_data.db.verify-undo-<..
 ofscraper verify --undo "<...>.json" --apply
 ```
 
-The first line previews; `--apply` does it. Rows still marked not downloaded are marked downloaded again, and files moved aside get their names back. Rows downloaded again since are left as they are, so it's safe to run at any time, and running it twice changes nothing the second time.
+The first line previews; `--apply` does it. Rows still marked not downloaded are marked downloaded again, and files moved aside get their names back. Rows downloaded again since are left as they are, so it's safe to run at any time, and running it twice changes nothing the second time. If a file can't be renamed back, nothing is changed and the files renamed back so far are moved aside again; run it again once the file is free.
 
 ## Files the database doesn't know
 
@@ -81,7 +81,7 @@ If the database was written in Docker and you run `verify` on the host, the reco
 ofscraper verify "<profile>/.data" --path-map /data=/mnt/library
 ```
 
-`--path-map` can be given more than once. If the database holds relative paths, give the folder the scraper ran in with `--path-root`.
+`--path-map` can be given more than once. A database written on Windows and checked on Linux or macOS (or the other way round) also needs `--path-map`; without it, verify stops with an error rather than report every file missing. If the database holds relative paths, give the folder the scraper ran in with `--path-root`.
 
 ## PostgreSQL
 
@@ -91,7 +91,9 @@ ofscraper verify --postgres --creator "<name or id>" --apply --undo-dir "<folder
 ofscraper verify --postgres --creator "<name or id>" --undo "<folder>/postgresql-...json" --apply
 ```
 
-`OFSC_DATABASE_URL` must be set where you run it (see [POSTGRESQL.md](POSTGRESQL.md)). `--apply` needs `--undo-dir`, a folder that is kept (in Docker, a mounted one). Add `--site` if both sites have a creator by that name. A row the scraper changed while this ran stops it with nothing changed.
+`OFSC_DATABASE_URL` must be set where you run it (see [POSTGRESQL.md](POSTGRESQL.md)). `--apply` needs `--undo-dir`, a folder that is kept (in Docker, a mounted one). Add `--site` if both sites have a creator by that name. A row the scraper changed while this ran stops it with nothing changed. `--undo` restores all the rows of its undo file or none: if one is no longer as the reset left it (downloaded again to another file, or the undo file is from another database), nothing is restored.
+
+Giving `user_data.db` files while `OFSC_DATABASE_URL` is set prints a warning: those files hold nothing scraped since PostgreSQL was turned on.
 
 ## Exit status
 

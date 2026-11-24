@@ -356,3 +356,142 @@ def test_the_hash_is_the_one_the_scraper_records(tmp_path):
     path = tmp_path / "f"
     path.write_bytes(b"some bytes" * 100000)
     assert verify.file_hash(path) == xxhash.xxh128(path.read_bytes()).hexdigest()
+
+
+# --- review follow-up ---
+
+def two_creators(tmp_path):
+    """Two creators' databases, each with one missing file to reset."""
+    made = []
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+        made.append(make_library(tmp_path / name, [
+            (1, 100, "gone.jpg", 3, None, "Timeline", {}),
+            (2, 101, "ok1.jpg", 3, b"abc", "Timeline", {}),
+            (3, 102, "ok2.jpg", 3, b"abc", "Timeline", {}),
+        ]))
+    return made
+
+
+@pytest.mark.parametrize("stop, code", [(KeyboardInterrupt, 130), (OSError("disk gone"), 1)])
+def test_a_multi_creator_apply_stopped_partway_names_what_it_changed(tmp_path, capsys, monkeypatch, stop, code):
+    (db_a, _), (db_b, _) = two_creators(tmp_path)
+    real = verify._apply_file
+
+    def second_stops(path, options):
+        if path == db_b:
+            raise stop
+        return real(path, options)
+
+    monkeypatch.setattr(verify, "_apply_file", second_stops)
+    with pytest.raises(SystemExit) as e:
+        verify.main([str(db_a), str(db_b), "--apply"])
+    assert e.value.code == code
+    out = capsys.readouterr()
+    (undo_file,) = tmp_path.glob("a/.data/5/user_data.db.verify-undo-*.json")
+    assert "Nothing was changed" not in out.err
+    assert str(undo_file) in out.err
+    # the report of what was done is printed as well
+    report = json.loads(out.out)
+    assert [c["undo_file"] for c in report["creators"]] == [str(undo_file)]
+    assert by_media_id(db_a)[1] == 0 and by_media_id(db_b)[1] == 1
+
+
+def test_a_multi_creator_apply_stopped_before_any_change_says_nothing_changed(tmp_path, capsys, monkeypatch):
+    (db_a, _), (db_b, _) = two_creators(tmp_path)
+    monkeypatch.setattr(verify, "_apply_file", lambda *a: (_ for _ in ()).throw(KeyboardInterrupt))
+    with pytest.raises(SystemExit) as e:
+        verify.main([str(db_a), str(db_b), "--apply"])
+    assert e.value.code == 130
+    assert "Nothing was changed" in capsys.readouterr().err
+
+
+def test_an_undo_that_fails_partway_puts_the_renames_back(library, monkeypatch):
+    db, lib = library
+    report = verify.verify([db], apply=True, reset_size_differs=True)
+    after_apply = downloaded(db)
+    undo_file = report["creators"][0]["undo_file"]
+    real = os.rename
+    calls = []
+
+    def second_fails(src, dst):
+        calls.append(src)
+        if len(calls) == 2:
+            raise OSError("in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(verify.os, "rename", second_fails)
+    with pytest.raises(OSError, match="in use"):
+        verify.undo(undo_file, apply=True)
+    monkeypatch.undo()
+    # the database rolled back, so the files keep their .bad names too
+    assert downloaded(db) == after_apply
+    assert sorted(p.name for p in lib.glob("*.bad")) == ["edited.jpg.bad", "empty.jpg.bad"]
+    # and the undo can still be run in full
+    assert verify.undo(undo_file, apply=True)["files_to_rename_back"] == 2
+
+
+def test_files_warns_when_postgresql_is_on(library, capsys, monkeypatch):
+    db, _ = library
+    monkeypatch.setenv("OFSC_DATABASE_URL", "postgresql://localhost/x")
+    assert verify.main([str(db)]) == 0
+    assert "OFSC_DATABASE_URL is set" in capsys.readouterr().err
+
+
+def test_a_media_in_a_deleted_post_and_a_live_one_can_be_reset(tmp_path):
+    db, _ = make_library(tmp_path, [
+        (1, 100, "gone.jpg", 3, None, "Timeline", {}),
+        (1, 101, "gone.jpg", 3, None, "Timeline", {}),
+        (2, 102, "ok.jpg", 3, b"abc", "Timeline", {}),
+        (3, 103, "ok3.jpg", 3, b"abc", "Timeline", {}),
+    ], posts=[(100, 1), (101, 0)])
+    (creator,) = verify.verify([db])["creators"]
+    assert creator["not_recoverable"] == 0 and creator["media_to_reset"] == 1
+
+
+def test_a_broken_link_or_a_folder_is_not_reset(tmp_path):
+    db, lib = make_library(tmp_path, [
+        (1, 100, "link.jpg", 3, None, "Timeline", {}),
+        (2, 101, "folder.jpg", 3, None, "Timeline", {}),
+        (3, 102, "ok.jpg", 3, b"abc", "Timeline", {}),
+        (4, 103, "ok4.jpg", 3, b"abc", "Timeline", {}),
+        (5, 104, "ok5.jpg", 3, b"abc", "Timeline", {}),
+    ])
+    (lib / "link.jpg").symlink_to(tmp_path / "unplugged" / "link.jpg")
+    (lib / "folder.jpg").mkdir()
+    (creator,) = verify.verify([db], hash=True)["creators"]
+    reasons = {f["media_id"]: f.get("not_recoverable") for f in creator["findings"]}
+    assert "link" in reasons["1"] and "folder" in reasons["2"]
+    (creator,) = verify.verify([db], apply=True)["creators"]
+    assert creator["media_reset"] == 0 and creator["undo_file"] is None
+    assert (lib / "folder.jpg").is_dir() and (lib / "link.jpg").is_symlink()
+
+
+def test_a_windows_path_read_on_linux_needs_a_path_map(tmp_path):
+    if os.name == "nt":
+        pytest.skip("the other system's paths here are POSIX ones")
+    db, lib = make_library(tmp_path, [(1, 100, "ok.jpg", 3, b"abc", "Timeline", {})])
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute(r"UPDATE medias SET directory = 'D:\lib'")
+    for path_root in (None, tmp_path):
+        with pytest.raises(ValueError, match="--path-map"):
+            verify.verify([db], path_root=path_root)
+
+
+def test_left_alone_resets_nothing_in_the_totals(tmp_path):
+    rows = [(i, 100 + i, f"{i}.jpg", 3, None if i <= 6 else b"abc", "Timeline", {}) for i in range(1, 11)]
+    db, _ = make_library(tmp_path, rows)
+    for apply in (False, True):
+        report = verify.verify([db], apply=apply)
+        assert report["creators"][0]["left_alone"]
+        assert report["totals"]["media_to_reset"] == 0
+        assert report["creators"][0]["files_to_move_aside"] == 0
+
+
+def test_expired_stories_do_not_count_toward_the_guard(tmp_path):
+    rows = [(i, 100 + i, f"s{i}.jpg", 3, None, "Stories", {}) for i in range(1, 7)]
+    rows += [(i, 100 + i, f"{i}.jpg", 3, b"abc", "Timeline", {}) for i in range(7, 11)]
+    rows += [(11, 111, "gone.jpg", 3, None, "Timeline", {})]
+    db, _ = make_library(tmp_path, rows)
+    (creator,) = verify.verify([db], apply=True)["creators"]
+    assert "left_alone" not in creator and creator["media_reset"] == 1

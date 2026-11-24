@@ -102,3 +102,66 @@ def test_a_row_changed_meanwhile_changes_nothing(library, server, tmp_path, monk
     monkeypatch.setattr(creator_rows.PostgresRows, "change", real)
     assert medias(URL) == before
     assert (lib / "empty.jpg").exists() and not list(tmp_path.glob("*.verify-undo-*"))
+
+
+def apply_for_undo(tmp_path, **choices):
+    undo_dir = tmp_path / "undo"
+    undo_dir.mkdir()
+    report = verify.verify_postgres(URL, "5", apply=True, undo_dir=undo_dir, **choices)
+    return report["creators"][0]["undo_file"]
+
+
+def test_an_undo_file_from_another_database_restores_nothing(library, server, tmp_path):  # noqa: F811
+    import json
+
+    server.bring_in(tmp_path / ".data", tmp_path / "staging")
+    _, lib = library
+    undo_file = apply_for_undo(tmp_path)
+    after_apply = medias(URL)
+    record = json.loads(open(undo_file, encoding="utf-8").read())
+    assert record["database"] == "db.example:5433/library"
+    # as an undo file made on another database would be: its rows aren't these
+    record["database"] = "other.example:5432/library"
+    record["rows"][0]["filename"] = "another.jpg"
+    with open(undo_file, "w", encoding="utf-8") as output:
+        json.dump(record, output)
+    with pytest.raises(ValueError, match="made on other.example:5432/library") as error:
+        verify.undo_postgres(URL, "5", undo_file, apply=True)
+    assert "Nothing was restored" in str(error.value)
+    assert medias(URL) == after_apply
+    assert (lib / "empty.jpg.bad").exists() and not (lib / "empty.jpg").exists()
+
+
+def test_an_undo_that_fails_partway_puts_the_renames_back(library, server, tmp_path, monkeypatch):  # noqa: F811
+    import os
+
+    server.bring_in(tmp_path / ".data", tmp_path / "staging")
+    _, lib = library
+    undo_file = apply_for_undo(tmp_path, reset_size_differs=True)
+    after_apply = medias(URL)
+    real = os.rename
+    calls = []
+
+    def second_fails(src, dst):
+        calls.append(src)
+        if len(calls) == 2:
+            raise OSError("in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(verify.os, "rename", second_fails)
+    with pytest.raises(OSError, match="in use"):
+        verify.undo_postgres(URL, "5", undo_file, apply=True)
+    monkeypatch.undo()
+    assert medias(URL) == after_apply
+    assert sorted(p.name for p in lib.glob("*.bad")) == ["edited.jpg.bad", "empty.jpg.bad"]
+    assert verify.undo_postgres(URL, "5", undo_file, apply=True)["files_to_rename_back"] == 2
+
+
+def test_apply_skips_a_creator_without_a_medias_table(library, server, tmp_path, monkeypatch):  # noqa: F811
+    import ofscraper.db.creator_rows as creator_rows
+
+    server.bring_in(tmp_path / ".data", tmp_path / "staging")
+    monkeypatch.setattr(creator_rows.PostgresRows, "tables", lambda self: {"posts"})
+    report = verify.verify_postgres(URL, "5", apply=True, undo_dir=tmp_path)
+    assert report["creators"][0]["skipped"] == "no medias table"
+    assert not list(tmp_path.glob("*.verify-undo-*"))

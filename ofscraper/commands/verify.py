@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import sys
 import uuid
 from collections import Counter, defaultdict
@@ -26,6 +27,7 @@ import ofscraper.db.postgres as postgres
 import ofscraper.sites as sites
 from ofscraper.commands.recover_collisions import (
     MEANWHILE,
+    _from_another_system,
     _remove_unused,
     _undo_folder,
     _unconfirmed,
@@ -58,6 +60,14 @@ NOT_IN_DATABASE = re.compile(
     re.IGNORECASE,
 )
 SYSTEM_FILES = {"thumbs.db", "desktop.ini", ".ds_store"}
+# said when the command is given files while PostgreSQL is on (#631)
+FILES_NOTICE = (
+    f"PostgreSQL is on ({postgres.URL_KEY} is set), but verify works on the"
+    " user_data.db files it was given, not PostgreSQL. They hold nothing"
+    " scraped since PostgreSQL was turned on, and what --apply changes in"
+    " them does not reach PostgreSQL. To check PostgreSQL, give --postgres"
+    " and --creator in place of the files. See POSTGRESQL.md."
+)
 
 
 def _optional(rows, table, column):
@@ -73,6 +83,11 @@ def _deleted_posts(rows):
 def _full_path(directory, filename, path_root, mappings):
     path = os.path.join(directory or "", filename)
     path = map_path(path, mappings) if mappings else path
+    if not os.path.isabs(path) and _from_another_system(Path(path)):
+        raise ValueError(
+            f"{path} is a full path on another system: give --path-map RECORDED=HERE"
+            " to read it as a path here"
+        )
     if not os.path.isabs(path):
         if path_root is None:
             raise ValueError("Relative recorded paths require --path-root (the original working directory)")
@@ -93,9 +108,12 @@ def file_hash(path):
 
 def _check(path, recorded_size, recorded_hash=None, hashing=False):
     try:
-        actual = os.stat(path).st_size
+        found = os.stat(path)
     except (FileNotFoundError, NotADirectoryError):
         return MISSING, None
+    if not stat.S_ISREG(found.st_mode):
+        return MISSING, None
+    actual = found.st_size
     if actual == 0:
         return EMPTY, 0
     if recorded_size not in (None, 0) and int(recorded_size) != actual:
@@ -103,6 +121,16 @@ def _check(path, recorded_size, recorded_hash=None, hashing=False):
     if hashing and recorded_hash and file_hash(path) != str(recorded_hash):
         return HASH_DIFFERS, actual
     return OK, actual
+
+
+def _not_a_file(path):
+    """Why a download can't put a file at this path, or None: a link to a
+    file that isn't there (its drive may not be connected), or a folder."""
+    if os.path.islink(path) and not os.path.exists(path):
+        return "the recorded path is a link to a file that isn't there"
+    if os.path.lexists(path) and not os.path.isfile(path):
+        return "the recorded path is a folder or another kind of file, not a file"
+    return None
 
 
 def _not_recoverable(api_type, post_id, unlocked, deleted_posts):
@@ -139,11 +167,14 @@ def scan(rows, options):
             continue
         paths = {}
         first = {}
+        reasons = []
         no_hash = False
         for _, post_id, directory, filename, size, _, api_type, _, unlocked, recorded in group:
             if not (filename or "").strip():
                 continue
             path = _full_path(directory, filename, path_root, mappings)
+            # a reset brings the media back if any of its rows can
+            reasons.append(_not_recoverable(api_type, post_id, unlocked, deleted))
             if path not in paths:
                 paths[path] = _check(path, size, recorded, hashing)
                 first[path] = (size, post_id, api_type, unlocked)
@@ -155,7 +186,8 @@ def scan(rows, options):
         if finding != OK:
             entry["shown"] = {"finding": finding, "media_id": media_id, "post_id": str(post_id),
                               "area": api_type, "path": path, "recorded_size": size, "size": actual}
-            why = _not_recoverable(api_type, post_id, unlocked, deleted)
+            blocked = [why for why in map(_not_a_file, paths) if why]
+            why = blocked[0] if blocked else (None if None in reasons else reasons[0])
             if why:
                 entry["shown"]["not_recoverable"] = why
                 entry["not_recoverable"] = why
@@ -166,7 +198,9 @@ def scan(rows, options):
 def _guard(found):
     """Why --apply should leave this creator alone, or None: when most of
     its files are missing, the drive or share is likely not connected."""
-    with_file = [e for e in found.values() if e["paths"]]
+    # what a reset leaves alone anyway (expired stories, say) says nothing
+    # about the drive
+    with_file = [e for e in found.values() if e["paths"] and not e.get("not_recoverable")]
     missing = sum(1 for e in with_file if e["finding"] == MISSING)
     if not with_file or missing <= MOSTLY_MISSING * len(with_file):
         return None
@@ -283,6 +317,8 @@ def _plan(report, found, options):
     guard = None if options["allow_mostly_missing"] else _guard(found)
     if guard:
         report["left_alone"] = guard
+        report["media_to_reset"] = 0
+        report["files_to_move_aside"] = 0
         return None
     return resetting, moving
 
@@ -399,17 +435,25 @@ def verify(databases, path_root=None, mappings=(), sample=20, apply=False, **cho
     """Check every creator in these files or folders; with apply, reset."""
     options = _options(path_root, mappings, sample, **choices)
     report = {"applied": apply, "creators": [], "totals": Counter()}
-    for rows in creator_rows.files(databases):
-        if apply:
-            result = _apply_file(rows.path, options)
-        else:
-            with closing(rows):
-                result = _preview(rows, options)
-        _add(report, result)
+    try:
+        for rows in creator_rows.files(databases):
+            if apply:
+                result = _apply_file(rows.path, options)
+            else:
+                with closing(rows):
+                    result = _preview(rows, options)
+            _add(report, result)
+    except BaseException as error:
+        # the creators done before this one stay changed: say which
+        if any(c.get("undo_file") for c in report["creators"]):
+            error.verify_report = _finish(report)
+        raise
     return _finish(report)
 
 
 def _apply_postgres(rows, options, undo_dir, database):
+    if "medias" not in rows.tables():
+        return {"database": rows.name, "skipped": "no medias table"}
     found = scan(rows, options)
     report = _report(rows, found, options)
     planned = _plan(report, found, options)
@@ -513,6 +557,20 @@ def _renames_to_undo(renames):
             if os.path.lexists(target) and not os.path.lexists(path)]
 
 
+def _rename_back(renames):
+    """Give each file moved aside its name back. If one fails, those already
+    renamed are moved aside again, to match the database, which isn't changed
+    either; the undo file still names them all."""
+    done = []
+    try:
+        for path, target in renames:
+            os.rename(target, path)
+            done.append([target, path])
+    except BaseException:
+        _move_back(done)
+        raise
+
+
 def undo(undo_file, apply=False):
     """Put back what a --apply on a user_data.db changed: rows reset since
     are marked downloaded again, and files moved aside get their names back."""
@@ -534,8 +592,7 @@ def undo(undo_file, apply=False):
             if apply:
                 count = sum(conn.execute(f"UPDATE medias SET downloaded = 1 WHERE {condition}", r).rowcount
                             for r in rows)
-                for path, target in renames:
-                    os.rename(target, path)
+                _rename_back(renames)
             else:
                 count = sum(conn.execute(f"SELECT COUNT(*) FROM medias WHERE {condition}", r).fetchone()[0]
                             for r in rows)
@@ -543,6 +600,9 @@ def undo(undo_file, apply=False):
 
 
 def undo_postgres(database_url, creator, undo_file, site=None, apply=False):
+    """undo for a creator's rows in PostgreSQL. All of the recorded rows are
+    restored or none: a row that is no longer as the reset left it (or
+    downloaded again with the same file) stops it."""
     record = _read_undo(undo_file)
     if record["source"] != POSTGRESQL:
         raise ValueError("Undo file was written for a user_data.db: give it without --postgres")
@@ -564,18 +624,35 @@ def undo_postgres(database_url, creator, undo_file, site=None, apply=False):
         current = {(str(r[1]), str(r[2])): tuple(r)
                    for r in rows.select("medias", ["id", *PG_ROW, "downloaded"], "media_id IS NOT NULL")}
         restoring = []
+        changed = 0
         for row in wanted:
             now = current.get((str(row["media_id"]), str(row["post_id"])))
-            if now and now[5] == 0 and (now[3], now[4]) == (row["directory"], row["filename"]):
+            if not now or (now[3], now[4]) != (row["directory"], row["filename"]) or now[5] not in (0, 1):
+                changed += 1
+            elif now[5] == 0:
                 restoring.append(now)
+            # else downloaded again, with the file it had: nothing to restore
+        if changed:
+            made_on = record.get("database")
+            database = _database_name(database_url)
+            # a hint only: the same database can go by another address
+            elsewhere = (
+                f": the undo file was made on {made_on}, this is {database}"
+                if isinstance(made_on, str) and database and made_on != database
+                else ""
+            )
+            raise ValueError(
+                f"{changed} of the undo file's {len(wanted)} rows are no longer as"
+                " the reset left them (media downloaded again since, or"
+                f" another database{elsewhere}). Nothing was restored"
+            )
         renames = _renames_to_undo(record["renames"])
         if apply:
             for now in restoring:
                 was = {"downloaded": 0, "directory": now[3], "filename": now[4]}
                 if not rows.change("medias", now[0], was, {"downloaded": 1}):
                     raise postgres.ChangedMeanwhile(MEANWHILE)
-            for path, target in renames:
-                os.rename(target, path)
+            _rename_back(renames)
             try:
                 rows.commit()
             except BaseException as error:
@@ -599,6 +676,20 @@ def _add(report, result):
 def _finish(report):
     report["totals"] = dict(report["totals"])
     return report
+
+
+def _done_before(error):
+    """What creators done before a failure changed, with their undo files;
+    the report of them goes to stdout. Empty when none was changed."""
+    report = getattr(error, "verify_report", None)
+    if not report:
+        return ""
+    print(json.dumps(report, indent=2))
+    undo_files = [c["undo_file"] for c in report["creators"] if c.get("undo_file")]
+    return (
+        "Creators checked before this one were changed. Each change can be put back"
+        " with --undo and its undo file:\n" + "".join(f"  {f}\n" for f in undo_files)
+    )
 
 
 def main(argv=None):
@@ -651,6 +742,8 @@ def main(argv=None):
             parser.error("--undo takes the database from the undo file; give no database with it")
     elif not args.databases:
         parser.error("give user_data.db files or folders, or --postgres and --creator")
+    elif database_url:
+        print(f"warning: {FILES_NOTICE}", file=sys.stderr)
 
     choices = {"reset_size_differs": args.reset_size_differs,
                "allow_mostly_missing": args.allow_mostly_missing, "hash": args.hash,
@@ -670,11 +763,12 @@ def main(argv=None):
                 args.databases, args.path_root, mappings, args.sample, apply=args.apply, **choices,
             )
     except postgres.Unconfirmed as error:
-        parser.exit(130 if error.interrupted else 1, f"Verify failed: {error}\n")
-    except KeyboardInterrupt:
-        parser.exit(130, "Stopped. Nothing was changed.\n")
+        parser.exit(130 if error.interrupted else 1, f"Verify failed: {error}\n{_done_before(error)}")
+    except KeyboardInterrupt as error:
+        done = _done_before(error)
+        parser.exit(130, f"Stopped. {done or 'Nothing was changed.'}\n")
     except (OSError, sqlite3.Error, ValueError, creator_rows.NotFound, postgres.PostgresUnavailable) as error:
-        parser.exit(1, f"Verify failed: {error}\n")
+        parser.exit(1, f"Verify failed: {error}\n{_done_before(error)}")
     print(json.dumps(result, indent=2))
     return 0
 
