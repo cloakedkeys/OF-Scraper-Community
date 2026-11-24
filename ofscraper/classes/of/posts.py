@@ -272,6 +272,13 @@ class Post(base.base):
         return str(value) if value else None
 
     @property
+    def highlight_id(self):
+        """The id of the OnlyFans highlight the story was scraped from
+        (``highlightId``, added by the highlights scrape), else None."""
+        value = self._post.get("highlightId")
+        return int(value) if str(value or "").isdigit() else None
+
+    @property
     def db_mentions(self):
         """The Fansly ``accountMentions`` list as JSON, as the API sent it.
 
