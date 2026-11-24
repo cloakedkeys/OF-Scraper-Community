@@ -104,20 +104,28 @@ def write_config(updated_config):
         f.write(json.dumps(updated_config, indent=4))
 
 
+# where database_url has been written: its older top-level name, then its own
+DATABASE_URL_PATHS = ("database_url", "advanced_options.database_url")
+
+
 def _database_url_written(config):
-    """True when a config.json holds something other than the note where the
-    note goes: an address someone wrote there, which isn't read."""
+    """The path of what a config.json holds other than the note where the
+    note goes: an address someone wrote there, which isn't read. Else None."""
     config = config.get("config") or config
-    written = data._first(config, "database_url", "advanced_options.database_url")
-    return bool(written) and written != data.DATABASE_URL_NOTE
+    for path in DATABASE_URL_PATHS:
+        written = data._lookup(config, path)
+        if written:
+            return path if written != data.DATABASE_URL_NOTE else None
+    return None
 
 
 def auto_update_config(config: dict) -> dict:
     log.info("Auto updating config...")
-    if _database_url_written(config):
+    written = _database_url_written(config)
+    if written:
         # said without the value: it may hold a password
         _notes.append(
-            "advanced_options.database_url in config.json is not read, and"
+            f"{written} in config.json is not read, and"
             " what was written there has been replaced by a note. To use"
             " PostgreSQL, set the OFSC_DATABASE_URL environment variable"
             " (see POSTGRESQL.md)."
@@ -150,7 +158,8 @@ def _leaves(config):
     """{"key" or "section.key": value} for a config's settings"""
     out = {}
     for key, value in config.items():
-        if isinstance(value, dict):
+        # an empty section is kept, so one nothing reads is named too
+        if isinstance(value, dict) and value:
             out.update({f"{key}.{sub}": v for sub, v in value.items()})
         else:
             out[key] = value
@@ -167,9 +176,11 @@ def rewrite_notes(old, new, defaults, reads):
     new_leaves, default_leaves = _leaves(new), _leaves(defaults)
     for path, value in _leaves(old).items():
         # has its own warning, without the address (it holds a password)
-        if path == "advanced_options.database_url":
+        if path in DATABASE_URL_PATHS:
             continue
         if isinstance(new.get(path), dict):
+            if value == {}:
+                continue  # an empty section, filled in with the defaults
             notes.append(
                 f'config.json: "{path}" should hold settings but holds'
                 f" {_json_type(value)}, so its settings were reset to the defaults"

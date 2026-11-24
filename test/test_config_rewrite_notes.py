@@ -182,6 +182,38 @@ def test_an_address_in_database_url_keeps_only_its_own_warning(config_path, logg
     assert "s3cr3t" not in " ".join(logged)
 
 
+def test_an_address_in_the_older_top_level_database_url_has_one_warning(config_path, logged):
+    config = defaults()
+    config["database_url"] = "postgresql://u:s3cr3t@h/db"
+
+    start_with(config_path, config)
+
+    assert len(notes(logged)) == 1
+    assert "database_url in config.json is not read" in notes(logged)[0]
+    assert "s3cr3t" not in " ".join(logged)
+
+
+def test_an_empty_section_nothing_reads_is_named(config_path, logged):
+    config = defaults()
+    config["unknown_options"] = {}
+
+    saved = start_with(config_path, config)
+
+    said = notes(logged)
+    assert len(said) == 1 and '"unknown_options"' in said[0]
+    assert "unknown_options" not in saved
+
+
+def test_an_empty_section_that_is_a_setting_is_filled_in_without_a_word(config_path, logged):
+    config = defaults()
+    config["file_options"] = {}
+
+    saved = start_with(config_path, config)
+
+    assert notes(logged) == []
+    assert saved["file_options"] == defaults()["file_options"]
+
+
 def test_a_current_name_hidden_by_an_older_one_is_named(config_path, logged):
     # the older top-level name is looked at first, so its value wins
     config = defaults()
