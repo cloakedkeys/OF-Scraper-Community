@@ -84,8 +84,15 @@ def _ts_crash(path: str) -> str | None:
     return stop_reason(result.returncode)
 
 
+def _same_binary(path: str) -> str:
+    """``path`` as the file it names, so one ffmpeg found by two spellings
+    (relative and absolute, a symbolic link, another case on Windows) is
+    one."""
+    return os.path.normcase(os.path.realpath(shutil.which(path) or path))
+
+
 def _is_valid_ffmpeg(path: str | None) -> bool:
-    if path and path in _crashed:
+    if path and _same_binary(path) in map(_same_binary, _crashed):
         return False  # already checked in this search, e.g. config.json names the one on PATH
     return _check_ffmpeg(path)
 

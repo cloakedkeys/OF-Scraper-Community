@@ -12,6 +12,7 @@
 
 import asyncio
 import contextlib
+import os
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -274,6 +275,38 @@ def test_the_same_crashing_ffmpeg_is_checked_once(lookup, caplog, monkeypatch):
     with caplog.at_level("WARNING"):
         assert ffmpeg.get_ffmpeg() == "/static/ffmpeg"
     assert checked == ["/static/ffmpeg"]
+    assert caplog.text.count("reading a small test video") == 1
+
+
+@pytest.mark.parametrize("spelling", ["relative", "symlink"])
+def test_one_crashing_ffmpeg_spelt_two_ways_is_checked_once(
+    lookup, caplog, monkeypatch, tmp_path, spelling
+):
+    # config.json names the ffmpeg on PATH by another path to the same file
+    binary = tmp_path / "bin" / "ffmpeg"
+    binary.parent.mkdir()
+    binary.write_bytes(b"")
+    if spelling == "relative":
+        monkeypatch.chdir(tmp_path)
+        configured = os.path.join("bin", "ffmpeg")
+    else:
+        link = tmp_path / "ffmpeg-link"
+        try:
+            link.symlink_to(binary)
+        except OSError:
+            pytest.skip("symbolic links can't be made here")
+        configured = str(link)
+    monkeypatch.setattr(
+        ffmpeg.settings, "get_settings", lambda: SimpleNamespace(ffmpeg=configured)
+    )
+    lookup.crashes = {configured, str(binary)}
+    lookup.on_path = str(binary)
+    checked = []
+    crash = ffmpeg._ts_crash
+    monkeypatch.setattr(ffmpeg, "_ts_crash", lambda path: checked.append(path) or crash(path))
+    with caplog.at_level("WARNING"):
+        assert ffmpeg.get_ffmpeg() == configured
+    assert checked == [configured]
     assert caplog.text.count("reading a small test video") == 1
 
 
