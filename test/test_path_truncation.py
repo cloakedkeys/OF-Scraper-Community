@@ -16,6 +16,13 @@ CAPTION = "Look at this sunset fading behind the bay! 💀🪄 #fyp #beach #ocea
 def windows_sizes(monkeypatch):
     # the defaults, measured as on Windows whatever runs the test
     monkeypatch.delenv("UTF", raising=False)
+    # the settings keep the environment they were last read in, and a test
+    # that sets UTF can leave them read with it: read them again without,
+    # before the test and after it
+    paths.of_env.getkeys(forced=True)
+    yield
+    monkeypatch.undo()
+    paths.of_env.getkeys(forced=True)
 
 
 def cut(path):
@@ -149,6 +156,15 @@ def test_a_caption_whose_first_character_does_not_fit_is_dropped(name_env, monke
     monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "7")
     out = name_env("{text} {media_id}.{ext}", "💀" * 100)
     assert [p.name for p in out] == [f" {70 + i}.jpg" for i in range(3)]
+
+
+def test_a_caption_cut_to_nothing_keeps_an_underscored_unique_part(name_env, monkeypatch):
+    # "_70.jpg" looks like a "_1"-style number and an extension, but it's a
+    # name: with no room for the caption, the media id is still kept
+    monkeypatch.setenv("UTF", "utf-8")
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "7")
+    out = name_env("{text}_{media_id}.{ext}", "💀" * 100)
+    assert [p.name for p in out] == [f"_{70 + i}.jpg" for i in range(3)]
 
 
 def test_a_caption_is_not_cut_to_a_name_with_nothing_before_the_extension(

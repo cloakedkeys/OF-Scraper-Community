@@ -273,8 +273,7 @@ class Placeholders(basePlaceholder):
         turns shortening off."""
 
         def fits(name):
-            if not paths._split_ext(name)[0].strip():
-                # nothing before the extension: a nameless ".jpg" is no fit
+            if name is None:
                 return False
             try:
                 return paths.truncate(pathlib.Path(dir, name)).name == name
@@ -301,7 +300,13 @@ class Placeholders(basePlaceholder):
         return self._name_with_text(text[:low])
 
     def _name_with_text(self, text):
+        """The name with this caption, or None when nothing is left before
+        the extension: a nameless ".jpg" is no name, nor is the "_1.jpg" a
+        count makes of it (the count repeats in every post), but "_70.jpg"
+        from "{text}_{media_id}" is."""
         out = data.get_fileformat().format(**{**self._variables, "text": text.rstrip()})
+        if not re.sub(r"\.[a-z4]*$", "", out, flags=re.IGNORECASE).strip():
+            return None
         return self._addcount(self._ele, out)
 
     def add_price_variables(self, username):
