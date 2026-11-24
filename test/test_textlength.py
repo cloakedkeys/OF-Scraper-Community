@@ -85,3 +85,28 @@ def test_word_mode_counts_existing_replacer_chars_as_breaks(fake_settings):
     # can't be told apart from a replaced space once file_cleanup has run
     fake_settings(text_length=2, text_type="word", space_replacer="_")
     assert base().text_trunicate("snake_case_title_here") == "snake_case"
+
+
+@pytest.mark.parametrize(
+    "text_type,text,length,unit",
+    [("letter", "abcdefghij", 5, "letters"), ("word", "one two three", 2, "words")],
+)
+def test_a_cut_logs_the_unit(fake_settings, caplog, text_type, text, length, unit):
+    fake_settings(text_length=length, text_type=text_type)
+    with caplog.at_level("DEBUG", logger="shared"):
+        base().text_trunicate(text)
+    assert f"{{text}} cut to {length} {unit} (text_type_default: {text_type})" in caplog.text
+
+
+def test_text_that_fits_logs_no_cut(fake_settings, caplog):
+    fake_settings(text_length=50, text_type="letter")
+    with caplog.at_level("DEBUG", logger="shared"):
+        base().text_trunicate("short")
+    assert "cut to" not in caplog.text
+
+
+def test_a_trailing_separator_alone_is_not_logged_as_a_cut(fake_settings, caplog):
+    fake_settings(text_length=50, text_type="letter", space_replacer="_")
+    with caplog.at_level("DEBUG", logger="shared"):
+        assert base().text_trunicate("Good_") == "Good"
+    assert "cut to" not in caplog.text

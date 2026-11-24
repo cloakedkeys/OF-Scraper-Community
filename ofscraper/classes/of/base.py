@@ -1,4 +1,5 @@
 import importlib
+import logging
 import re
 
 from bs4 import BeautifulSoup
@@ -6,6 +7,7 @@ from bs4 import BeautifulSoup
 import ofscraper.utils.settings as settings
 
 html_parser = "lxml" if importlib.util.find_spec("lxml") else "html.parser"
+log = logging.getLogger("shared")
 
 
 class base:
@@ -22,7 +24,9 @@ class base:
         if length == 0:
             return text
         sep = settings.get_settings().space_replacer or " "
-        if settings.get_settings().text_type == "letter":
+        text_type = settings.get_settings().text_type
+        if text_type == "letter":
+            cut = len(text) > length
             text = "".join(list(text)[:length])
         else:
             # text has usually been through file_cleanup already, which swaps
@@ -32,9 +36,15 @@ class base:
             # break; the original spaces can't be told apart at this point.
             word_sep = sep if sep in text else " "
             words = [x for x in text.split(word_sep) if x]
+            cut = len(words) > length
             text = word_sep.join(words[:length])
         # a cut can end on a separator; don't leave "Good_" or "Good "
         text = re.sub(f"(?:{re.escape(sep)}| )+$", "", text)
+        if cut:
+            unit = "letters" if text_type == "letter" else "words"
+            log.debug(
+                f"{{text}} cut to {length} {unit} (text_type_default: {text_type})"
+            )
         return text
 
     def file_cleanup(self, text):
