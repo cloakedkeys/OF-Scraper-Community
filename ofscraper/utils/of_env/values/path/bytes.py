@@ -29,7 +29,7 @@ def load_path_bytes_config():
     # Default: 2
     config["NORMAL_CHAR_SIZE_UNIX"] = int(os.getenv("NORMAL_CHAR_SIZE_UNIX", "2"))
 
-    # UTF: Encoding name (for example `utf-8`) used to measure exact path byte length instead of the default measure: the `*_CHAR_SIZE_UNIX` estimates on Linux, UTF-16 on Windows.
+    # UTF: Encoding name (for example `utf-8`) used to measure exact path byte length on Linux, instead of the `*_CHAR_SIZE_UNIX` estimates. Not used on Windows, where path length is always counted in UTF-16 units.
     #
     # If set via environment, it will be a string; otherwise, it remains None.
     config["UTF"] = os.getenv("UTF", None)

@@ -192,7 +192,9 @@ def get_string_byte_size_windows(text):
     """
     The size of a string as Windows counts a path: 2 bytes for each UTF-16
     code unit, so 4 for a character outside the Basic Multilingual Plane
-    (an emoji) and 2 for any other.
+    (an emoji) and 2 for any other. `UTF` isn't used here: the limit,
+    WINDOWS_MAX_PATH_BYTES, is in these units, so any other count would let
+    a path past MAX_PATH.
 
     Args:
         text: The string to analyze.
@@ -200,11 +202,7 @@ def get_string_byte_size_windows(text):
     Returns:
         The byte size of the string.
     """
-    text = str(text)
-    utf = of_env.getattr("UTF")
-    if utf:
-        return len(text.encode(utf))
-    return len(text.encode("utf-16-le"))
+    return len(str(text).encode("utf-16-le"))
 
 
 def cleanDB():

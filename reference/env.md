@@ -313,7 +313,7 @@ Defined in `ofscraper/utils/of_env/values/path/bytes.py`.
 |---|---|
 | <a id="special_char_size_unix"></a>`SPECIAL_CHAR_SIZE_UNIX` | **Default:** `4`. Estimated byte size per non-ASCII character when measuring path length on Unix-like systems (used when `UTF` is unset). |
 | <a id="normal_char_size_unix"></a>`NORMAL_CHAR_SIZE_UNIX` | **Default:** `2`. Estimated byte size per ASCII character when measuring path length on Unix-like systems (used when `UTF` is unset). |
-| <a id="utf"></a>`UTF` | **Default:** `None`. Encoding name (for example `utf-8`) used to measure exact path byte length instead of the default measure: the `*_CHAR_SIZE_UNIX` estimates on Linux, UTF-16 on Windows. |
+| <a id="utf"></a>`UTF` | **Default:** `None`. Encoding name (for example `utf-8`) used to measure exact path byte length on Linux, instead of the `*_CHAR_SIZE_UNIX` estimates. Not used on Windows, where path length is always counted in UTF-16 units. |
 
 ## Network, retries and rate limits
 

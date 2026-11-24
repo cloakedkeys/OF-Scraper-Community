@@ -125,3 +125,12 @@ def test_a_linux_extension_over_the_name_limit_says_so(monkeypatch):
     monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "3")
     with pytest.raises(ValueError, match="no room"):
         paths._linux_truncateHelper("/data/.txt")
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "ascii"])
+def test_utf_does_not_change_how_windows_counts_a_path(monkeypatch, encoding):
+    # the limit is 2 bytes a UTF-16 unit: measured in UTF-8, a path of up to
+    # 518 characters would pass, twice what MAX_PATH allows
+    monkeypatch.setenv("UTF", encoding)
+    out = cut(f"{FOLDER}\\{'a' * 400}.txt")
+    assert windows_chars(out) == 259
