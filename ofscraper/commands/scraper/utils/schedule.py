@@ -76,6 +76,10 @@ def set_schedule(*functs, wakeup=None):
             job = schedule.every().day.at(next.format("HH:mm:ss")).do(
                 schedule_helper, *functs, wakeup=wakeup
             )
+            # .day.at() picks the next time that clock time comes round, so a
+            # wait of a day or more (--daemon 1440 with jitter) would run
+            # within the day: the job runs once, at the time worked out here
+            job.next_run = next.naive
             if wakeup is not None:
                 wakeup.state = "idle"
             while len(schedule.jobs) > 0 and (wakeup is None or not wakeup.stopped):

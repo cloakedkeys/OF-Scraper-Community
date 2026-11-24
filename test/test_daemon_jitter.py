@@ -70,3 +70,34 @@ def test_cli_parses_daemon_jitter_and_rejects_negative():
 
     with pytest.raises(Exception):
         main_cmd.program.make_context("ofscraper", ["--daemon", "30", "--daemon-jitter", "-1"])
+
+
+def test_a_wait_over_a_day_isnt_wrapped_to_the_same_day(monkeypatch):
+    # --daemon 1440 --daemon-jitter 30: the next pass is in 24.5 hours, not
+    # at the same clock time later today
+    fixed_now = arrow.now(daemon_schedule.tz.tzlocal()).replace(microsecond=0)
+    wakeup = daemon_schedule.DaemonWakeup()
+    scheduled = []
+
+    class OnePassQueue:
+        def join(self):
+            pass
+
+    def sleep(_s):
+        scheduled.extend(job.next_run for job in daemon_schedule.schedule.jobs)
+        wakeup.stopped = True
+
+    monkeypatch.setattr(daemon_schedule, "jobqueue", OnePassQueue())
+    monkeypatch.setattr(daemon_schedule.arrow, "now", lambda tz=None: fixed_now)
+    monkeypatch.setattr(daemon_schedule.random, "uniform", lambda a, b: 30.0)
+    monkeypatch.setattr(
+        daemon_schedule.settings, "get_settings",
+        lambda: SimpleNamespace(daemon=1440.0, daemon_jitter=30.0),
+    )
+    monkeypatch.setattr(daemon_schedule.status_file, "set_next_pass", lambda dt: None)
+    monkeypatch.setattr(daemon_schedule.time, "sleep", sleep)
+    try:
+        daemon_schedule.set_schedule(lambda: None, wakeup=wakeup)
+    finally:
+        daemon_schedule.schedule.clear()
+    assert scheduled == [fixed_now.shift(minutes=1470).naive]
