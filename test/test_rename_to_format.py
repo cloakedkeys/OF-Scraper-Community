@@ -764,6 +764,66 @@ def test_the_row_of_another_media_that_records_the_same_file_keeps_its_name(tmp_
     assert library.rows() == [(1, str(path.parent), "1.jpg"), (99, str(path.parent), "abcdef.jpg")]
 
 
+@pytest.mark.parametrize("normcase", [None, str.lower], ids=["macos", "windows"])
+def test_a_collided_row_spelt_as_the_new_name_on_a_disk_that_ignores_case_doesnt_stop_the_rename(
+        tmp_path, monkeypatch, normcase):
+    """The row of another media (downloaded = 0) that records the file
+    already spelt as its new name doesn't make the downloaded one's
+    differently spelt file and row unchanged."""
+    library = Library(tmp_path)
+    path = library.add("abcdef.jpg", link="https://cdn.example/files/x/y/ABCDEF.jpg?Tag=1")
+    library.add("ABCDEF.jpg", media_id=99, downloaded=0, on_disk=False)
+    monkeypatch.setattr(tool, "os", CaseFoldingOS(normcase))
+
+    result = library.run(apply=True)
+
+    assert (result["unchanged"], result["renamed"], result["rows_changed"], result["left"]) == (0, 1, 1, [])
+    assert _entries(path.parent) == ["ABCDEF.jpg"]
+    assert library.rows() == [(1, str(path.parent), "ABCDEF.jpg"), (99, str(path.parent), "ABCDEF.jpg")]
+
+
+@pytest.mark.parametrize("normcase", [None, str.lower], ids=["macos", "windows"])
+def test_a_file_spelt_otherwise_than_its_row_on_a_disk_that_ignores_case_is_renamed(
+        tmp_path, monkeypatch, normcase):
+    """A row that already records the new name doesn't make the file
+    unchanged while the disk spells its name otherwise."""
+    library = Library(tmp_path)
+    path = library.add("abcdef.jpg")
+    path.rename(path.with_name("ABCDEF.jpg"))
+    monkeypatch.setattr(tool, "os", CaseFoldingOS(normcase))
+
+    result = library.run(apply=True)
+
+    assert (result["unchanged"], result["renamed"], result["left"]) == (0, 1, [])
+    assert _entries(path.parent) == ["abcdef.jpg"]
+    assert library.rows()[0][1:] == (str(path.parent), "abcdef.jpg")
+    # run again: nothing is left to do
+    assert library.run(apply=True)["unchanged"] == 1
+
+
+@pytest.mark.parametrize("normcase", [None, str.lower], ids=["macos", "windows"])
+def test_rows_spelt_otherwise_than_a_file_that_has_its_new_name_are_changed_and_undone(
+        tmp_path, monkeypatch, normcase):
+    library = Library(tmp_path)
+    path = library.add("ABCDEF.jpg", link="https://cdn.example/files/x/y/abcdef.jpg?Tag=1")
+    path.rename(path.with_name("abcdef.jpg"))
+    rows = library.rows()
+    monkeypatch.setattr(tool, "os", CaseFoldingOS(normcase))
+
+    result = library.run(apply=True)
+
+    assert (result["unchanged"], result["already_there"], result["renamed"], result["rows_changed"],
+            result["left"]) == (0, 1, 0, 1, [])
+    assert _entries(path.parent) == ["abcdef.jpg"]
+    assert library.rows()[0][2] == "abcdef.jpg"
+
+    done = tool.undo(result["undo_file"], apply=True)
+
+    assert (done["renamed_back"], done["rows_restored"], done["left"]) == (0, 1, [])
+    assert _entries(path.parent) == ["abcdef.jpg"]
+    assert library.rows() == rows
+
+
 def test_a_folder_at_the_new_place_is_not_taken_for_the_file(tmp_path):
     library = Library(tmp_path)
     path = library.add("abcdef.jpg", on_disk=False)

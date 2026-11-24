@@ -438,11 +438,17 @@ def plan(conn, settings, username=None, path_root=None):
         files[key(old)].append((old, row))
     taken_by_rows = set(files)
     planned = []
+    folders = {}
     for found in sorted(files.values(), key=lambda found: min(old for old, _row in found)):
-        old = min(old for old, _row in found)
         rows = [row for _old, row in found]
         if not any(row["downloaded"] for row in rows):
             continue
+        # a row of another media that records this file (downloaded = 0: a
+        # collision gave its place to this one) keeps its name, and doesn't
+        # say how the file is spelt
+        downloaded = {row["media_id"] for row in rows if row["downloaded"]}
+        spellings = sorted({old for old, row in found if row["media_id"] in downloaded})
+        old = _spelt_on_disk(spellings[0], key, folders) or spellings[0]
         result["files"] += 1
         new_paths = {built[row["rowid"]] for row in rows if row["rowid"] in built}
         whys = {why for _path, why in new_paths if why}
@@ -455,12 +461,9 @@ def plan(conn, settings, username=None, path_root=None):
             continue
         (recorded_new, _), = new_paths
         new = os.path.abspath(recorded_new)
-        if new == old:
+        if new == old and spellings == [new]:
             result["unchanged"] += 1
             continue
-        # a row of another media that records this file (downloaded = 0: a
-        # collision gave its place to this one) keeps its name
-        downloaded = {row["media_id"] for row in rows if row["downloaded"]}
         changes = [(row["rowid"], row["directory"], row["filename"], str(recorded_new.parent),
                     recorded_new.name, row["size"]) for row in rows if row["media_id"] in downloaded]
         planned.append((old, new, changes))
@@ -474,6 +477,10 @@ def plan(conn, settings, username=None, path_root=None):
             result["left"].append({"file": old, "why": SAME_TARGET, "new_place": new})
         elif key(new) in taken_by_rows and key(new) != key(old):
             result["left"].append({"file": old, "why": RECORDED, "new_place": new})
+        elif new == old and at_old:
+            # the file has its new name already: only rows spell it otherwise
+            result["already_there"] += 1
+            to_do.append(("there", old, new, changes))
         elif at_old:
             if at_new and not _same_file(old, new):
                 result["left"].append({"file": old, "why": TAKEN, "new_place": new})
@@ -521,6 +528,24 @@ def _is_file(path):
         return stat.S_ISREG(os.stat(path).st_mode)
     except OSError:
         return False
+
+
+def _spelt_on_disk(path, key, folders):
+    """`path` with its name spelt as the disk spells it, which on a disk
+    that doesn't tell case apart can differ from how a row spells it; None
+    when it isn't there. `folders` keeps each folder's names once read."""
+    folder = os.path.dirname(path)
+    if folder not in folders:
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            names = []
+        spelt = defaultdict(list)
+        for name in names:
+            spelt[key(os.path.join(folder, name))].append(os.path.join(folder, name))
+        folders[folder] = spelt
+    found = folders[folder].get(key(path), [])
+    return found[0] if len(found) == 1 else None
 
 
 def _two_names(old, new):
