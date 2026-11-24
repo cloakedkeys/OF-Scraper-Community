@@ -173,17 +173,20 @@ def test_original_leaves_a_temp_file_in_a_long_folder_whole(naming, monkeypatch,
     assert temp.tempfilepath.parent.is_dir() and len(str(temp.tempfilepath)) > 300
 
 
-@needs_long_paths
 @pytest.mark.parametrize("options", [(), ("--original",)])
 def test_a_clashing_name_gets_its_media_id_whole_only_with_original(
-    naming, tmp_path, on_windows, options
+    naming, tmp_path, monkeypatch, options
 ):
     import ofscraper.commands.scraper.actions.utils.paths as action_paths
 
     naming("{text}.{ext}", "short", *options)
-    # over Windows' limit with "_71" added, so that gets shortened, unless --original
-    target = tmp_path / "a.jpg"
-    target = target.with_name("a" * (280 - len(str(target))) + ".jpg")
+    # Linux's rules, which read the path as this system does, with a 100-byte
+    # name limit: the name fits it exactly, so with "_71" added it gets
+    # shortened, unless --original
+    monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("UTF", "utf-8")
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "100")
+    target = tmp_path / ("a" * 96 + ".jpg")
     target.write_bytes(b"another file")
     temp = tmp_path / "dl.part"
     temp.write_bytes(b"this download")
