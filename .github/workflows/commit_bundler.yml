@@ -140,8 +140,10 @@ jobs:
           # checked without editing this step. Every tool is tried before the step
           # fails, so one log shows all the tools the bundle is missing.
           # A throwaway HOME keeps --help away from any real config.
+          # tr drops the \r that Python on Windows writes before the newline, which
+          # $() would otherwise leave on the last tool name.
           EXE="${{ steps.build_onefile.outputs.one_file_path }}"
-          TOOLS=$(PYTHONPATH=. .venv/${{ runner.os == 'Windows' && 'Scripts/python.exe' || 'bin/python' }} -c "import ofscraper.commands.tools as t; print(' '.join(t.TOOLS))")
+          TOOLS=$(PYTHONPATH=. .venv/${{ runner.os == 'Windows' && 'Scripts/python.exe' || 'bin/python' }} -c "import ofscraper.commands.tools as t; print(' '.join(t.TOOLS))" | tr -d '\r')
           SMOKE_HOME="$RUNNER_TEMP/ofscraper-smoke-home"
           mkdir -p "$SMOKE_HOME"
           failed=""
