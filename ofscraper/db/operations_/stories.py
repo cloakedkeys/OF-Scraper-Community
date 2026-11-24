@@ -269,7 +269,9 @@ async def make_stories_table_changes(
     if settings.get_settings().metadata and len(curr_posts) > 0:
         curr_posts = convert.converthelper(curr_posts)
         await update_stories_table(curr_posts, model_id=model_id, username=username)
-    if len(curr_posts) > 0:
+    # new rows too: a story in both areas is inserted from its Stories copy,
+    # without a highlight, and its Highlights copy isn't inserted
+    if len(all_stories_filtered) > 0:
         await fill_stories_missing_fields(
-            curr_posts, model_id=model_id, username=username
+            all_stories_filtered, model_id=model_id, username=username
         )

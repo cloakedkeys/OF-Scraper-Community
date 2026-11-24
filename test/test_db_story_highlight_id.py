@@ -190,6 +190,41 @@ def test_a_highlights_scan_fills_in_a_story_saved_from_the_stories_area(
     assert saved(model_db)[0] == (1, HIGHLIGHT_A)
 
 
+def story_check(session=None):
+    """What ``ofscraper story_check`` saves: the Stories and Highlights areas
+    fetched together and written in one batch."""
+    import ofscraper.classes.of.posts as posts_
+
+    session = session or Session()
+
+    async def go():
+        await operations.table_init_create(model_id=MODEL_ID, username=USERNAME)
+        stories = await highlights.get_stories_post(MODEL_ID, c=session)
+        highlights_ = await highlights.get_highlight_post(MODEL_ID, c=session)
+        batch = [posts_.Post(x, MODEL_ID, USERNAME, "stories") for x in stories]
+        batch += [posts_.Post(x, MODEL_ID, USERNAME, "highlights") for x in highlights_]
+        await operations.make_changes_to_content_tables(
+            batch, model_id=MODEL_ID, username=USERNAME
+        )
+
+    asyncio.run(go())
+
+
+def test_story_check_records_the_highlight_of_a_new_story_also_in_stories(
+    onlyfans, model_db
+):
+    # story 1 is both a current story and in a highlight: the Stories copy is
+    # written first, without a highlight
+    story_check()
+
+    assert saved(model_db) == [
+        (1, HIGHLIGHT_A),
+        (2, HIGHLIGHT_A),
+        (3, HIGHLIGHT_B),
+        (4, None),
+    ]
+
+
 # ------------------------------------------------------------------ upgrade
 
 
