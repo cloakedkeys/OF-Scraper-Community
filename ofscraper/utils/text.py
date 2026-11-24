@@ -33,21 +33,25 @@ def _holds(path, content):
         return False
 
 
+# {post_id} and its alias {postid}
+_POST_ID = {"post_id", "postid"}
+
+
 def _own_path(path, ele, content):
     """Where a post's text goes. A file template can give two posts the same
     name, e.g. captions that start with the same textlength words. A file
     with other content at path is another post's, so this post's text goes
     to name_<post_id>, as media go to name_<media_id>. filename_collision
     "overwrite" keeps the old behaviour: the name is used as it is. When
-    file_format or dir_format has {post_id}, the name is the post's own: a
-    number in the caption or the date that only looks like the post id
-    doesn't count."""
+    file_format or dir_format has {post_id} (or {postid}), the name is the
+    post's own: a number in the caption or the date that only looks like
+    the post id doesn't count."""
     path = pathlib.Path(path)
     if (
         str(config_data.get_filename_collision()).lower() == "overwrite"
         or not path.exists()
-        or "post_id" in parse_safe(config_data.get_fileformat())
-        or "post_id" in parse_safe(config_data.get_dirformat())
+        or _POST_ID & parse_safe(config_data.get_fileformat())
+        or _POST_ID & parse_safe(config_data.get_dirformat())
         or _holds(path, content)
     ):
         return path
