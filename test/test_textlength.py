@@ -85,3 +85,22 @@ def test_word_mode_counts_existing_replacer_chars_as_breaks(fake_settings):
     # can't be told apart from a replaced space once file_cleanup has run
     fake_settings(text_length=2, text_type="word", space_replacer="_")
     assert base().text_trunicate("snake_case_title_here") == "snake_case"
+
+
+# A post's media and its text file get the same {text} (#744): real settings,
+# a real post and the real placeholder classes.
+
+from naming_helpers import naming  # noqa: F401  (fixture)
+
+
+@pytest.mark.parametrize(
+    "replacer, expected",
+    [("-", "one-two-three-four"), ("_", "one_two_three_four"),
+     (".", "one.two.three.four"), (" ", "one two three four")],
+)
+def test_media_and_text_files_cut_the_caption_alike(naming, replacer, expected):
+    text, (media,) = naming(
+        "{text}.{ext}", "one two three four five six",
+        "--text-type", "word", "--textlength", "4", "--space-replacer", replacer,
+    )
+    assert (text, media) == (f"{expected}.txt", f"{expected}.jpg")
