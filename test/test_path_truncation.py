@@ -1,6 +1,7 @@
 """Long paths are cut to fit: Windows' 259-character MAX_PATH, Linux's file-name limit."""
 
 import pathlib
+import re
 
 import pytest
 
@@ -176,6 +177,24 @@ def test_a_caption_is_not_cut_to_a_name_with_nothing_before_the_extension(
     monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "7")
     with pytest.raises(ValueError, match="no room"):
         name_env("{text}.{ext}", "💀" * 100)
+
+
+@pytest.mark.parametrize("file_format", ["{text}.mp3", "{text}.3gp"])
+def test_a_caption_is_not_cut_to_nothing_before_an_extension_with_digits(
+    name_env, monkeypatch, file_format
+):
+    # ".mp3" is an extension too: an empty caption would leave the "_1.mp3"
+    # a count makes of it, which repeats in every post. The name is left to
+    # the cut instead (which, reading such extensions as #799 does, says
+    # there's no room)
+    monkeypatch.setenv("UTF", "utf-8")
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "7")
+    try:
+        out = name_env(file_format, "💀" * 100)
+    except ValueError as error:
+        assert "no room" in str(error)
+        return
+    assert not [p.name for p in out if re.fullmatch(r"_[0-9]+\.[a-z0-9]+", p.name)]
 
 
 def test_the_caption_is_left_whole_when_truncation_is_off(name_env, monkeypatch):

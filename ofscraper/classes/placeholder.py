@@ -305,7 +305,7 @@ class Placeholders(basePlaceholder):
         count makes of it (the count repeats in every post), but "_70.jpg"
         from "{text}_{media_id}" is."""
         out = data.get_fileformat().format(**{**self._variables, "text": text.rstrip()})
-        if not re.sub(r"\.[a-z4]*$", "", out, flags=re.IGNORECASE).strip():
+        if not re.sub(r"\.[a-z0-9]{1,10}$", "", out, flags=re.IGNORECASE).strip():
             return None
         return self._addcount(self._ele, out)
 
