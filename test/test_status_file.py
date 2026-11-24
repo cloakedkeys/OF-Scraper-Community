@@ -284,3 +284,49 @@ def test_alerts_state_persists_across_restarts(env_status, monkeypatch, tmp_path
     assert len(sent) == 2
     on_disk = json.loads(env_status.path.read_text(encoding="utf-8"))
     assert "failing_alerts" not in on_disk
+
+
+# --- review follow-up ---------------------------------------------------------
+
+
+def test_a_one_off_run_leaves_a_running_daemons_file_alone(env_status):
+    # docker compose exec ... ofscraper --action download, beside the daemon:
+    # both see the image's OFSC_STATUS_FILE
+    daemon = {
+        "version": 1, "pid": os.getppid(), "mode": "daemon", "state": "idle",
+        "heartbeat": "2026-11-24T10:00:00+00:00", "auth": "ok",
+    }
+    env_status.path.write_text(json.dumps(daemon), encoding="utf-8")
+    with scrape_context.scrape_context_manager():
+        run_record.finish("ok")
+    assert json.loads(env_status.path.read_text(encoding="utf-8")) == daemon
+
+
+def test_a_one_off_run_replaces_a_stopped_daemons_file(env_status):
+    stopped = {"version": 1, "pid": os.getppid(), "mode": "daemon", "state": "stopped"}
+    env_status.path.write_text(json.dumps(stopped), encoding="utf-8")
+    with scrape_context.scrape_context_manager():
+        run_record.finish("ok")
+    assert json.loads(env_status.path.read_text(encoding="utf-8"))["mode"] == "once"
+
+
+def test_status_file_is_readable_by_others_and_no_temp_file_is_left(env_status, monkeypatch):
+    status_file.set_auth("ok")
+    if os.name != "nt":
+        assert env_status.path.stat().st_mode & 0o777 == 0o644
+
+    def interrupted(src, dst):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(status_file.os, "replace", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        status_file._atomic_write(env_status.path, {"state": "running"})
+    assert [p.name for p in env_status.path.parent.iterdir()] == ["status.json"]
+
+
+def test_last_pass_error_is_redacted(env_status):
+    with pytest.raises(RuntimeError):
+        with scrape_context.scrape_context_manager():
+            raise RuntimeError("failed with sess=abc123secret")
+    raw = env_status.path.read_text(encoding="utf-8")
+    assert "abc123secret" not in raw and "sess={sess}" in raw

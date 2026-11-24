@@ -110,6 +110,12 @@ def _atomic_write(path, payload):
         dir=str(path.parent), prefix=".status.", suffix=".tmp"
     )
     try:
+        # mkstemp makes it 0600: health may run as another user (a
+        # monitoring script, Docker's HEALTHCHECK)
+        try:
+            os.chmod(tmp_name, 0o644)
+        except OSError:
+            pass
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
@@ -126,7 +132,7 @@ def _atomic_write(path, payload):
                 if attempt == 4:
                     raise
                 time.sleep(0.01 * (attempt + 1))
-    except Exception:
+    except BaseException:  # a Ctrl+C mid-write leaves no .tmp behind
         try:
             os.unlink(tmp_name)
         except OSError:
@@ -154,9 +160,28 @@ def _payload_locked(extra=None):
     return payload
 
 
+def _live_daemon_owns(existing):
+    """Whether the file belongs to a daemon that is still running in another
+    process: a one-off run beside it (docker compose exec) leaves it alone."""
+    if not existing or existing.get("mode") != "daemon" or existing.get("state") == "stopped":
+        return False
+    pid = existing.get("pid")
+    if not isinstance(pid, int) or pid == os.getpid():
+        return False
+    try:
+        import psutil
+
+        return psutil.pid_exists(pid)
+    except Exception:
+        return False
+
+
 def _write_locked(path=None, extra=None):
     target = pathlib.Path(path) if path is not None else status_path()
     if target is None:
+        return None
+    if _detect_mode() == "once" and _live_daemon_owns(_read_existing(target)):
+        log.debug(f"status file left to the daemon running beside this run ({target})")
         return None
     _ensure_loaded_locked(target)
     payload = _payload_locked(extra=extra)
