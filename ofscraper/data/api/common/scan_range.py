@@ -45,8 +45,25 @@ def range_text(username, area, after):
     fmt = of_env.getattr("API_DATE_FORMAT")
     return (
         f"Setting {area} scan range for {username} from "
-        f"{arrow.get(after).format(fmt)} to {range_end()}"
+        f"{arrow.get(after).format(fmt)} to {range_end()} ({start_source(after)})"
     )
+
+
+def start_source(after):
+    """Where the scan's start came from, for the range line."""
+    current = settings.get_settings()
+    if getattr(current, "after", None) is not None:
+        if getattr(current, "redownload", False):
+            return "--redownload"
+        # imported here: the action prompt imports this module
+        from ofscraper.prompts.prompt_groups.actions import redownload_answered
+
+        if redownload_answered():
+            return "the redownload question"
+        return "--after"
+    if float(after or 0) <= arrow.get("2000").float_timestamp:
+        return "full scan"
+    return "where the last scan left off"
 
 
 def range_end():

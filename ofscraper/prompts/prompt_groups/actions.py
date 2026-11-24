@@ -82,6 +82,14 @@ def restore_session_values(args):
         setattr(args, key, value)
 
 
+def redownload_answered():
+    """Whether this run's --after came from a Yes to the redownload question
+    rather than the command line."""
+    if _session_values is None:
+        return False
+    return getattr(settings.get_args(), "after", None) != _session_values["after"]
+
+
 def restore_session_args():
     """Undo a redownload Yes before a run the prompt didn't start (a later
     daemon pass). Nothing to undo when the prompt never ran: the values are
