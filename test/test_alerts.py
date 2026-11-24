@@ -95,6 +95,35 @@ def test_free_space_limit_alerts_once(sent, monkeypatch):
     assert download() == "downloaded"
 
 
+def test_free_space_limit_during_a_download_alerts(sent, monkeypatch):
+    # the per-file check in the download manager, not only the decorator
+    from ofscraper.commands.scraper.actions.download.managers.downloadmanager import (
+        DownloadManager,
+    )
+
+    sent.settings.system_free_min = 10
+    monkeypatch.setattr(free, "get_free", lambda: 5)
+    with pytest.raises(Exception):
+        DownloadManager(ctx=object())._downloadspace()
+    assert [a["kind"] for a in sent.script] == ["disk_full"]
+
+
+def test_disk_still_full_after_a_partial_pass_isnt_recovered(sent, monkeypatch):
+    sent.settings.system_free_min = 10
+    free_bytes = [5]
+    monkeypatch.setattr(free, "get_free", lambda: free_bytes[0])
+    download = free.space_checker(lambda: "downloaded")
+    for _ in range(3):  # three daemon passes, the disk full throughout
+        with pytest.raises(Exception, match="Space min"):
+            download()
+        alerts.after_pass(exit_status.PARTIAL)
+    assert [a["kind"] for a in sent.script] == ["disk_full"]
+    free_bytes[0] = 50  # space was freed
+    alerts.after_pass(exit_status.OK)
+    assert [a["kind"] for a in sent.script] == ["disk_full", "disk_full"]
+    assert "running again" in sent.script[1]["message"]
+
+
 # --- the login, at the start and mid-run ------------------------------------
 
 
@@ -131,6 +160,59 @@ def test_creator_failing_with_rejected_login_stops_the_pass(sent, monkeypatch, s
         command.log_user_failure("a creator", Forbidden(status))
     assert asked == [1]
     assert exit_status.code() == exit_status.AUTH
+    assert [a["kind"] for a in sent.script] == ["login"]
+
+
+class _Session:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def test_rejected_login_stops_the_creator_loop(sent, monkeypatch):
+    # the creator loop catches every error a creator raises; a rejected login
+    # must still end the run, not carry on with the next creator
+    import asyncio
+
+    monkeypatch.setattr(checkers.init, "auth_status", lambda: ("DOWN", None))
+    monkeypatch.setattr(checkers.sites, "is_fansly", lambda: False)
+    monkeypatch.setattr(command.log, "traceback_", lambda *a: None, raising=False)
+    tried = []
+
+    async def process_user(self, ele, c, action_func):
+        tried.append(ele.name)
+        try:
+            raise Forbidden(401)
+        except Forbidden as e:  # as scraper.py's action loop does
+            command.log_user_failure(ele.name, e, what="download")
+
+    monkeypatch.setattr(command.CommandManager, "_process_user", process_user)
+    users = [SimpleNamespace(name="a creator"), SimpleNamespace(name="another creator")]
+    with pytest.raises(checkers.LoginRejected):
+        asyncio.run(command.CommandManager()._process_users_normal(users, _Session(), None))
+    assert tried == ["a creator"]
+    assert exit_status.code() == exit_status.AUTH
+
+
+def test_rejected_login_in_an_area_stops_the_scan(sent, monkeypatch):
+    import asyncio
+    import ofscraper.data.posts.post as post
+
+    monkeypatch.setattr(checkers.init, "auth_status", lambda: ("DOWN", None))
+    monkeypatch.setattr(checkers.sites, "is_fansly", lambda: False)
+    monkeypatch.setattr(post.log, "traceback_", lambda *a: None, raising=False)
+
+    async def timeline():  # an area catches its own errors, as post.py's do
+        try:
+            raise Forbidden(401)
+        except Forbidden as e:
+            post.log_area_failure("a creator", "Timeline", e)
+
+    task = post.process_single_task(timeline, username="a creator", area="Timeline")
+    with pytest.raises(checkers.LoginRejected):
+        asyncio.run(task(sem=asyncio.Semaphore(1)))
     assert [a["kind"] for a in sent.script] == ["login"]
 
 

@@ -18,6 +18,8 @@ log = logging.getLogger("shared")
 SITE_LABELS = {"onlyfans": "OnlyFans", "fansly": "Fansly"}
 # Discord allows 2000 characters a message; the handler splits at 1500
 MESSAGE_LIMIT = 1500
+# the error a failed run's record carries, as characters
+ERROR_LIMIT = 500
 
 _started = None
 _record = None
@@ -50,6 +52,16 @@ def _creators():
     return {"done": len(done - failed), "failed": len(failed)}
 
 
+def _safe_error(error):
+    """The error as a log line shows it (cookies, tokens and signed links
+    hidden), cut to ERROR_LIMIT: post_script gets it, not only the log."""
+    from ofscraper.utils.logs.classes.classes import SensitiveFormatter
+    import ofscraper.utils.logs.utils.sensitive as sensitive
+
+    text = SensitiveFormatter()._filter(sensitive.hide_links(str(error)))
+    return text if len(text) <= ERROR_LIMIT else text[: ERROR_LIMIT - 3] + "..."
+
+
 def build(outcome="ok", error=None):
     """The run's record; ``outcome`` is "ok", "stopped" or "failed"."""
     s = settings.get_settings()
@@ -78,7 +90,7 @@ def build(outcome="ok", error=None):
         "per_creator": per_creator,
     }
     if error:
-        record["error"] = error
+        record["error"] = _safe_error(error)
     # plan 2's exit status so far: 0 ok, 4 partial, 3 login failed, ...
     import ofscraper.main.close.exit_status as exit_status
 
@@ -152,8 +164,12 @@ def message(record, limit=MESSAGE_LIMIT):
             line += f", {c['failed']} failed"
         lines.append(line)
     # one line per creator with new files, as many as fit
+    def fits(shown):
+        more = [f"... and {len(lines) - shown} more"] if shown < len(lines) else []
+        return len("\n".join([head, *lines[:shown], *more])) <= limit
+
     shown = len(lines)
-    while shown and len("\n".join([head, *lines[:shown], f"... and {len(lines)} more"])) > limit:
+    while shown and not fits(shown):
         shown -= 1
     body = lines[:shown]
     if shown < len(lines):

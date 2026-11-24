@@ -45,8 +45,10 @@ def main():
     except KeyboardInterrupt as exc:
         console.get_shared_console().print("handling force closing of script")
         try:
+            # the ordinary shutdown closes the logs, so Discord gets what is
+            # queued (the "stopped" summary); a second Ctrl+C skips that
             with exit_context.DelayedKeyboardInterrupt():
-                exit_manager.forcedShutDown()
+                exit_manager.shutdown()
         except KeyboardInterrupt:
             with exit_context.DelayedKeyboardInterrupt():
                 exit_manager.forcedShutDown()
@@ -59,10 +61,10 @@ def main():
         try:
             with exit_context.DelayedKeyboardInterrupt():
                 exit_manager.shutdown()
-        except KeyboardInterrupt as E:
+        except KeyboardInterrupt:
             with exit_context.DelayedKeyboardInterrupt():
                 exit_manager.forcedShutDown()
-                raise E
+            raise SystemExit(exit_status.INTERRUPTED)
         # The run failed; don't report success to scripts and schedulers
         import ofscraper.db.postgres as postgres
 

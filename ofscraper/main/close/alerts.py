@@ -129,9 +129,22 @@ def after_pass(outcome):
 
     if outcome in (exit_status.OK, exit_status.PARTIAL):
         recovered(DAEMON_PASS, "Daemon passes are finishing again")
-        recovered(DISK_FULL, "Downloads are running again after the free-space limit")
+        # a pass the limit stopped ends as partial: recovered only once
+        # there's room again
+        if _has_free_space():
+            recovered(DISK_FULL, "Downloads are running again after the free-space limit")
     elif outcome != exit_status.AUTH:  # the login alert went out already
         failing(DAEMON_PASS, f"A daemon pass failed ({exit_status.label(outcome)}); see the log")
+
+
+def _has_free_space():
+    try:
+        import ofscraper.utils.system.free as free
+
+        return free.check_free_size()
+    except Exception as e:
+        log.debug(f"free space not checked: {e}")
+        return False
 
 
 def reset(reload=False):
