@@ -259,3 +259,31 @@ def test_a_text_file_named_by_its_caption_stays_in_its_folder(naming):
     # the default file_format: a text file's {filename} is its caption
     text, _ = naming("{filename}.{ext}", r"..\..\..\elsewhere")
     assert ntpath.dirname(ntpath.normpath(ntpath.join(FOLDER, text))) == FOLDER
+
+
+# A text file is named with the same file_format as media, so it has every
+# placeholder a media file has (#742).
+
+
+def test_a_text_file_has_the_media_only_placeholders(naming):
+    text, (media,) = naming(
+        "{media_id} {mediaid} {download_type} {downloadtype} {text}.{ext}", "hello"
+    )
+    assert media == "70 70 Normal Normal hello.jpg"
+    # no media: the post's id stands in for the media id
+    assert text == "8 8 Normal Normal hello.txt"
+
+
+def test_a_text_file_has_every_placeholder_a_media_file_has(naming, monkeypatch):
+    seen = {}
+    for cls in (placeholder.Placeholders, placeholder.Textholders):
+        real = cls.createfilename
+
+        async def recorded(self, real=real, cls=cls):
+            out = await real(self)
+            seen[cls.__name__] = set(self._variables)
+            return out
+
+        monkeypatch.setattr(cls, "createfilename", recorded)
+    naming("{filename}.{ext}", "hello")
+    assert seen["Placeholders"] - seen["Textholders"] == set()
