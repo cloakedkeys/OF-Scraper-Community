@@ -176,6 +176,50 @@ def _write(monkeypatch, tmp_path, caption):
     return post, path
 
 
+# Two posts whose text files get the same name both keep their text (#746):
+# real settings, real posts and the real placeholder classes.
+
+from naming_helpers import make_post, naming, text_files  # noqa: F401  (fixture)
+
+
+def _write_texts(naming, monkeypatch, captions, *options, collision="media_id"):
+    async def no_script(path):
+        pass
+
+    naming("{filename}.{ext}", "x", "--text-type", "word", "--textlength", "2", *options)
+    monkeypatch.setattr(text, "after_download_script", no_script)
+    monkeypatch.setattr(
+        text.config_data, "get_filename_collision", lambda *a, **k: collision
+    )
+    posts = [make_post(caption, 0, post_id=n) for n, caption in enumerate(captions, 8)]
+    asyncio.run(text.get_text("u", posts))
+
+
+CAPTIONS = ["Good morning everyone", "Good morning to my fans"]
+
+
+def test_a_taken_text_file_name_gets_the_post_id(naming, monkeypatch, tmp_path):
+    _write_texts(naming, monkeypatch, CAPTIONS)
+    both = {"Good morning.txt": CAPTIONS[0], "Good morning_9.txt": CAPTIONS[1]}
+    assert text_files(tmp_path) == both
+    # a second run finds each post's own file, and writes nothing new
+    _write_texts(naming, monkeypatch, CAPTIONS)
+    assert text_files(tmp_path) == both
+    # --force-all rewrites each post's own file, not the other post's
+    _write_texts(naming, monkeypatch, CAPTIONS, "--force-all")
+    assert text_files(tmp_path) == both
+
+
+def test_the_same_caption_twice_is_one_text_file(naming, monkeypatch, tmp_path):
+    _write_texts(naming, monkeypatch, ["Good morning", "Good morning"])
+    assert text_files(tmp_path) == {"Good morning.txt": "Good morning"}
+
+
+def test_overwrite_mode_keeps_the_first_text_file(naming, monkeypatch, tmp_path):
+    _write_texts(naming, monkeypatch, CAPTIONS, collision="overwrite")
+    assert list(text_files(tmp_path)) == ["Good morning.txt"]
+
+
 def test_caption_with_emoji_is_written(monkeypatch, tmp_path):
     post, path = _write(monkeypatch, tmp_path, "new set out now \U0001f525✨")
     assert post.downloaded is True
