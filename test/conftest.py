@@ -25,9 +25,21 @@ atexit.register(shutil.rmtree, _scratch_home, ignore_errors=True)
 # their circular imports; importing a leaf module first fails.
 import ofscraper.main.open.load  # noqa: E402,F401
 
+import cloup  # noqa: E402
 import pytest  # noqa: E402
 
 from ofscraper.utils.args.parse.commands.main import program  # noqa: E402
+
+
+def _sections():
+    """The program's cloup sections, found among its attributes rather than
+    by cloup's private names (_default_section, _user_sections)."""
+    found = []
+    for value in vars(program).values():
+        for item in value if isinstance(value, (list, set, tuple)) else [value]:
+            if isinstance(item, cloup.Section) and item not in found:
+                found.append(item)
+    return found
 
 
 @pytest.fixture(autouse=True)
@@ -35,11 +47,18 @@ def _restore_subcommands():
     # parse_args registers the subcommands on the shared program, and cloup
     # refuses to register one twice. A test that parses for real leaves them
     # registered, so a later test whose first settings read parses again fails
-    # with 'command "manual" already exists' (#727). Put the program back.
-    commands = dict(program.commands)
-    section = dict(program._default_section.commands)
+    # with 'command "manual" already exists' (#727). Put the program back:
+    # its commands, the lists that hold its sections, and each section's.
+    state = {k: v.copy() for k, v in vars(program).items() if isinstance(v, (dict, list, set))}
+    sections = [(section, dict(section.commands)) for section in _sections()]
     yield
-    program.commands.clear()
-    program.commands.update(commands)
-    program._default_section.commands.clear()
-    program._default_section.commands.update(section)
+    for key, value in state.items():
+        current = getattr(program, key)
+        current.clear()
+        if isinstance(current, list):
+            current.extend(value)
+        else:
+            current.update(value)
+    for section, commands in sections:
+        section.commands.clear()
+        section.commands.update(commands)
