@@ -67,7 +67,7 @@ Protected videos are decrypted with your own Widevine CDM files. Set these in `c
 }
 ```
 
-- **`key-mode-default`** must be `manual`. `cdrm` no longer works: with it, protected videos are skipped, and each run warns you. A config that already says `cdrm` keeps it until you change it, so check this after setting up your CDM files.
+- **`key-mode-default`** should be `manual`. `cdrm` is deprecated, and each run that uses it warns you. Its default server, cdrm-project.com, no longer works and isn't contacted. With `cdrm`, protected videos are skipped when the `OFSC_CDRM_URL` environment variable is empty, left at that default, or not readable as an address. Only a server you run yourself, set in `OFSC_CDRM_URL`, still works, and it is sent your request headers, cookies included. A config that already says `cdrm` keeps it until you change it, so check this after setting up your CDM files.
 - **`client-id`** is the path to `client_id.bin`, and **`private-key`** the path to `private_key.pem`.
 
 See the [CDM guide](https://cloakedkeys.gitbook.io/ofsc/setup/cdm-options) for getting these files.
