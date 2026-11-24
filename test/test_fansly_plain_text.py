@@ -202,3 +202,17 @@ def test_the_end_of_a_block_is_a_line_break(naming, monkeypatch, tmp_path):
         "<div>a</div><div>b</div><ul><li>c</li><li>d</li></ul><h2>e</h2>f",
     )
     assert text_files(tmp_path) == {"caption.txt": "a\nb\nc\nd\ne\nf"}
+
+
+@pytest.mark.parametrize("caption, written", [
+    # the start of a block ends the line before it, as its end does (#748)
+    ("Intro<p>Body</p>", "Intro\nBody"),
+    ("Intro<div>Body</div>more", "Intro\nBody\nmore"),
+    ("<b>Sale</b><ul><li>one</li><li>two</li></ul>", "Sale\none\ntwo"),
+    # a block that starts a line adds no empty line
+    ("<p>a</p><p>b</p>", "a\nb"),
+    ("<p>a</p>\n<p>b</p>", "a\n\nb"),
+])
+def test_the_start_of_a_block_is_a_line_break(naming, monkeypatch, tmp_path, caption, written):
+    _write_text(naming, monkeypatch, caption)
+    assert text_files(tmp_path) == {"caption.txt": written}

@@ -3,7 +3,6 @@ import copy
 import html
 import logging
 import pathlib
-import re
 import textwrap
 import traceback
 
@@ -16,7 +15,7 @@ import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.paths.paths as paths
 import ofscraper.utils.settings as settings
 from ofscraper.scripts.after_download_script import after_download_script
-from ofscraper.utils.string import parse_safe
+from ofscraper.utils.string import html_lines, parse_safe
 
 
 async def get_text(username, values):
@@ -30,16 +29,13 @@ async def get_text(username, values):
 
 def file_text(text):
     """What a post's text file holds: the caption as it reads on the site.
-    An OnlyFans caption is HTML, so a <br> or the end of a paragraph, div,
-    list item or heading is a line break, the other tags are removed and
+    An OnlyFans caption is HTML, so a <br> or the start or end of a
+    paragraph, div, list item or heading is a line break, the other tags are removed and
     entities are decoded, as stash_sync.clean_text does. A Fansly
     caption is plain text already. Each of the caption's lines is wrapped on
     its own, so its line breaks stay."""
     if not sites.is_fansly():
-        text = re.sub(
-            r"<br\s*/?>|</(?:p|div|li|h[1-6])\s*>", "\n", text, flags=re.IGNORECASE
-        )
-        text = html.unescape(re.sub(r"<[^>]+>", "", text))
+        text = html.unescape(html_lines(text))
         text = "\n".join(line.strip() for line in text.splitlines())
     width = of_env.getattr("MAX_TEXT_LENGTH")
     lines = []

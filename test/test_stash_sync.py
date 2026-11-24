@@ -1136,3 +1136,14 @@ def test_stash_details_end_a_line_at_each_block(raw, details):
     meta = stash_sync.describe(entry, {"1001": ("posts", raw)}, "a creator")
     assert meta["details"] == details
     assert meta["title"] == details.splitlines()[0]
+
+
+@pytest.mark.parametrize("raw, details", [
+    ("Intro<p>Body</p>", "Intro\nBody"),
+    ("<b>Sale</b><ul><li>one</li><li>two</li></ul>", "Sale\none\ntwo"),
+])
+def test_stash_details_start_a_line_at_each_block(raw, details):
+    # as a post's --text file reads it: "Intro<p>Body" isn't "IntroBody"
+    entry = {"posts": [("2026-10-31 12:00:00", "1001")], "sources": {"1001": {"Timeline"}}}
+    meta = stash_sync.describe(entry, {"1001": ("posts", raw)}, "a creator")
+    assert meta["details"] == details
