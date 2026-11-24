@@ -417,3 +417,38 @@ def test_the_same_caption_twice_is_one_text_file(naming, monkeypatch, tmp_path):
 def test_overwrite_mode_keeps_the_first_text_file(naming, monkeypatch, tmp_path):
     _write_texts(naming, monkeypatch, CAPTIONS, collision="overwrite")
     assert list(_text_files(tmp_path)) == ["Good morning.txt"]
+
+
+# A caption in a file name reads as it does on the site (#748): a line break
+# or a <br> separates words, and HTML entities are decoded, as label names
+# are (#523).
+
+
+@pytest.mark.parametrize(
+    "caption, expected",
+    [
+        ("first line\nsecond line\n\n#tag1 #tag2", "first line second line #tag1 #tag2"),
+        ("<p>first line<br />second line</p><p>third</p>", "first line second line third"),
+        ("a tab\there, a return\r\nthere", "a tab here, a return there"),
+        ("Tom &amp; Jerry don&#039;t", "Tom & Jerry don't"),
+        ("non&nbsp;breaking space", "non breaking space"),
+        # decoded, then what a name can't hold is removed, as for {label}
+        ("Q&amp;A &lt;3 &quot;best&quot;", "Q&A 3 best"),
+        ("<b>bold</b> and <i>italic</i>", "bold and italic"),
+    ],
+)
+def test_a_caption_reads_in_a_name_as_on_the_site(naming, caption, expected):
+    text, (media,) = naming("{text}.{ext}", caption)
+    assert (text, media) == (f"{expected}.txt", f"{expected}.jpg")
+
+
+def test_words_on_separate_lines_count_as_separate_words(naming):
+    text, (media,) = naming(
+        "{text}.{ext}", "one\ntwo three", "--text-type", "word", "--textlength", "2"
+    )
+    assert (text, media) == ("one two.txt", "one two.jpg")
+
+
+def test_a_caption_with_nothing_for_a_name_is_the_post_id(naming):
+    text, (media,) = naming("{filename} {text}.{ext}", "???")
+    assert (text, media) == ("8 8.txt", "pic0 8.jpg")
