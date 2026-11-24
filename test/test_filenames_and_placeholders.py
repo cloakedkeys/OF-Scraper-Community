@@ -452,3 +452,67 @@ def test_words_on_separate_lines_count_as_separate_words(naming):
 def test_a_caption_with_nothing_for_a_name_is_the_post_id(naming):
     text, (media,) = naming("{filename} {text}.{ext}", "???")
     assert (text, media) == ("8 8.txt", "pic0 8.jpg")
+
+
+# A text file reads as the caption does on the site (#751): no HTML, and the
+# caption's own lines.
+
+
+def _write_text(naming, monkeypatch, caption, *options, collision="media_id", before=None):
+    """Write one post's text file (named caption.txt). `before` is what a
+    file already at that name holds."""
+
+    async def no_script(path):
+        pass
+
+    naming("caption.{ext}", "x", *options)
+    monkeypatch.setattr(text, "after_download_script", no_script)
+    monkeypatch.setattr(
+        text.config_data, "get_filename_collision", lambda *a, **k: collision
+    )
+    post = _post(caption, 0)
+    if before is not None:
+        folder = asyncio.run(placeholder.Textholders(post, "txt").getmediadir())
+        (folder / "caption.txt").write_text(before, encoding="utf-8")
+    asyncio.run(text.get_text("u", [post]))
+
+
+@pytest.mark.parametrize(
+    "caption, written",
+    [
+        ("<p>Line one<br />Line two</p><p>Tom &amp; Jerry</p>",
+         "Line one\nLine two\nTom & Jerry"),
+        ("New set out now\n\n#tag1 #tag2", "New set out now\n\n#tag1 #tag2"),
+        # each of the caption's lines is wrapped on its own
+        (" ".join(["word"] * 16) + "\nlast line",
+         " ".join(["word"] * 14) + "\nword word\nlast line"),
+    ],
+)
+def test_a_text_file_reads_as_the_caption_does(
+    naming, monkeypatch, tmp_path, caption, written
+):
+    _write_text(naming, monkeypatch, caption)
+    assert _text_files(tmp_path) == {"caption.txt": written}
+
+
+def test_a_fansly_caption_is_plain_text_already(naming, monkeypatch, tmp_path):
+    # nothing to decode or remove: "<3 ... >" isn't a tag there
+    caption = "I <3 you > me &amp; more"
+    _write_text(naming, monkeypatch, caption, "--site", "fansly")
+    assert list(_text_files(tmp_path).values()) == [caption]
+
+
+OLD_FORM = "<p>Line one<br />Line two</p> <p>Tom &amp; Jerry</p>"
+
+
+@pytest.mark.parametrize("collision", ["media_id", "overwrite"])
+def test_an_older_version_s_text_file_is_corrected_in_place(
+    naming, monkeypatch, tmp_path, collision
+):
+    # written by a version that kept the HTML: the same post's file, so it's
+    # rewritten where it is, not left beside a caption_<post_id>.txt
+    _write_text(
+        naming, monkeypatch, "<p>Line one<br />Line two</p>\n<p>Tom &amp; Jerry</p>",
+        collision=collision, before=OLD_FORM,
+    )
+    assert _text_files(tmp_path) == {"caption.txt": "Line one\nLine two\n\nTom & Jerry"}

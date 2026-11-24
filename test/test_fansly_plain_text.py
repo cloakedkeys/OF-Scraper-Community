@@ -85,8 +85,8 @@ def test_fansly_database_text_is_plain_with_sanitize_text_off(site):
 
 def test_fansly_text_file_is_plain(site, monkeypatch, tmp_path):
     site("fansly")
-    # textwrap joins the lines
-    assert written_text(monkeypatch, tmp_path, fansly_post()) == PLAIN.replace("\n", " ")
+    # with the caption's own lines (#751)
+    assert written_text(monkeypatch, tmp_path, fansly_post()) == PLAIN
 
 
 def test_onlyfans_text_is_unchanged(site, monkeypatch, tmp_path):
@@ -94,7 +94,11 @@ def test_onlyfans_text_is_unchanged(site, monkeypatch, tmp_path):
     raw = "<p>Hello <b>there</b></p> **[c:blue]as sent[/c]**"
     post = posts_.Post({"id": 3, "text": raw}, 1, "a creator", "timeline")
     assert post.db_text == raw
-    assert written_text(monkeypatch, tmp_path, post) == raw
+    # the text file loses the HTML (#751), and nothing else: these aren't
+    # Fansly's codes on OnlyFans
+    assert written_text(monkeypatch, tmp_path, post) == (
+        "Hello there\n**[c:blue]as sent[/c]**"
+    )
 
 
 def test_stash_sync_keeps_escaped_characters(site):

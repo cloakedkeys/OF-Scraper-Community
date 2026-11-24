@@ -1,13 +1,16 @@
 import asyncio
 import copy
+import html
 import logging
 import pathlib
+import re
 import textwrap
 import traceback
 
 import aiofiles
 
 import ofscraper.classes.placeholder as placeholder
+import ofscraper.sites as sites
 import ofscraper.utils.config.data as config_data
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
@@ -23,15 +26,39 @@ async def get_text(username, values):
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
-def _holds(path, content):
-    """True when the text file at path holds exactly content."""
+def file_text(text):
+    """What a post's text file holds: the caption as it reads on the site.
+    An OnlyFans caption is HTML, so a <br> or the end of a paragraph is a
+    line break, the other tags are removed and entities are decoded, as
+    stash_sync.clean_text does. A Fansly caption is plain text already. Each
+    of the caption's lines is wrapped on its own, so its line breaks stay."""
+    if not sites.is_fansly():
+        text = re.sub(r"<br\s*/?>|</p\s*>", "\n", text, flags=re.IGNORECASE)
+        text = html.unescape(re.sub(r"<[^>]+>", "", text))
+        text = "\n".join(line.strip() for line in text.splitlines())
+    width = of_env.getattr("MAX_TEXT_LENGTH")
+    lines = []
+    for line in text.strip().splitlines():
+        lines.extend(textwrap.wrap(line, width=width) or [""])
+    return "\n".join(lines)
+
+
+def _older_file_text(text):
+    """What a version before #751 wrote for the same caption: the raw text,
+    HTML included, wrapped as one paragraph. A file holding this is the
+    post's own, and is rewritten where it is."""
+    return "\n".join(textwrap.wrap(text, width=of_env.getattr("MAX_TEXT_LENGTH")))
+
+
+def _holds(path, *contents):
+    """True when the text file at path holds exactly one of contents."""
     try:
-        return pathlib.Path(path).read_text(encoding="utf-8") == content
+        return pathlib.Path(path).read_text(encoding="utf-8") in contents
     except (OSError, UnicodeError):
         return False
 
 
-def _own_path(path, ele, content):
+def _own_path(path, ele, *contents):
     """Where a post's text goes. A file template can give two posts the same
     name, e.g. captions that start with the same textlength words. A file
     with other content at path is another post's, so this post's text goes
@@ -41,7 +68,7 @@ def _own_path(path, ele, content):
     if (
         str(config_data.get_filename_collision()).lower() == "overwrite"
         or not path.exists()
-        or _holds(path, content)
+        or _holds(path, *contents)
     ):
         return path, False
     return (
@@ -70,19 +97,24 @@ async def _write_text(ele):
 
         placeholderObj = await placeholder.Textholders(new_ele, "txt").init()
 
-        wrapped_text = textwrap.wrap(
-            new_ele.text, width=of_env.getattr("MAX_TEXT_LENGTH")
+        content = file_text(new_ele.text)
+        older = _older_file_text(new_ele.text)
+        filepath, own_name = _own_path(
+            placeholderObj.filepath, new_ele, content, older
         )
-        content = "\n".join(wrapped_text)
-        filepath, own_name = _own_path(placeholderObj.filepath, new_ele, content)
 
-        # Check for existing file BEFORE marking the attempt. A file at the
-        # post's own name_<post_id> with other content is an older caption
-        # of this post, and is replaced.
+        # Check for existing file BEFORE marking the attempt. It's skipped
+        # when it holds this text already, or holds another post's text
+        # (filename_collision "overwrite"). It's written again when it holds
+        # what an older version wrote for this caption, or is at the post's
+        # own name_<post_id> with an older caption of this post.
         if (
             filepath.exists()
             and not dupe
-            and (not own_name or _holds(filepath, content))
+            and (
+                _holds(filepath, content)
+                or not (own_name or _holds(filepath, older))
+            )
         ):
             # Returning without marking attempt will accurately log it as "skipped" in stats
             return
