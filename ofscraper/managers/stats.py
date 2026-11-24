@@ -21,6 +21,7 @@ class MetadataStats:
         self.changed_audio = 0
         self.changed_photo = 0
         self.unchanged_count = 0
+        self.skipped_count = 0
         self.failed_count = 0
 
     @property
@@ -55,6 +56,11 @@ class MetadataStats:
             if self.unchanged_count > 0
             else "0 items unchanged"
         )
+        skipped_str = (
+            f"[bold yellow]{self.skipped_count} skipped[/bold yellow]"
+            if self.skipped_count > 0
+            else "0 skipped"
+        )
         failed_str = (
             f"[bold red]{self.failed_count} failed[/bold red]"
             if self.failed_count > 0
@@ -64,7 +70,7 @@ class MetadataStats:
         return (
             f"({self.total_changed} changed media item total "
             f"[{videos_str}, {audios_str}, {photos_str}], "
-            f"{unchanged_str}, {failed_str})"
+            f"{unchanged_str}, {skipped_str}, {failed_str})"
         )
 
 
