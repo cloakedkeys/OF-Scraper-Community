@@ -284,3 +284,9 @@ def test_a_caption_of_dots_and_spaces_is_not_a_folder_name(naming, caption):
     text, (media,) = naming("{text}/{filename}.{ext}", caption)
     for name in (text, media):
         assert not any(re.fullmatch(r"\.[.\s]*", part) for part in re.split(r"[/\\]", name))
+
+
+def test_a_file_format_of_a_dot_folder_is_kept(naming):
+    # "./" written in file_format is the folder itself, not a caption's dots
+    text, (media,) = naming("./{text}.{ext}", "a caption")
+    assert (text, media) == ("./a caption.txt", "./a caption.jpg")

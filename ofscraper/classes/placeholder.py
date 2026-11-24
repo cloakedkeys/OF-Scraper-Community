@@ -287,6 +287,16 @@ def _safe_format(template, variables):
     return _safe_parts(text, literal)
 
 
+def _safe_name(out, template, variables):
+    """out through _safe_parts. When out is the template filled in, a "." the
+    template writes is kept, as in _safe_format."""
+    try:
+        same = out == template.format(**variables)
+    except Exception:
+        same = False
+    return _safe_format(template, variables) if same else _safe_parts(out)
+
+
 class Placeholders(basePlaceholder):
     def __init__(self, ele, ext) -> None:
         super().__init__()
@@ -636,11 +646,11 @@ class Textholders(basePlaceholder):
         if ele.responsetype.capitalize() == "Profile":
             text = ele.file_sanitized_text
             text = re.sub(" ", data.get_spacereplacer(), text)
-            out = _safe_parts(f"{text}.{ext}")
+            out = f"{text}.{ext}"
         else:
-            out = _safe_format(data.get_fileformat(), self._variables)
+            out = data.get_fileformat().format(**self._variables)
         log.debug(f"final filename path {out}")
-        self._filename = out
+        self._filename = _safe_name(out, data.get_fileformat(), self._variables)
         return self._filename
 
     @property
