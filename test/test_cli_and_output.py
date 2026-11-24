@@ -423,14 +423,18 @@ def test_keyboard_interrupt_in_run_exits_130(monkeypatch):
     shutdowns = []
     monkeypatch.setattr(run, "check_database", lambda: None)
     monkeypatch.setattr(run, "start_manager", interrupt)
-    monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: shutdowns.append(1))
+    monkeypatch.setattr(run.exit_manager.time, "sleep", lambda s: None)
+    # the ordinary shutdown, which closes the logs: the Discord handler sends
+    # what it has queued (the "stopped" summary) as it closes
+    monkeypatch.setattr(run.exit_manager.close_log, "gracefulClose", lambda: shutdowns.append("logs"))
+    monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: shutdowns.append("forced"))
     monkeypatch.setattr(
         run.console, "get_shared_console", lambda: SimpleNamespace(print=lambda *a, **k: None)
     )
     with pytest.raises(SystemExit) as exit_info:
         run.main()
     assert exit_info.value.code == 130
-    assert shutdowns == [1]
+    assert shutdowns == ["logs"]
 
 
 def test_sigterm_interrupt_in_run_exits_0(monkeypatch):
@@ -440,12 +444,14 @@ def test_sigterm_interrupt_in_run_exits_0(monkeypatch):
     shutdowns = []
     monkeypatch.setattr(run, "check_database", lambda: None)
     monkeypatch.setattr(run, "start_manager", sigterm)
-    monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: shutdowns.append(1))
+    monkeypatch.setattr(run.exit_manager.time, "sleep", lambda s: None)
+    monkeypatch.setattr(run.exit_manager.close_log, "gracefulClose", lambda: shutdowns.append("logs"))
+    monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: shutdowns.append("forced"))
     monkeypatch.setattr(
         run.console, "get_shared_console", lambda: SimpleNamespace(print=lambda *a, **k: None)
     )
     run.main()
-    assert shutdowns == [1]
+    assert shutdowns == ["logs"]
 
 
 def test_startup_error_in_load_exits_1(monkeypatch):

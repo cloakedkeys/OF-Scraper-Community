@@ -251,3 +251,20 @@ def test_long_creator_list_is_cut_to_fit_one_message(run):
 def test_failed_run_says_so(run):
     record = run_record.build("failed", "database is gone")
     assert "The run failed: database is gone." in run_record.message(record)
+
+
+def test_every_line_shown_when_all_fit_without_the_more_line(run):
+    record = run_record.build()
+    record["per_creator"] = [{"username": "a creator", "new_files": 1, "bytes": 1, "failed": 0}]
+    whole = run_record.message(record, limit=10_000)
+    # room for every line, but not for a "... and 1 more" line as well
+    text = run_record.message(record, limit=len(whole) + 3)
+    assert text == whole and "more" not in text
+
+
+def test_error_in_the_record_is_redacted_and_bounded(run):
+    error = "request failed: sess=abc123secret https://cdn.example/f?Policy=xyz " + "x" * 5000
+    record = run_record.build("failed", error)
+    assert "abc123secret" not in record["error"] and "xyz" not in record["error"]
+    assert len(record["error"]) <= run_record.ERROR_LIMIT
+    assert record["error"].startswith("request failed: sess={sess}")
