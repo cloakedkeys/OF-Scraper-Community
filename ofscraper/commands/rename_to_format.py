@@ -736,20 +736,16 @@ def rename(database, apply=False, username=None, path_root=None, config=None, pr
                         raise ValueError(mover.MEANWHILE)
                     result["rows_changed"] += 1
         except BaseException as error:
-            conn.rollback()
-            left = _move_back(moved)
-            if not left:
-                _remove_unused(undo_file, error)
-            else:
-                print(
-                    f"Files that could not be given their old names back: {len(left)}."
-                    f" The undo file is kept: {undo_file}",
-                    file=sys.stderr,
-                )
+            _apply_rolled_back(conn, moved, undo_file, error)
             raise
         try:
             conn.commit()
         except BaseException as error:
+            if _still_open(conn):
+                # the commit didn't happen (a reader held the file, say):
+                # nothing was saved, so the files get their old names back
+                _apply_rolled_back(conn, moved, undo_file, error)
+                raise
             raise _unconfirmed(
                 error,
                 f"The undo file is kept: {undo_file}. Run this with --undo and that"
@@ -764,6 +760,49 @@ def rename(database, apply=False, username=None, path_root=None, config=None, pr
             result["undo_file"] = None
     result["folders_removed"] = _remove_emptied([old for old, _new in moved], root)
     return result
+
+
+def _still_open(conn):
+    """True when a commit that failed left its transaction open: nothing
+    was saved, and rolling back is safe. False when it isn't known."""
+    try:
+        return conn.in_transaction
+    except sqlite3.Error:
+        return False
+
+
+def _roll_back(conn):
+    # a failed rollback still saves nothing: closing the connection drops it
+    with contextlib.suppress(sqlite3.Error):
+        conn.rollback()
+
+
+def _apply_rolled_back(conn, moved, undo_file, error):
+    """--apply stopped before its rows were saved: give the renamed files
+    their old names back, and remove the undo file nothing needs."""
+    _roll_back(conn)
+    left = _move_back(moved)
+    if not left:
+        _remove_unused(undo_file, error)
+    else:
+        print(
+            f"Files that could not be given their old names back: {len(left)}."
+            f" The undo file is kept: {undo_file}",
+            file=sys.stderr,
+        )
+
+
+def _undo_rolled_back(conn, moved):
+    """An undo stopped before its rows were saved: the rows keep the new
+    names, so the files renamed back get their new names again."""
+    _roll_back(conn)
+    left = _move_back(moved)
+    if left:
+        print(
+            "Files left at their old names while their rows keep the new ones: "
+            + ", ".join(left),
+            file=sys.stderr,
+        )
 
 
 def _move_back(moved):
@@ -838,17 +877,21 @@ def undo(undo_file, apply=False):
                         )
                         result["rows_restored"] += 1
         except BaseException:
-            conn.rollback()
-            # the rows keep the new names: so do the files
-            left = _move_back(moved)
-            if left:
+            _undo_rolled_back(conn, moved)
+            raise
+        try:
+            conn.commit()
+        except BaseException:
+            if _still_open(conn):
+                # the commit didn't happen (a reader held the file, say)
+                _undo_rolled_back(conn, moved)
+            else:
                 print(
-                    "Files left at their old names while their rows keep the new ones: "
-                    + ", ".join(left),
+                    "The undo was stopped while its rows were being saved, so it"
+                    f" isn't known whether they were. The undo file is kept: {undo_file}",
                     file=sys.stderr,
                 )
             raise
-        conn.commit()
     return result
 
 

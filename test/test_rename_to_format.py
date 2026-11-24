@@ -3,6 +3,7 @@ small one made here, under pytest's tmp_path, and the database is a real
 one made with the scraper's own tables."""
 
 import asyncio
+import contextlib
 import json
 import os
 import sqlite3
@@ -210,6 +211,117 @@ def test_an_undo_whose_row_update_fails_gives_the_files_their_new_names_back(tmp
     assert (done["renamed_back"], done["rows_restored"]) == (2, 2)
     assert library.files() == ["alice/Posts/Images/abcdef.jpg", "alice/Posts/Images/other.jpg"]
     assert library.rows() == rows
+
+
+@contextlib.contextmanager
+def read_lock(db):
+    """Another connection reading the database, as a scan or a viewer can:
+    a commit then waits, and fails with "database is locked"."""
+    with closing(sqlite3.connect(db, isolation_level=None)) as reader:
+        reader.execute("BEGIN")
+        reader.execute("SELECT COUNT(*) FROM medias").fetchone()
+        yield
+        reader.execute("ROLLBACK")
+
+
+def test_an_undo_whose_commit_fails_gives_the_files_their_new_names_back(tmp_path):
+    library = Library(tmp_path)
+    library.post(501)
+    library.add("abcdef.jpg", post_id=501)
+    library.add("other.jpg", post_id=501)
+    rows = library.rows()
+    library.formats("{model_username}/All/", "{media_id}.{ext}")
+    undo_file = library.run(apply=True)["undo_file"]
+    renamed = library.rows()
+
+    with read_lock(library.db), pytest.raises(sqlite3.OperationalError, match="locked"):
+        tool.undo(undo_file, apply=True)
+
+    # nothing was saved, so the files keep the names their rows still record
+    assert library.rows() == renamed
+    assert library.files() == ["alice/All/1.jpg", "alice/All/2.jpg"]
+
+    done = tool.undo(undo_file, apply=True)
+    assert (done["renamed_back"], done["rows_restored"]) == (2, 2)
+    assert library.files() == ["alice/Posts/Images/abcdef.jpg", "alice/Posts/Images/other.jpg"]
+    assert library.rows() == rows
+
+
+def test_an_apply_whose_commit_fails_gives_the_files_their_old_names_back(tmp_path):
+    library = Library(tmp_path)
+    library.post(501)
+    library.add("abcdef.jpg", post_id=501)
+    library.add("other.jpg", post_id=501)
+    rows = library.rows()
+    library.formats("{model_username}/All/", "{media_id}.{ext}")
+
+    with read_lock(library.db), pytest.raises(sqlite3.OperationalError, match="locked"):
+        library.run(apply=True)
+
+    # nothing was saved: the files are where their rows say, and no undo
+    # file is left, as nothing needs one
+    assert library.rows() == rows
+    assert library.files() == ["alice/Posts/Images/abcdef.jpg", "alice/Posts/Images/other.jpg"]
+    assert not list(Path(library.db).parent.glob("*.rename-undo-*"))
+
+    assert library.run(apply=True)["rows_changed"] == 2
+    assert library.files() == ["alice/All/1.jpg", "alice/All/2.jpg"]
+
+
+class _CommitThenStop:
+    """A connection whose commit goes through and is then interrupted, as a
+    Ctrl+C landing just after it would be."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def commit(self):
+        self._conn.commit()
+        raise KeyboardInterrupt
+
+    def close(self):
+        self._conn.close()
+
+
+def interrupt_after_commit(monkeypatch):
+    real = tool._connect
+    monkeypatch.setattr(tool, "_connect", lambda *a: _CommitThenStop(real(*a)))
+
+
+def test_an_apply_stopped_after_its_commit_keeps_the_new_names(tmp_path, monkeypatch):
+    # the rows were saved: moving the files back would part them from their rows
+    library = Library(tmp_path)
+    library.post(501)
+    library.add("abcdef.jpg", post_id=501)
+    library.formats("{model_username}/All/", "{media_id}.{ext}")
+    interrupt_after_commit(monkeypatch)
+
+    with pytest.raises(postgres.Unconfirmed):
+        library.run(apply=True)
+
+    assert library.files() == ["alice/All/1.jpg"]
+    assert [row[1:3] for row in library.rows()][0][1] == "1.jpg"
+    assert list(Path(library.db).parent.glob("*.rename-undo-*"))  # kept, to undo with
+
+
+def test_an_undo_stopped_after_its_commit_keeps_the_old_names(tmp_path, monkeypatch, capsys):
+    library = Library(tmp_path)
+    library.post(501)
+    library.add("abcdef.jpg", post_id=501)
+    rows = library.rows()
+    library.formats("{model_username}/All/", "{media_id}.{ext}")
+    undo_file = library.run(apply=True)["undo_file"]
+    interrupt_after_commit(monkeypatch)
+
+    with pytest.raises(KeyboardInterrupt):
+        tool.undo(undo_file, apply=True)
+
+    assert library.rows() == rows
+    assert library.files() == ["alice/Posts/Images/abcdef.jpg"]
+    assert "isn't known whether they were" in capsys.readouterr().err
 
 
 def test_names_match_what_the_download_code_builds(tmp_path):
