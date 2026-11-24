@@ -1165,10 +1165,11 @@ def test_ofsc_proxy_reaches_ffmpeg_and_the_chat_socket(monkeypatch, tmp_path, fa
         "https://live.example.invalid/": MASTER,
         "https://cdn.example.invalid/": "#EXTM3U\n#EXTINF:2.0,\ns1.ts\n#EXT-X-ENDLIST\n",
     }))
-    commands = []
+    commands, proxies = [], []
 
-    async def fake_ffmpeg(cmd, stop=None):
+    async def fake_ffmpeg(cmd, stop=None, proxy=None):
         commands.append(cmd)
+        proxies.append(proxy)
         with open(cmd[-1], "wb") as f:
             f.write(b"\0" * 32)
         return 0
@@ -1188,15 +1189,110 @@ def test_ofsc_proxy_reaches_ffmpeg_and_the_chat_socket(monkeypatch, tmp_path, fa
 
     asyncio.run(live.run(watch=False))
 
-    cmd = commands[0]
-    assert cmd[cmd.index("-http_proxy") + 1] == PROXY
-    assert cmd.index("-http_proxy") < cmd.index("-i")  # an input option
+    # handed to ffmpeg through its environment, not its command line
+    assert proxies == [PROXY]
+    assert PROXY not in " ".join(map(str, commands[0]))
     assert connected == [PROXY]
 
 
 def test_no_proxy_option_without_ofsc_proxy(tmp_path):
     cmd = live.ffmpeg_command("ffmpeg", "https://cdn.example.invalid/p.m3u8", tmp_path / "o.mp4")
     assert "-http_proxy" not in cmd
+
+
+SECRET_PROXY = "http://someone:Pr0xyPassw0rd@127.0.0.1:3128"
+# a stand-in for ffmpeg: writes its arguments and the proxy variables it was
+# started with, then fails with an error that names the proxy, as ffmpeg's do
+FAKE_FFMPEG = """
+import json, os, sys
+json.dump({"argv": sys.argv, "http_proxy": os.environ.get("http_proxy"),
+           "no_proxy": os.environ.get("no_proxy")}, open(sys.argv[1], "w"))
+sys.stderr.write("Error opening input: " + (os.environ.get("http_proxy") or "") + ": 407 Proxy Auth\\n")
+sys.exit(1)
+"""
+
+
+def test_the_proxy_reaches_ffmpeg_in_its_environment_not_its_arguments(tmp_path, monkeypatch, caplog):
+    import sys
+
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    seen = tmp_path / "seen.json"
+    with caplog.at_level("DEBUG", logger="shared"):
+        code = asyncio.run(live.run_ffmpeg([sys.executable, "-c", FAKE_FFMPEG, str(seen)],
+                                           proxy=SECRET_PROXY))
+    got = json.loads(seen.read_text())
+    assert code == 1
+    # other users can read a process's arguments (ps), not its environment
+    assert "Pr0xyPassw0rd" not in " ".join(got["argv"])
+    assert got["http_proxy"] == SECRET_PROXY
+    assert got["no_proxy"] is None  # every request goes through OFSC_PROXY
+    # ffmpeg's error is logged without the proxy's login
+    assert "407 Proxy Auth" in caplog.text
+    assert "Pr0xyPassw0rd" not in caplog.text and "someone" not in caplog.text
+
+
+def test_without_a_proxy_ffmpeg_keeps_the_environment_it_had(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    seen = tmp_path / "seen.json"
+    asyncio.run(live.run_ffmpeg([sys.executable, "-c", FAKE_FFMPEG, str(seen)]))
+    assert json.loads(seen.read_text())["http_proxy"] == "http://127.0.0.1:9"
+
+
+def _run_with_proxy(monkeypatch, fansly_settings, proxy):
+    fansly_settings(live=True, usernames=("creator_a",), live_chat=True)
+    set_proxy(monkeypatch, proxy)
+    install_session(monkeypatch, FakeClient({
+        live_api.ONLINE_URL: online_response(CREATOR_A),
+        live_api.channel_url(CREATOR_A[0]): channel_response(
+            CREATOR_A[0], "https://live.example.invalid/a/master.m3u8?token=t"),
+        "https://live.example.invalid/": MASTER,
+        "https://cdn.example.invalid/": "#EXTM3U\n#EXTINF:2.0,\ns1.ts\n#EXT-X-ENDLIST\n",
+    }))
+    calls = []
+
+    async def fake_ffmpeg(cmd, stop=None, **kwargs):
+        calls.append(kwargs)
+        with open(cmd[-1], "wb") as f:
+            f.write(b"\0" * 32)
+        return 0
+
+    connected = []
+
+    def fake_connect(user_agent, proxy=None):
+        connected.append(proxy)
+
+        async def connect():
+            await asyncio.Event().wait()
+
+        return connect
+
+    monkeypatch.setattr(live, "run_ffmpeg", fake_ffmpeg)
+    monkeypatch.setattr(live_chat, "aiohttp_connect", fake_connect)
+    asyncio.run(live.run(watch=False))
+    return calls, connected
+
+
+def test_an_empty_ofsc_proxy_means_no_proxy(monkeypatch, tmp_path, fansly_settings):
+    calls, connected = _run_with_proxy(monkeypatch, fansly_settings, "")
+    assert calls == [{}]
+    assert connected == [None]
+
+
+@pytest.mark.parametrize("proxy", ["https://127.0.0.1:3128", "socks5://127.0.0.1:1080"])
+def test_a_proxy_ffmpeg_cannot_use_is_warned_about(monkeypatch, tmp_path, fansly_settings, caplog, proxy):
+    with caplog.at_level("WARNING", logger="shared"):
+        _run_with_proxy(monkeypatch, fansly_settings, proxy)
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "OFSC_PROXY" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "http://" in warnings[0]
+
+
+def test_an_http_proxy_is_not_warned_about(monkeypatch, tmp_path, fansly_settings, caplog):
+    with caplog.at_level("WARNING", logger="shared"):
+        _run_with_proxy(monkeypatch, fansly_settings, PROXY)
+    assert "OFSC_PROXY" not in caplog.text
 
 
 class RecordingProxy:
@@ -1291,3 +1387,29 @@ def test_the_chat_socket_connects_through_the_proxy(monkeypatch):
 
     asked = asyncio.run(scenario())
     assert asked == ["CONNECT chatws.example.invalid:443 HTTP/1.1\r\n"]
+
+
+def test_an_empty_proxy_connects_the_chat_socket_directly(monkeypatch):
+    async def scenario():
+        asked = []
+
+        async def handle(reader, writer):
+            asked.append((await reader.readline()).decode())
+            writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(live_chat, "CHAT_WS_URL", f"ws://127.0.0.1:{port}/?v=3")
+        try:
+            with pytest.raises(Exception) as raised:
+                await live_chat.aiohttp_connect(UA, "")()
+        finally:
+            server.close()
+            await server.wait_closed()
+        return asked, raised.value
+
+    asked, error = asyncio.run(scenario())
+    assert not isinstance(error, ValueError)
+    assert asked == ["GET /?v=3 HTTP/1.1\r\n"]

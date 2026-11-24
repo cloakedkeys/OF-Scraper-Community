@@ -166,7 +166,7 @@ def aiohttp_connect(user_agent: str, proxy: str = None):
                 CHAT_WS_URL,
                 headers={"User-Agent": user_agent or "", "Origin": constants.ORIGIN},
                 autoping=True,
-                proxy=proxy,
+                proxy=proxy or None,
             )
         except Exception:
             await session.close()

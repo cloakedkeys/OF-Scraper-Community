@@ -22,6 +22,7 @@ import asyncio
 import datetime
 import json
 import logging
+import os
 import pathlib
 import random
 import re
@@ -93,11 +94,15 @@ def mask_url_secrets(url):
 
 
 _QUERY_IN_TEXT = re.compile(r"(\w+://[^\s?'\"]+)\?[^\s'\"]*")
+# the login in a link (http://user:password@host), as an OFSC_PROXY has it
+_LOGIN_IN_TEXT = re.compile(r"(\w+://)[^\s/@'\"]+@")
 
 
 def strip_queries(text: str) -> str:
-    """Drop query strings from URLs in free text such as ffmpeg's errors."""
-    return _QUERY_IN_TEXT.sub(r"\1?{hidden}", text or "")
+    """Drop query strings, and logins such as a proxy's, from URLs in free
+    text such as ffmpeg's errors."""
+    text = _LOGIN_IN_TEXT.sub(r"\1{hidden}@", text or "")
+    return _QUERY_IN_TEXT.sub(r"\1?{hidden}", text)
 
 
 # ------------------------------------------------------------------ playlists
@@ -210,17 +215,12 @@ def chat_path(base: pathlib.Path) -> pathlib.Path:
 
 # ------------------------------------------------------------------ ffmpeg
 
-def ffmpeg_command(ffmpeg: str, url: str, out: pathlib.Path, user_agent: str = "",
-                   proxy: str = None) -> list:
+def ffmpeg_command(ffmpeg: str, url: str, out: pathlib.Path, user_agent: str = "") -> list:
     headers = f"Origin: {constants.ORIGIN}\r\nReferer: {constants.REFERER}\r\n"
     # -y: ``out`` is the empty file reserve_part() created for this recording
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
     if user_agent:
         cmd += ["-user_agent", user_agent]
-    if proxy:
-        # OFSC_PROXY: the playlist came through it, and the HLS demuxer passes
-        # this on to every playlist reload and segment request
-        cmd += ["-http_proxy", proxy]
     cmd += [
         "-headers", headers,
         "-live_start_index", "0",
@@ -236,13 +236,27 @@ def ffmpeg_command(ffmpeg: str, url: str, out: pathlib.Path, user_agent: str = "
     return cmd
 
 
-async def run_ffmpeg(cmd: list, stop: asyncio.Event = None) -> int:
+def ffmpeg_env(proxy: str) -> dict:
+    """ffmpeg's environment with OFSC_PROXY as its proxy.
+
+    ffmpeg reads ``http_proxy`` for every playlist reload and segment request,
+    https ones included. It goes in the environment rather than -http_proxy so
+    the proxy's login isn't in the command line, which other users can read.
+    ``no_proxy`` is dropped: OFSC_PROXY is for every request.
+    """
+    env = {k: v for k, v in os.environ.items() if k.lower() not in ("no_proxy", "http_proxy")}
+    env["http_proxy"] = proxy
+    return env
+
+
+async def run_ffmpeg(cmd: list, stop: asyncio.Event = None, proxy: str = None) -> int:
     """Run ffmpeg until it exits; on ``stop`` it is asked to finish cleanly."""
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
+        env=ffmpeg_env(proxy) if proxy else None,
     )
     waiter = asyncio.ensure_future(proc.communicate())
     stopper = asyncio.ensure_future(stop.wait()) if stop else None
@@ -440,7 +454,8 @@ class LiveRecorder:
         log.info(f"{self.username}: recording livestream to {out.name}")
         try:
             await self.ffmpeg_runner(
-                ffmpeg_command(self.ffmpeg, variant, out, self.user_agent, self.proxy), stop)
+                ffmpeg_command(self.ffmpeg, variant, out, self.user_agent), stop,
+                **({"proxy": self.proxy} if self.proxy else {}))
         finally:
             # decided from the file, so a part ffmpeg wrote is kept and listed
             # even when the runner raised or was cancelled afterwards; an
@@ -717,7 +732,13 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
     auth = fansly_auth.read_auth()
     save_location = common_paths.get_save_location()
     ffmpeg = ffmpeg_finder.get_ffmpeg()
-    proxy = of_env.getattr("PROXY")
+    proxy = of_env.getattr("PROXY") or None
+    if proxy and not proxy.startswith("http://"):
+        # ffmpeg only uses an http:// proxy, and connects directly otherwise
+        log.warning(
+            "OFSC_PROXY isn't an http:// address, and ffmpeg can only use an "
+            "http:// proxy, so livestreams are recorded without the proxy"
+        )
 
     # playlists get one attempt each: a 403 means "fetch a fresh URL", not "retry"
     async with manager.Manager.session.aget_ofsession() as c, \
