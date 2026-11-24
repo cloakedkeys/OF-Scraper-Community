@@ -110,12 +110,6 @@ def _atomic_write(path, payload):
         dir=str(path.parent), prefix=".status.", suffix=".tmp"
     )
     try:
-        # mkstemp makes it 0600: health may run as another user (a
-        # monitoring script, Docker's HEALTHCHECK)
-        try:
-            os.chmod(tmp_name, 0o644)
-        except OSError:
-            pass
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
@@ -123,6 +117,12 @@ def _atomic_write(path, payload):
                 os.fsync(handle.fileno())
             except OSError:
                 pass
+        # mkstemp makes it 0600: health may run as another user (a
+        # monitoring script, Docker's HEALTHCHECK)
+        try:
+            os.chmod(tmp_name, 0o644)
+        except OSError:
+            pass
         # On Windows a concurrent reader can momentarily hold the target open.
         for attempt in range(5):
             try:
@@ -166,7 +166,8 @@ def _live_daemon_owns(existing):
     if not existing or existing.get("mode") != "daemon" or existing.get("state") == "stopped":
         return False
     pid = existing.get("pid")
-    if not isinstance(pid, int) or pid == os.getpid():
+    # JSON true is a bool, and so an int (1)
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid == os.getpid():
         return False
     try:
         import psutil

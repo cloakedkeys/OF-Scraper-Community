@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 import json
+import os
 import pathlib
 
 import pytest
@@ -204,3 +205,40 @@ def test_default_path_follows_main_profile_in_config(tmp_path, monkeypatch):
     config_home.mkdir(parents=True)
     (config_home / "config.json").write_text(json.dumps({"main_profile": "other"}), encoding="utf-8")
     assert health.default_status_path() == config_home / "other_profile" / "status.json"
+
+
+# --- second review round -------------------------------------------------------
+
+
+def _status_files(tmp_path, monkeypatch):
+    monkeypatch.delenv("OFSC_STATUS_FILE", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OFSC_CONFIG_DIR", raising=False)
+    config_home = tmp_path / ".config" / "ofscraper"
+    (config_home / "main_profile").mkdir(parents=True)
+    return config_home / "status.json", config_home / "main_profile" / "status.json"
+
+
+def test_default_path_prefers_the_running_daemon_over_a_newer_one_off(tmp_path, monkeypatch):
+    # the multi-profile parent, and main_profile's child writing its own file
+    parent, child = _status_files(tmp_path, monkeypatch)
+    parent.write_text(json.dumps({"mode": "daemon", "state": "running"}), encoding="utf-8")
+    child.write_text(json.dumps({"mode": "once", "state": "running"}), encoding="utf-8")
+    os.utime(parent, (1_000_000, 1_000_000))
+    assert health.default_status_path() == parent
+
+
+def test_default_path_takes_the_newer_file_when_neither_is_a_running_daemon(tmp_path, monkeypatch):
+    parent, child = _status_files(tmp_path, monkeypatch)
+    parent.write_text(json.dumps({"mode": "daemon", "state": "stopped"}), encoding="utf-8")
+    child.write_text(json.dumps({"mode": "once", "state": "stopped"}), encoding="utf-8")
+    os.utime(parent, (1_000_000, 1_000_000))
+    assert health.default_status_path() == child
+    os.utime(child, (500_000, 500_000))
+    assert health.default_status_path() == parent
+
+
+def test_idle_daemon_with_no_heartbeat_says_idle():
+    data = {"mode": "daemon", "state": "idle", "next_pass_at": None, "auth": "ok"}
+    healthy, reason = health.evaluate(data, now=NOW)
+    assert healthy is False and reason == "unhealthy: daemon is idle with no valid heartbeat"

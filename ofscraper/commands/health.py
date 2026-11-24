@@ -50,9 +50,19 @@ def _main_profile(config_home, paths):
     return f"{re.sub('_profile', '', name)}_profile"
 
 
+def _running_daemon(path):
+    """Whether path is a daemon's file that doesn't say it has stopped."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return isinstance(data, dict) and data.get("mode") == "daemon" and data.get("state") != "stopped"
+
+
 def default_status_path():
-    """OFSC_STATUS_FILE; else the newer of the multi-profile daemon's
-    status.json in the config folder and the main profile's."""
+    """OFSC_STATUS_FILE; else, of the multi-profile daemon's status.json in
+    the config folder and the main profile's, a running daemon's, then the
+    newer one: the main profile's one-off child doesn't hide its parent."""
     override = (os.getenv("OFSC_STATUS_FILE") or "").strip()
     if override:
         return pathlib.Path(override)
@@ -68,7 +78,7 @@ def default_status_path():
     found = [p for p in candidates if p.is_file()]
     if not found:
         return candidates[1]
-    return max(found, key=lambda p: p.stat().st_mtime)
+    return max(found, key=lambda p: (_running_daemon(p), p.stat().st_mtime))
 
 
 def _login_failed(data):
@@ -117,7 +127,7 @@ def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
         # scheduling: as quiet as a running pass may be, no longer
         hb = _parse_iso(data.get("heartbeat"))
         if hb is None:
-            return False, "unhealthy: daemon is running with no valid heartbeat"
+            return False, f"unhealthy: daemon is {state} with no valid heartbeat"
         age = now_utc - hb
         if age > limit:
             mins = int(age.total_seconds() // 60)
@@ -174,7 +184,7 @@ def build_parser():
         "status_file",
         nargs="?",
         default=None,
-        help="Path to the status JSON file (default: OFSC_STATUS_FILE, or the newer of status.json in the config folder and in the main profile's folder).",
+        help="Path to the status JSON file (default: OFSC_STATUS_FILE, or of status.json in the config folder and in the main profile's folder, a running daemon's, then the newer one).",
     )
     parser.add_argument(
         "--max-quiet",

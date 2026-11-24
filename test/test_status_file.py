@@ -310,6 +310,16 @@ def test_a_one_off_run_replaces_a_stopped_daemons_file(env_status):
     assert json.loads(env_status.path.read_text(encoding="utf-8"))["mode"] == "once"
 
 
+def test_a_true_pid_is_not_read_as_process_1(env_status):
+    # JSON true is a bool, which Python counts as the int 1 (init, always
+    # running): it isn't a daemon's PID
+    daemon = {"version": 1, "pid": True, "mode": "daemon", "state": "idle"}
+    env_status.path.write_text(json.dumps(daemon), encoding="utf-8")
+    with scrape_context.scrape_context_manager():
+        run_record.finish("ok")
+    assert json.loads(env_status.path.read_text(encoding="utf-8"))["mode"] == "once"
+
+
 def test_status_file_is_readable_by_others_and_no_temp_file_is_left(env_status, monkeypatch):
     status_file.set_auth("ok")
     if os.name != "nt":
