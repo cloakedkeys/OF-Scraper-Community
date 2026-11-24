@@ -104,3 +104,35 @@ def test_chromium_is_downloaded_with_this_pythons_playwright(runs):
     assert extras.install_chromium() is True
     assert extras.install_chromium() is True
     assert runs.calls == [[sys.executable, "-m", "playwright", "install", "chromium"]]
+
+
+@pytest.mark.parametrize("value, on", [(" True ", True), ("1\n", True), (" false", False), ("0", False)])
+def test_ofsc_install_extras_ignores_surrounding_spaces(monkeypatch, value, on):
+    from ofscraper.utils.of_env.values import system
+
+    monkeypatch.setenv("OFSC_INSTALL_EXTRAS", value)
+    assert system.load_system_config()["INSTALL_EXTRAS"] is on
+
+
+def test_installs_at_the_same_time_run_pip_once(runs, monkeypatch):
+    # the postgres driver can be asked for from several threads at once
+    import threading
+    import time
+
+    started = []
+
+    def slow(cmd, **kwargs):
+        started.append(cmd)
+        time.sleep(0.3)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(extras.subprocess, "run", slow)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(extras.install("postgres"))) for _ in range(4)]
+    threads += [threading.Thread(target=lambda: results.append(extras.install_chromium())) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results == [True] * 8
+    assert len(started) == 2  # one pip install, one Chromium download

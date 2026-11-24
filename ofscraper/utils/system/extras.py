@@ -16,6 +16,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import threading
 
 log = logging.getLogger("shared")
 
@@ -26,6 +27,23 @@ EXTRAS = {
 }
 # a slow connection and Chromium's ~150 MB download
 INSTALL_TIMEOUT = 1800
+
+_lock = threading.Lock()
+
+
+def _once(func):
+    """lru_cache, with callers at the same time (threads asking for the
+    PostgreSQL driver together) waiting for the one install instead of each
+    starting their own."""
+    cached = functools.lru_cache(maxsize=None)(func)
+
+    @functools.wraps(func)
+    def wrapper(*args):
+        with _lock:
+            return cached(*args)
+
+    wrapper.cache_clear = cached.cache_clear
+    return wrapper
 
 
 def enabled() -> bool:
@@ -60,7 +78,7 @@ def _run(cmd, what) -> bool:
     return True
 
 
-@functools.lru_cache(maxsize=None)
+@_once
 def install(extra: str) -> bool:
     """Install the ``extra`` packages, once per run. True when they were installed.
 
@@ -82,7 +100,7 @@ def install(extra: str) -> bool:
     return ok
 
 
-@functools.lru_cache(maxsize=None)
+@_once
 def install_chromium() -> bool:
     """Download Playwright's Chromium, once per run. True when it worked."""
     if getattr(sys, "frozen", False) or not enabled():

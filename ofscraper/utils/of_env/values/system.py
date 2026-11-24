@@ -52,7 +52,7 @@ def load_system_config():
 
     # INSTALL_EXTRAS: Whether a feature that needs an optional extra installs it the first time it's used: the `live` packages and the Chromium browser for OnlyFans livestreams, and the `postgres` driver when `OFSC_DATABASE_URL` is set. They go into the Python running OF-Scraper, with pip, or with uv when that Python has no pip. When False, or when the install fails, the feature stops and says how to install the extra. The standalone download never installs anything.
     # Default: True
-    config["INSTALL_EXTRAS"] = os.getenv("OFSC_INSTALL_EXTRAS", "True").lower() in (
+    config["INSTALL_EXTRAS"] = os.getenv("OFSC_INSTALL_EXTRAS", "True").strip().lower() in (
         "true",
         "1",
     )
