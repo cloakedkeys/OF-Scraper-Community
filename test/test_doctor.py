@@ -740,6 +740,41 @@ def test_shebang_forms(tmp_path, line, python):
     assert doctor._script_python(str(script)) == python
 
 
+@pytest.mark.parametrize("second_line, python", [
+    (b"'''exec' \"/opt/x y/bin/python3\" \"$0\" \"$@\"", "/opt/x y/bin/python3"),
+    # shlex.quote'd, as some installers write it
+    (b"'''exec' '/path with space/python' \"$0\" \"$@\"", "/path with space/python"),
+    (b"'exec' '/path with space/python' \"$0\" \"$@\"", "/path with space/python"),
+    (b"exec '/opt/x y/bin/python3' \"$0\" \"$@\"", "/opt/x y/bin/python3"),
+    (b"exec '/opt/it'\"'\"'s/bin/python3' \"$0\" \"$@\"", "/opt/it's/bin/python3"),
+])
+def test_a_sh_wrapper_for_a_long_or_spaced_python_path(tmp_path, second_line, python):
+    script = tmp_path / "ofscraper"
+    script.write_bytes(b"#!/bin/sh\n" + second_line + b"\n' '''\nimport ofscraper\n")
+    assert doctor._script_python(str(script)) == python
+
+
+def test_a_truncated_or_damaged_windows_program_cant_tell(tmp_path):
+    """Every offset in the PE and resource headers is checked against the
+    file's length: a cut or damaged file names no Python, never raises."""
+    import random
+
+    whole = pe_with_rcdata([("UV_TRAMPOLINE_KIND", b"\x01"), ("UV_PYTHON_PATH", b"python.exe")])
+    assert doctor._pe_resource(whole, "UV_PYTHON_PATH") == b"python.exe"
+    for size in range(len(whole)):
+        # only the padding after the value can go without losing it
+        assert doctor._pe_resource(whole[:size], "UV_PYTHON_PATH") in (None, b"python.exe")
+    rng = random.Random(0)
+    for _ in range(2000):
+        damaged = bytearray(whole)
+        for _ in range(rng.randint(1, 4)):
+            damaged[rng.randrange(len(damaged))] = rng.randrange(256)
+        assert isinstance(doctor._pe_resource(bytes(damaged), "UV_PYTHON_PATH"), (bytes, type(None)))
+    script = tmp_path / "ofscraper.exe"
+    script.write_bytes(whole[:0x420])
+    assert doctor._script_python(str(script)) is None
+
+
 def test_a_pip_windows_launcher_with_an_upper_case_python(tmp_path):
     script = tmp_path / "ofscraper.exe"
     script.write_bytes(b"MZ launcher code" + b'#!"C:\\Python312\\PYTHON.EXE"\r\n' + b"PK\x03\x04zip")
@@ -791,6 +826,20 @@ def test_a_count_that_cant_be_read_says_why(home, monkeypatch):
     assert status == "WARN" and "Couldn't reach onlyfans.com (connection failed)" in detail
     monkeypatch.setattr(me, "parse_subscriber_count", lambda: (_ for _ in ()).throw(KeyError("subscriptions")))
     assert result(doctor.run(online=True), "subscriptions") == ("WARN", "the count couldn't be read: KeyError")
+
+
+def test_key_mode_cdrm_with_a_malformed_server_address(home, monkeypatch):
+    """An OFSC_CDRM_URL that urlsplit can't parse (an unclosed IPv6
+    bracket) still gets the warning, without naming a host or crashing."""
+    import ofscraper.utils.of_env.of_env as of_env
+
+    url = f"http://user:{SECRET}@[::1/api/decrypt"
+    real = of_env.getattr
+    monkeypatch.setattr(of_env, "getattr", lambda key, *a, **k: url if key == "CDRM" else real(key, *a, **k))
+    write_config(home, {"cdm_options": {"key-mode-default": "cdrm"}})
+    status, detail = result(doctor.run(), "key files")
+    assert status == "WARN" and "an unreadable address" in detail and "cookies" in detail
+    assert SECRET not in detail and "::1" not in detail
 
 
 # --- second review round ---
