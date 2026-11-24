@@ -83,6 +83,39 @@ def test_auth_fields_are_named_never_shown(home, capsys):
     assert SECRET not in out and UA not in out
 
 
+@pytest.mark.parametrize("fields, finding", [
+    ({"sess": SECRET + ";"}, "sess has ;"),
+    ({"auth_id": "123\u200b45"}, "auth_id has characters outside printable ASCII"),
+    ({"x-bc": '"' + SECRET + '"'}, "x-bc has quotes"),
+    ({"sess": "sess=" + SECRET}, "sess has ="),
+    ({"user_agent": "Mozilla/5.0\u00a0(Windows NT 10.0)"}, "user_agent has characters outside printable ASCII"),
+    ({"sess": "deleted"}, "sess is \"deleted\""),
+])
+def test_stray_characters_in_auth_fields_are_named_never_shown(home, fields, finding):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, **fields)
+    report = doctor.run()
+    assert result(report, "OnlyFans auth")[0] == "PASS"
+    status, detail = result(report, "OnlyFans auth values")
+    assert status == "WARN" and finding in detail
+    assert SECRET not in json.dumps(report.results) and "\u200b" not in detail
+
+
+def test_clean_auth_fields_and_a_user_agents_semicolons_pass(home):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, sess="  " + SECRET + "\n")
+    report = doctor.run()
+    assert [r for r in report.results if r["check"] in ("OnlyFans auth values", "auth in config")] == []
+
+
+def test_auth_values_in_config_json(home):
+    write_config(home, {"main_profile": "main_profile", "sess": SECRET, "general": {"x-bc": SECRET, "auth_id": ""}})
+    write_auth(home)
+    status, detail = result(doctor.run(), "auth in config")
+    assert status == "WARN" and "sess, x-bc" in detail and "belong in auth.json" in detail
+    assert SECRET not in detail
+
+
 def test_a_fansly_profile_checks_the_fansly_auth(home):
     folder = config_dir(home) / "main_profile"
     folder.mkdir(parents=True)
