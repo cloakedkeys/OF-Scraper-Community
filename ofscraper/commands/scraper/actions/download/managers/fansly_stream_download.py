@@ -972,9 +972,12 @@ class FanslyStreamDownloadManager(DownloadManager):
             raise
         if returncode != 0 or not temp.exists() or not temp.stat().st_size:
             err = (stderr or b"").decode("utf-8", "replace").strip()[-500:]
-            if not err:
+            stopped = stop_reason(returncode)
+            if err and stopped:
+                # a crash after a message: the message alone hides the crash
+                err = f"{cmd[0]} {stopped}: {err}"
+            elif not err:
                 # nothing printed: say how it ended and which ffmpeg it was
-                stopped = stop_reason(returncode)
                 if stopped:
                     err = f"{cmd[0]} {stopped} without a message"
                 elif returncode:

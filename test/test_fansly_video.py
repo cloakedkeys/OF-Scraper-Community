@@ -3129,3 +3129,16 @@ def test_a_silent_ffmpeg_failure_says_how_it_ended(env, code, said):
     message = str(caught.value)
     assert message.startswith(f"ffmpeg could not join the stream's segments: {sys.executable} ")
     assert said in message
+
+
+def test_a_crash_after_a_message_says_both(env):
+    import sys
+
+    temp = env.temp / "x.part"
+    code = "import sys; sys.stderr.write('some last words\\n'); sys.stderr.flush(); " + CRASH
+    with pytest.raises(Exception) as caught:
+        asyncio.run(stream_mod.FanslyStreamDownloadManager()._run_cmd(
+            [sys.executable, "-I", "-c", code], temp, 60, "join the stream's segments"))
+    message = str(caught.value)
+    assert "crashed (" in message
+    assert "some last words" in message
