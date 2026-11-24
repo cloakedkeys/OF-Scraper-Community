@@ -84,6 +84,31 @@ def test_file_name_keeps_a_fansly_entity_as_written(site):
 @pytest.mark.parametrize(
     "caption,expected",
     [
+        # Fansly captions aren't HTML: text between "<" and ">" is what was
+        # typed, so only the characters a file name can't hold (< > /) come off
+        ("I <3 you > me", "I 3 you me"),
+        ("a <b>bold</b> claim", "a bboldb claim"),
+        ("first<br>second", "firstbrsecond"),
+    ],
+)
+def test_file_name_keeps_fansly_text_between_angle_brackets(site, caption, expected):
+    site("fansly")
+    post = fansly_post(caption)
+    assert post.file_sanitized_text == expected
+    assert text_placeholder(post) == expected
+
+
+def test_file_name_still_reads_onlyfans_markup(site):
+    # OnlyFans captions are HTML: tags come off and a <br> separates words
+    site("onlyfans")
+    post = posts_.Post({"id": 3, "text": "I <b>love</b> it<br>so much"}, 1, "a creator", "timeline")
+    assert post.file_sanitized_text == "I love it so much"
+    assert text_placeholder(post) == "I love it so much"
+
+
+@pytest.mark.parametrize(
+    "caption,expected",
+    [
         # Fansly shows these as written; the codes come off only once, when
         # the post is read, so file names keep them (less the characters a
         # file name can't hold: ":" and "*")
