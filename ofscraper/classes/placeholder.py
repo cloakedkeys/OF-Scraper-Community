@@ -442,7 +442,7 @@ class Placeholders(basePlaceholder):
 
     @property
     def trunicated_filepath(self):
-        if settings.get_settings().trunicate:
+        if getattr(settings.get_settings(), "trunicate", True):
             return pathlib.Path(paths.truncate(self._filepath))
         return self._filepath
 
@@ -607,7 +607,7 @@ class Textholders(basePlaceholder):
 
     @property
     def trunicated_filepath(self):
-        if settings.get_settings().trunicate:
+        if getattr(settings.get_settings(), "trunicate", True):
             return pathlib.Path(paths.truncate(self._filepath))
         return self._filepath
 

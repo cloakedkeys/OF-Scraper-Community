@@ -204,3 +204,14 @@ def test_settings_without_truncation_shorten_by_default(monkeypatch):
     monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Linux")
     out = placeholder.final_path(f"/data/{'a' * 400}.jpg")
     assert out.suffix == ".jpg" and len(out.name) < 400
+
+
+@pytest.mark.parametrize("holder", ["Placeholders", "Textholders"])
+def test_settings_without_truncation_shorten_the_saved_path_by_default(monkeypatch, holder):
+    # the path a download is saved at reads the flag the same way
+    monkeypatch.setattr(placeholder.settings, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Linux")
+    obj = getattr(placeholder, holder).__new__(getattr(placeholder, holder))
+    obj._filepath = f"/data/{'a' * 400}.jpg"
+    out = obj.trunicated_filepath
+    assert out.suffix == ".jpg" and len(out.name) < 400
