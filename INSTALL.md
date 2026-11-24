@@ -15,7 +15,7 @@ A first install, in order, and how to update without breaking a working one. Use
 
 This fork's package is **`ofscraper-community`**. [datawhores/OF-Scraper](https://github.com/datawhores/OF-Scraper) publishes the same code as **`ofscraper`**. Both install the same `ofscraper` command, so have only one of them. If `ofscraper` is already installed, uninstall it first, with the tool that installed it (`uv tool uninstall ofscraper`, `pipx uninstall ofscraper` or `pip uninstall ofscraper`). `uv tool list`, `pipx list` and `pip list` show what each tool has installed. See [Installed as `ofscraper`?](README.md#installed-as-ofscraper) for keeping `ofscraper` instead.
 
-**Optional extras** go in brackets after the name, for example `uv tool install "ofscraper-community[live]"`:
+**Optional extras** go in brackets after the name, for example `uv tool install "ofscraper-community[ffmpeg]"`:
 
 | Extra | What it adds |
 |---|---|
