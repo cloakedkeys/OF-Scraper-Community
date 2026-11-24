@@ -28,6 +28,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -40,8 +41,17 @@ INSTALL_HINT = (
 )
 
 
+FROZEN_HINT = (
+    "OnlyFans livestreams are recorded with a Chromium browser, which the "
+    "standalone download doesn't include: use the pip, uv or pipx install to "
+    "record them."
+)
+
+
 def install_hint() -> str:
     """INSTALL_HINT for the installed package (datawhores publishes it as ``ofscraper``)."""
+    if getattr(sys, "frozen", False):
+        return FROZEN_HINT  # pip can't add a package to the standalone download
     from ofscraper.__version__ import __dist_name__
 
     return INSTALL_HINT.format(dist=__dist_name__)

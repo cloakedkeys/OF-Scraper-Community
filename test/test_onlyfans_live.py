@@ -378,6 +378,27 @@ def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypat
     assert "playwright install chromium" in caplog.text
 
 
+def test_the_standalone_download_is_not_told_to_pip_install(monkeypatch, onlyfans_settings, caplog):
+    import builtins
+    import sys
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    onlyfans_settings(live=True)
+    real_import = builtins.__import__
+
+    def no_playwright(name, *args, **kwargs):
+        if name.startswith("playwright"):
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_playwright)
+    monkeypatch.setattr(manager, "Manager", None)  # never reached
+    with caplog.at_level("WARNING", logger="shared"):
+        asyncio.run(live.run(False, asyncio.Event()))
+    assert "standalone download" in caplog.text
+    assert "pip install" not in caplog.text
+
+
 def test_live_chat_is_fansly_only(monkeypatch, onlyfans_settings, caplog):
     onlyfans_settings(live=True, live_chat=True)
     monkeypatch.setattr(live_capture, "playwright_ready", lambda: False)
