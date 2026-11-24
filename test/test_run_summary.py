@@ -12,6 +12,7 @@ import ofscraper.commands.utils.scrape_context as scrape_context
 import ofscraper.main.close.final.run_record as run_record
 import ofscraper.scripts.final_script as final_script
 import ofscraper.utils.logs.utils.level as log_level
+import ofscraper.utils.logs.utils.sensitive as sensitive
 from ofscraper.managers.stats import StatsManager
 from ofscraper.managers.utils.state import EActivity
 from ofscraper.utils.logs.classes.classes import DiscordFormatter
@@ -188,8 +189,13 @@ def test_post_script_gets_the_old_keys_and_the_summary(run, monkeypatch, tmp_pat
 @pytest.fixture
 def discord(monkeypatch):
     """A Discord handler on the shared log that queues instead of sending."""
+    # account ids an earlier test logged in with are masked in every line;
+    # one of "1" would turn the counts below into "userid"
+    monkeypatch.setattr(sensitive, "_USER_ADDED_PATTERNS", {})
     handler = DiscordHandler.__new__(DiscordHandler)
     logging.Handler.__init__(handler)
+    # it has no sending thread to stop: logging's shutdown at exit calls this
+    handler.close = lambda: logging.Handler.close(handler)
     handler.queue = queue.Queue()
     handler.setFormatter(DiscordFormatter("%(message)s"))
     handler.setLevel(log_level.getLevel("SUMMARY"))
