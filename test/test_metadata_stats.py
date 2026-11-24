@@ -37,3 +37,15 @@ def test_metadata_stats_count_unattempted_media_as_skipped(caplog):
     assert stats.changed_video == stats.unchanged_count == stats.failed_count == 1
     assert "1 skipped" in str(stats)
     assert "1 skipped" in caplog.text
+
+
+def test_the_run_totals_count_skipped_metadata(caplog):
+    manager = StatsManager()
+    manager.update_and_print_stats("a creator", "metadata", [_media(1, "photo")])
+    manager.update_and_print_stats("another creator", "metadata", [_media(2, "photo")])
+    caplog.clear()
+
+    manager.print_global_summary()
+
+    assert "METADATA UPDATES" in caplog.text
+    assert "SKIPPED:       2 overall" in caplog.text

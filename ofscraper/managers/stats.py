@@ -583,7 +583,14 @@ class StatsManager:
             output_lines.append(f" ➜ FAILED:      {dl_fail} overall")
             output_lines.append(f" ➜ STOPPED:     {dl_stop} overall")
 
-        if any([meta_vids, meta_auds, meta_pics, meta_unchanged, meta_fail]):
+        # metadata not attempted, summed apart from the totals above
+        meta_skip = sum(
+            stat_obj.skipped_count
+            for activity_dict in self._stats.values()
+            for stat_obj in activity_dict.values()
+            if isinstance(stat_obj, MetadataStats)
+        )
+        if any([meta_vids, meta_auds, meta_pics, meta_unchanged, meta_skip, meta_fail]):
             total_meta = meta_vids + meta_auds + meta_pics
             output_lines.append("\n--- METADATA UPDATES ---")
             output_lines.append(f" ➜ TOTAL CHANGED: {total_meta}")
@@ -591,6 +598,7 @@ class StatsManager:
             output_lines.append(f" ➜ AUDIOS:        {meta_auds} changed")
             output_lines.append(f" ➜ IMAGES:        {meta_pics} changed")
             output_lines.append(f" ➜ UNCHANGED:     {meta_unchanged} overall")
+            output_lines.append(f" ➜ SKIPPED:       {meta_skip} overall")
             output_lines.append(f" ➜ FAILED:        {meta_fail} overall")
 
         if any([text_count, text_skip, text_fail]):
