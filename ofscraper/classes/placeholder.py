@@ -459,6 +459,24 @@ class Placeholders(basePlaceholder):
             return self.trunicated_filepath.stat().st_size
 
 
+# the placeholders that are the caption for a text file, in every spelling
+_CAPTION_NAMES = (
+    "file_name", "filename",
+    "only_file_name", "only_filename", "onlyfilename",
+    "original_filename", "originalfilename",
+)
+# stands where a left-out placeholder was until the name is put together
+_LEFT_OUT = "\0"
+
+
+def _without_left_out(name):
+    """The name without a left-out placeholder and the separator beside it:
+    the one after it ("{date} {filename} {text}" gives "date text"), or the
+    one before it when it ends the name ("{text} - {filename}.{ext}")."""
+    name = re.sub(rf"[ _-]*{_LEFT_OUT}(?=\.|$)", "", name)
+    return re.sub(rf"{_LEFT_OUT}[ _-]*", "", name)
+
+
 class Textholders(basePlaceholder):
     def __init__(self, ele, ext) -> None:
         super().__init__()
@@ -544,10 +562,6 @@ class Textholders(basePlaceholder):
         self._variables.update({"args": settings.get_args()})
 
         sanitized_name = ele.text_trunicate(ele.file_sanitized_text)
-        # with {text} in the name too, {filename} would repeat the caption:
-        # use the post id, as a media file's {filename} is its media id
-        if "text" in parse_safe(data.get_fileformat()):
-            sanitized_name = str(ele.id)
 
         self._variables.update({"quality": "source"})
         self._variables.update({"file_name": sanitized_name})
@@ -594,7 +608,13 @@ class Textholders(basePlaceholder):
             text = re.sub(" ", data.get_spacereplacer(), text)
             out = f"{text}.{ext}"
         else:
-            out = data.get_fileformat().format(**self._variables)
+            variables = self._variables
+            if "text" in parse_safe(data.get_fileformat()):
+                # a text file's {filename} is its caption, as {text} is: with
+                # both in the name the caption would be there twice, so
+                # {filename} is left out
+                variables = {**variables, **dict.fromkeys(_CAPTION_NAMES, _LEFT_OUT)}
+            out = _without_left_out(data.get_fileformat().format(**variables))
         log.debug(f"final filename path {out}")
         self._filename = out
         return out

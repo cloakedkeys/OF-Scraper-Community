@@ -42,8 +42,35 @@ def text_name(monkeypatch, file_format):
                                   "only_file_name", "original_filename"])
 def test_text_and_filename_together_name_the_caption_once(monkeypatch, text_settings, name):
     out = text_name(monkeypatch, "{date} {%s} {text}.{ext}" % name)
-    # {filename} is the post id, as a media file's is its media id
-    assert out == "2026-10-31 8 Look at this dildo.txt"
+    # {filename} is left out, with the space after it
+    assert out == "2026-10-31 Look at this dildo.txt"
+
+
+@pytest.mark.parametrize("file_format, name", [
+    # the separator next to {filename} goes with it, wherever it is
+    ("{filename} {text}.{ext}", "Look at this dildo.txt"),
+    ("{filename}_{text}.{ext}", "Look at this dildo.txt"),
+    ("{text} {filename}.{ext}", "Look at this dildo.txt"),
+    ("{text} - {filename}.{ext}", "Look at this dildo.txt"),
+    ("{date} - {filename} - {text}.{ext}", "2026-10-31 - Look at this dildo.txt"),
+    ("{date}_{filename}_{post_id}_{text}.{ext}", "2026-10-31_8_Look at this dildo.txt"),
+    ("{filename}{text}.{ext}", "Look at this dildo.txt"),
+])
+def test_the_separator_beside_filename_goes_with_it(monkeypatch, text_settings, file_format, name):
+    assert text_name(monkeypatch, file_format) == name
+
+
+def test_a_media_file_keeps_its_filename(monkeypatch, text_settings):
+    monkeypatch.setattr(
+        placeholder.data, "get_fileformat", lambda *a, **k: "{date} {filename} {text}.{ext}"
+    )
+    raw = {"id": 8, "text": CAPTION, "price": 0, "isOpened": True,
+           "responseType": "post", "postedAt": "2026-10-31T12:00:00+00:00",
+           "media": [{"id": 70, "type": "photo", "canView": True,
+                      "files": {"full": {"url": "https://example.invalid/pic.jpg"}}}]}
+    item = posts_.Post(raw, 1, "u", "timeline").all_media[0]
+    out = asyncio.run(placeholder.Placeholders(item, "jpg").createfilename())
+    assert out == "2026-10-31 pic Look at this dildo.jpg"
 
 
 def test_filename_alone_is_still_the_caption(monkeypatch, text_settings):
