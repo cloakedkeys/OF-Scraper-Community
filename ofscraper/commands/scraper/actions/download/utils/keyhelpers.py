@@ -247,22 +247,43 @@ def get_ffmpeg_key(key):
     return key.split(":")[1]
 
 
+CDRM_UNREADABLE = (
+    "OFSC_CDRM_URL can't be read as an address, so nothing is sent to it. "
+    "Check its value, or use key mode manual."
+)
+
+
+def _cdrm_host(url):
+    """The host of url, lower-cased; None when url can't be read as an
+    address (urlsplit raises on an unclosed IPv6 bracket, #819)."""
+    try:
+        return (urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
+    except ValueError:
+        return None
+
+
 def cdrm_retired(url):
     """True when url points at cdrm-project.com, which no longer works.
     It isn't sent the headers and cookies; a self-hosted server set in
     OFSC_CDRM_URL still is (#677)."""
-    host = (urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
-    return host == "cdrm-project.com" or host.endswith(".cdrm-project.com")
+    host = _cdrm_host(url)
+    return bool(host) and (host == "cdrm-project.com" or host.endswith(".cdrm-project.com"))
+
+
+def cdrm_unreadable(url):
+    """True when url is set but can't be read as an address (#819)."""
+    return bool(str(url or "").strip()) and _cdrm_host(url) is None
 
 
 def cdrm_unavailable():
-    """True when key mode cdrm has no server to ask: OFSC_CDRM_URL is empty
-    or the retired cdrm-project.com, the default. Its DRM videos can't get
-    a key, so they're skipped before download (#681, #696)."""
+    """True when key mode cdrm has no server to ask: OFSC_CDRM_URL is empty,
+    the retired cdrm-project.com (the default) or can't be read as an
+    address. Its DRM videos can't get a key, so they're skipped before
+    download (#681, #696, #819)."""
     if settings.get_settings().key_mode != "cdrm":
         return False
     url = str(of_env.getattr("CDRM") or "").strip()
-    return not url or cdrm_retired(url)
+    return not url or cdrm_retired(url) or cdrm_unreadable(url)
 
 
 _cdrm_retired_logged = False
@@ -273,10 +294,14 @@ async def key_helper_cdrm(c, pssh, licence_url, id, kid=None):
     key = None
     log.debug(f"ID:{id} using cdrm auto key helper")
     cdrm_url = str(of_env.getattr("CDRM") or "").strip()
-    if not cdrm_url or cdrm_retired(cdrm_url):
+    if not cdrm_url or cdrm_retired(cdrm_url) or cdrm_unreadable(cdrm_url):
         if not _cdrm_retired_logged:
             _cdrm_retired_logged = True
-            log.error(f"Nothing was sent to cdrm-project.com. {CDRM_DEPRECATED}")
+            # the address itself isn't logged: it can hold a login
+            if cdrm_unreadable(cdrm_url):
+                log.error(CDRM_UNREADABLE)
+            else:
+                log.error(f"Nothing was sent to cdrm-project.com. {CDRM_DEPRECATED}")
         log.debug(f"ID:{id} no key: key mode cdrm, no cdrm server configured")
         return None
     try:
