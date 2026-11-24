@@ -80,3 +80,35 @@ def test_table_time_field_accepts_decimal_seconds():
     assert [i.value for i in inputs] == ["1", "30", ""]
     field.update_table_min(90.7)
     assert [i.value for i in inputs] == ["", "1", "30"]
+
+
+def _kept_by_block_ads(monkeypatch, texts):
+    """The texts --block-ads lets through, with the real settings and filter."""
+    from ofscraper.filters.media import filters
+    from ofscraper.utils.args.main import AutoDotDict
+
+    args = AutoDotDict(_parse(["--block-ads"]))
+    args.command = "OF-Scraper"
+    monkeypatch.setattr(settings.read_args, "retriveArgs", lambda *a, **k: args)
+    merged = settings.merged_settings()
+    monkeypatch.setattr(filters.settings, "get_settings", lambda: merged)
+    media = [SimpleNamespace(text=t) for t in texts]
+    return [m.text for m in filters.post_neg_text_filter(media)]
+
+
+@pytest.mark.parametrize("text", [
+    # a creator's own sign-off on ordinary posts
+    "new set 💦 I've got a special FREE trial for you 😘. Click the link",
+    # hashtags that only start with an ad word
+    "#adult #adorable #advent calendar",
+])
+def test_block_ads_keeps_ordinary_posts(monkeypatch, text):
+    assert _kept_by_block_ads(monkeypatch, [text]) == [text]
+
+
+@pytest.mark.parametrize("text", [
+    "#ad go follow her", "#ads", "#AD", "check this out #sponsored", "#promotion!",
+    "huge giveaway this week", "shoutout to my friend", "paid endorsement",
+])
+def test_block_ads_still_blocks_ads(monkeypatch, text):
+    assert _kept_by_block_ads(monkeypatch, [text]) == []
