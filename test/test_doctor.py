@@ -70,6 +70,15 @@ def test_a_broken_config_is_a_finding_not_a_prompt(home, monkeypatch):
     assert status == "FAIL" and "line 3" in detail
 
 
+def test_a_config_startup_rejects_fails_even_when_it_could_be_repaired(home, monkeypatch):
+    # an unescaped Windows path: the run stops at it and asks for a fix, so
+    # doctor mustn't pass it by repairing the backslashes first
+    write_config(home, '{\n  "main_profile": "main_profile",\n  "save_location": "D:\\Media\\OF"\n}')
+    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked a question"))
+    status, detail = result(doctor.run(), "config file")
+    assert status == "FAIL" and "line 3" in detail and "Media" not in detail
+
+
 def test_auth_fields_are_named_never_shown(home, capsys):
     write_config(home, {"main_profile": "main_profile"})
     write_auth(home, **{"x-bc": ""})
