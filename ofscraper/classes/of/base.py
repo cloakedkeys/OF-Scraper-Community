@@ -19,7 +19,8 @@ class base:
         if len(text) == 0:
             return text
         length = int(settings.get_settings().text_length)
-        if length == 0:
+        # 0 is no limit, and so is a negative length (naming_check reports it)
+        if length <= 0:
             return text
         sep = settings.get_settings().space_replacer or " "
         if settings.get_settings().text_type == "letter":
@@ -45,7 +46,8 @@ class base:
         text = re.sub(r'[\n<>:"/\|?*:;]+', "", text)
         text = re.sub("-+", "_", text)
         text = re.sub(" +", " ", text)
-        text = re.sub(" ", settings.get_settings().space_replacer, text)
+        # literal text: a backslash isn't a re.sub escape here
+        text = text.replace(" ", settings.get_settings().space_replacer)
         return text
 
     def db_cleanup(self, string):

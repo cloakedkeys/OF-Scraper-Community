@@ -16,6 +16,7 @@ import ofscraper.utils.paths.paths as paths
 import ofscraper.utils.profiles.data as profile_data
 import ofscraper.utils.settings as settings
 from ofscraper.utils.string import parse_safe
+from ofscraper.utils.config.naming_check import name_safe
 import ofscraper.managers.manager as manager
 from ofscraper.scripts.naming_script import naming_script
 
@@ -371,6 +372,9 @@ class Placeholders(basePlaceholder):
         model_id = ele.model_id
         self._variables.update({"ext": ext})
         await self.add_common_variables(ele, username, model_id)
+        # the date setting can hold / or :, which a folder can use but a
+        # file name can't
+        self._variables.update({"date": name_safe(self._variables["date"])})
         globals().update(self._variables)
         log.trace(
             f"model_id:{model_id}  filename placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
@@ -580,6 +584,9 @@ class Textholders(basePlaceholder):
         model_id = ele.model_id
         self._variables.update({"ext": ext})
         await self.add_common_variables(ele, username, model_id)
+        # the date setting can hold / or :, which a folder can use but a
+        # file name can't
+        self._variables.update({"date": name_safe(self._variables["date"])})
         globals().update(self._variables)
         log.trace(
             f"model_id:{model_id}  filename placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
@@ -587,7 +594,7 @@ class Textholders(basePlaceholder):
         out = None
         if ele.responsetype.capitalize() == "Profile":
             text = ele.file_sanitized_text
-            text = re.sub(" ", data.get_spacereplacer(), text)
+            text = text.replace(" ", settings.get_settings().space_replacer)
             out = f"{text}.{ext}"
         else:
             out = data.get_fileformat().format(**self._variables)
