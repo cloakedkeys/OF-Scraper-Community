@@ -210,12 +210,17 @@ def chat_path(base: pathlib.Path) -> pathlib.Path:
 
 # ------------------------------------------------------------------ ffmpeg
 
-def ffmpeg_command(ffmpeg: str, url: str, out: pathlib.Path, user_agent: str = "") -> list:
+def ffmpeg_command(ffmpeg: str, url: str, out: pathlib.Path, user_agent: str = "",
+                   proxy: str = None) -> list:
     headers = f"Origin: {constants.ORIGIN}\r\nReferer: {constants.REFERER}\r\n"
     # -y: ``out`` is the empty file reserve_part() created for this recording
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
     if user_agent:
         cmd += ["-user_agent", user_agent]
+    if proxy:
+        # OFSC_PROXY: the playlist came through it, and the HLS demuxer passes
+        # this on to every playlist reload and segment request
+        cmd += ["-http_proxy", proxy]
     cmd += [
         "-headers", headers,
         "-live_start_index", "0",
@@ -286,7 +291,7 @@ class LiveRecorder:
     def __init__(self, stream: dict, save_location, fetch_channel, fetch_text,
                  ffmpeg="ffmpeg", user_agent="", ffmpeg_runner=None,
                  max_failures=DEFAULT_MAX_FAILURES, backoff=(2, 30), chat=None,
-                 schemes=FFMPEG_SCHEMES):
+                 schemes=FFMPEG_SCHEMES, proxy=None):
         self.stream = dict(stream)
         self.username = stream["username"]
         self.save_location = save_location
@@ -294,6 +299,7 @@ class LiveRecorder:
         self.fetch_text = fetch_text
         self.ffmpeg = ffmpeg
         self.user_agent = user_agent
+        self.proxy = proxy
         self.ffmpeg_runner = ffmpeg_runner or run_ffmpeg
         self.max_failures = max_failures
         self.backoff = backoff
@@ -434,7 +440,7 @@ class LiveRecorder:
         log.info(f"{self.username}: recording livestream to {out.name}")
         try:
             await self.ffmpeg_runner(
-                ffmpeg_command(self.ffmpeg, variant, out, self.user_agent), stop)
+                ffmpeg_command(self.ffmpeg, variant, out, self.user_agent, self.proxy), stop)
         finally:
             # decided from the file, so a part ffmpeg wrote is kept and listed
             # even when the runner raised or was cancelled afterwards; an
@@ -702,6 +708,7 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
     import ofscraper.managers.manager as manager
     import ofscraper.utils.paths.common as common_paths
     import ofscraper.utils.system.ffmpeg as ffmpeg_finder
+    import ofscraper.utils.of_env.of_env as of_env
     from ofscraper.managers.sessionmanager.sessionmanager import HEADERS
     from ofscraper.sites.fansly import auth as fansly_auth
     from ofscraper.sites.fansly import live_api, live_chat
@@ -710,6 +717,7 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
     auth = fansly_auth.read_auth()
     save_location = common_paths.get_save_location()
     ffmpeg = ffmpeg_finder.get_ffmpeg()
+    proxy = of_env.getattr("PROXY")
 
     # playlists get one attempt each: a 403 means "fetch a fresh URL", not "retry"
     async with manager.Manager.session.aget_ofsession() as c, \
@@ -733,12 +741,13 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
             chat = None
             if opts["chat"]:
                 chat = live_chat.ChatRecorder(
-                    live_chat.aiohttp_connect(auth.get("user_agent")),
+                    live_chat.aiohttp_connect(auth.get("user_agent"), proxy),
                     auth.get("authorization_token"),
                 )
             await LiveRecorder(
                 stream, save_location, fetch_channel, fetch_text,
                 ffmpeg=ffmpeg, user_agent=auth.get("user_agent") or "", chat=chat,
+                proxy=proxy,
             ).run(stop_event)
 
         watcher = LiveWatcher(

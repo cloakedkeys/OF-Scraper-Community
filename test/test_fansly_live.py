@@ -15,7 +15,7 @@ import threading
 from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener, urlopen
 
 import pytest
 
@@ -1140,3 +1140,154 @@ def test_api_username_is_cleaned_before_it_becomes_a_folder(tmp_path, name):
     assert livestreams.parent.parent == tmp_path / "Fansly"  # one folder level, inside Fansly
     assert livestreams.parent.name not in ("", ".", "..")
     assert not set("/\\:") & set(livestreams.parent.name + base.name)
+
+
+# ------------------------------------------------------------------ OFSC_PROXY (#718)
+
+PROXY = "http://127.0.0.1:3128"
+
+
+def set_proxy(monkeypatch, proxy):
+    import ofscraper.utils.of_env.of_env as of_env
+
+    real = of_env.getattr
+    monkeypatch.setattr(of_env, "getattr",
+                        lambda key, default=None: proxy if key == "PROXY" else real(key, default))
+
+
+def test_ofsc_proxy_reaches_ffmpeg_and_the_chat_socket(monkeypatch, tmp_path, fansly_settings):
+    fansly_settings(live=True, usernames=("creator_a",), live_chat=True)
+    set_proxy(monkeypatch, PROXY)
+    install_session(monkeypatch, FakeClient({
+        live_api.ONLINE_URL: online_response(CREATOR_A),
+        live_api.channel_url(CREATOR_A[0]): channel_response(
+            CREATOR_A[0], "https://live.example.invalid/a/master.m3u8?token=t"),
+        "https://live.example.invalid/": MASTER,
+        "https://cdn.example.invalid/": "#EXTM3U\n#EXTINF:2.0,\ns1.ts\n#EXT-X-ENDLIST\n",
+    }))
+    commands = []
+
+    async def fake_ffmpeg(cmd, stop=None):
+        commands.append(cmd)
+        with open(cmd[-1], "wb") as f:
+            f.write(b"\0" * 32)
+        return 0
+
+    connected = []
+
+    def fake_connect(user_agent, proxy=None):
+        connected.append(proxy)
+
+        async def connect():
+            await asyncio.Event().wait()  # cancelled when the recording ends
+
+        return connect
+
+    monkeypatch.setattr(live, "run_ffmpeg", fake_ffmpeg)
+    monkeypatch.setattr(live_chat, "aiohttp_connect", fake_connect)
+
+    asyncio.run(live.run(watch=False))
+
+    cmd = commands[0]
+    assert cmd[cmd.index("-http_proxy") + 1] == PROXY
+    assert cmd.index("-http_proxy") < cmd.index("-i")  # an input option
+    assert connected == [PROXY]
+
+
+def test_no_proxy_option_without_ofsc_proxy(tmp_path):
+    cmd = live.ffmpeg_command("ffmpeg", "https://cdn.example.invalid/p.m3u8", tmp_path / "o.mp4")
+    assert "-http_proxy" not in cmd
+
+
+class RecordingProxy:
+    """A plain-HTTP proxy that answers from the local HLS server's handler and
+    remembers each absolute URL it was asked for."""
+
+    def __init__(self, hls):
+        self.urls = []
+        proxy = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                proxy.urls.append(self.path)
+                u = urlparse(self.path)
+                code, body, ctype = hls.answer(u.path + (f"?{u.query}" if u.query else ""),
+                                               dict(self.headers))
+                self.send_response(code)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+@pytest.mark.slow
+@needs_ffmpeg
+def test_ffmpeg_fetches_the_live_stream_through_the_proxy(hls, tmp_path, monkeypatch):
+    # ffmpeg skips the proxy for hosts in no_proxy, which often lists 127.0.0.1
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    direct = build_opener(ProxyHandler({}))  # the test's own playlist fetches
+
+    async def fetch_text(url):
+        def get():
+            with direct.open(url, timeout=10) as r:
+                return r.read().decode()
+
+        return await asyncio.to_thread(get)
+
+    proxy = RecordingProxy(hls)
+    try:
+        fetch_channel, _ = channel_feed(hls, ["t1"])
+        rec = live.LiveRecorder(stream_a(), tmp_path, fetch_channel, fetch_text,
+                                ffmpeg="ffmpeg", backoff=(0, 0), schemes=LOCAL, proxy=proxy.url)
+        sidecar = asyncio.run(asyncio.wait_for(rec.run(), timeout=120))
+    finally:
+        proxy.close()
+
+    assert sidecar["endReason"] == "stream ended"
+    mp4 = tmp_path / "Fansly" / "creator_a" / "Livestreams" / f"creator_a_{STAMP}_live.mp4"
+    assert float(probe(mp4)["format"]["duration"]) >= 5
+    # every playlist reload and segment ffmpeg asked for went through the proxy
+    paths = [urlparse(u).path for u in proxy.urls]
+    assert "/live/high.m3u8" in paths
+    assert sorted(p for p in paths if p.startswith("/live/seg")) == sorted(
+        f"/live/seg{i}.ts" for i in range(len(hls.segs)))
+    assert all(u.startswith(hls.base) for u in proxy.urls)
+
+
+def test_the_chat_socket_connects_through_the_proxy(monkeypatch):
+    # a host that can't resolve, so nothing reaches Fansly even without the proxy
+    monkeypatch.setattr(live_chat, "CHAT_WS_URL", "wss://chatws.example.invalid/?v=3")
+
+    async def scenario():
+        asked = []
+
+        async def handle(reader, writer):
+            asked.append((await reader.readline()).decode())
+            writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            with pytest.raises(Exception):
+                await live_chat.aiohttp_connect(UA, f"http://127.0.0.1:{port}")()
+        finally:
+            server.close()
+            await server.wait_closed()
+        return asked
+
+    asked = asyncio.run(scenario())
+    assert asked == ["CONNECT chatws.example.invalid:443 HTTP/1.1\r\n"]
