@@ -60,7 +60,9 @@ def stop_reason(returncode) -> str | None:
         except ValueError:
             name = f"signal {-returncode}"
         return f"crashed ({name})" if name in _CRASH_SIGNALS else f"was stopped ({name})"
-    if returncode >= 0xC0000000:
+    # NTSTATUS error codes (0xC0000005, 0xE06D7363...); a negative exit code,
+    # exit(-1), shows as 0xFFFFFFFF, so the top of the range isn't a crash
+    if 0xC0000000 <= returncode < 0xF0000000:
         return f"crashed (Windows error 0x{returncode:08X})"
     return None
 
@@ -83,6 +85,12 @@ def _ts_crash(path: str) -> str | None:
 
 
 def _is_valid_ffmpeg(path: str | None) -> bool:
+    if path and path in _crashed:
+        return False  # already checked in this search, e.g. config.json names the one on PATH
+    return _check_ffmpeg(path)
+
+
+def _check_ffmpeg(path: str | None) -> bool:
     """
     Checks if a given path is a real, executable FFmpeg binary and validates
     that its version is >= 6 for DRM compatibility. Logs the process.
@@ -170,6 +178,7 @@ def get_ffmpeg() -> str:
         return _ffmpeg_path
 
     log.debug("Searching for a valid FFmpeg binary...")
+    _crashed.clear()  # from an earlier search
 
     # Step 1: Check the path from settings.
     path_from_settings = settings.get_settings().ffmpeg

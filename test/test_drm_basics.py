@@ -166,6 +166,12 @@ def test_ffmpeg_version_gate(monkeypatch, line, ok):
         (-15, "was stopped (SIGTERM)"),
         (-200, "was stopped (signal 200)"),
         (0xC0000005, "crashed (Windows error 0xC0000005)"),
+        (0xC0000409, "crashed (Windows error 0xC0000409)"),
+        (0xE06D7363, "crashed (Windows error 0xE06D7363)"),  # an uncaught C++ exception
+        # exit(-1) and exit(-2) as Windows reports them: errors, not crashes
+        (0xFFFFFFFF, None),
+        (0xFFFFFFFE, None),
+        (0xF0000000, None),
     ],
 )
 def test_stop_reason(code, said):
@@ -256,3 +262,26 @@ def test_a_crashing_ffmpeg_is_used_when_there_is_no_other(lookup, caplog):
 def test_a_working_settings_ffmpeg_is_still_first(lookup):
     lookup.on_path = "/usr/bin/ffmpeg"
     assert ffmpeg.get_ffmpeg() == "/static/ffmpeg"
+
+
+def test_the_same_crashing_ffmpeg_is_checked_once(lookup, caplog, monkeypatch):
+    # config.json names the ffmpeg that is also the one on PATH
+    lookup.crashes = {"/static/ffmpeg"}
+    lookup.on_path = "/static/ffmpeg"
+    checked = []
+    crash = ffmpeg._ts_crash
+    monkeypatch.setattr(ffmpeg, "_ts_crash", lambda path: checked.append(path) or crash(path))
+    with caplog.at_level("WARNING"):
+        assert ffmpeg.get_ffmpeg() == "/static/ffmpeg"
+    assert checked == ["/static/ffmpeg"]
+    assert caplog.text.count("reading a small test video") == 1
+
+
+def test_a_new_search_forgets_the_crashed_ffmpeg_of_the_last_one(lookup, monkeypatch):
+    lookup.crashes = {"/static/ffmpeg"}
+    assert ffmpeg.get_ffmpeg() == "/static/ffmpeg"  # no other, so used anyway
+    # config.json no longer names it, and there is no other ffmpeg
+    monkeypatch.setattr(ffmpeg, "_ffmpeg_path", None)
+    monkeypatch.setattr(ffmpeg.settings, "get_settings", lambda: SimpleNamespace(ffmpeg=""))
+    with pytest.raises(FileNotFoundError):
+        ffmpeg.get_ffmpeg()
