@@ -85,3 +85,20 @@ def test_nothing_is_reported_under_the_cap(run_with, caplog):
     with caplog.at_level(logging.INFO):
         assert len(collect().get_media_to_download()) == 5
     assert cap_lines(caplog) == []
+
+
+def test_a_negative_cap_is_no_cap(run_with, caplog):
+    run_with("--max-post-count", "-2")
+    with caplog.at_level(logging.INFO):
+        assert len(collect().get_media_to_download()) == 5
+    assert cap_lines(caplog) == []
+
+
+def test_without_a_username_the_line_has_no_name(run_with, caplog):
+    run_with("--max-post-count", "4")
+    media = collect().all_media
+    with caplog.at_level(logging.INFO):
+        assert len(filters.ele_count_filter(media)) == 4
+    assert cap_lines(caplog) == [
+        "1 media left out by max_post_count (4): only the newest 4 are kept"
+    ]
