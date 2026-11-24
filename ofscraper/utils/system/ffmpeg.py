@@ -43,16 +43,20 @@ def ffmpeg_version(path: str | None):
 def find_ffmpeg(configured: str | None):
     """The ffmpeg get_ffmpeg() would use, without keeping it: (path, where
     it was found, version text), or (None, None, None). Each place is tried
-    in get_ffmpeg's order: the setting, pyffmpeg, then PATH."""
-    candidates = [("config", configured)]
-    try:
-        from pyffmpeg import FFmpeg
+    in get_ffmpeg's order: the setting, pyffmpeg, then PATH, and a place is
+    only asked when the one before had none (pyffmpeg may fetch its binary)."""
 
-        candidates.append(("pyffmpeg", FFmpeg().get_ffmpeg_bin()))
-    except Exception:
-        pass
-    candidates.append(("PATH", shutil.which("ffmpeg")))
-    for source, path in candidates:
+    def candidates():
+        yield "config", configured
+        try:
+            from pyffmpeg import FFmpeg
+
+            yield "pyffmpeg", FFmpeg().get_ffmpeg_bin()
+        except Exception:
+            pass
+        yield "PATH", shutil.which("ffmpeg")
+
+    for source, path in candidates():
         if _is_valid_ffmpeg(path):
             try:
                 return path, source, ffmpeg_version(path)[1]
