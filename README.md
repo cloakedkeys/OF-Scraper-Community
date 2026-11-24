@@ -261,9 +261,9 @@ OF-Scraper exits with a code that scripts, cron jobs and Task Scheduler can chec
 | `6` | Configuration error (unreadable config, or a configured database that can't be reached). |
 | `1` | Unexpected error. |
 | `2` | Usage error (command-line mistake). |
-| `130` | Interrupted (Ctrl+C, or SIGTERM outside the daemon). |
+| `130` | Interrupted with Ctrl+C. |
 
-In `--daemon` mode, each pass logs its outcome and resets for the next pass; stopping the daemon with `SIGTERM` exits `0`.
+In `--daemon` mode, each pass logs its outcome and resets for the next pass; stopping the daemon with `SIGTERM` exits `0`. Outside the daemon, `SIGTERM` isn't caught: the signal ends the run, and a shell reports `143`.
 
 Example cron job (every 3 hours, with `--auth-fail` so it never hangs waiting for a prompt):
 

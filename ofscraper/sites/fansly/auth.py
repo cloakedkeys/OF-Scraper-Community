@@ -78,6 +78,10 @@ def problems(auth: dict) -> list:
     return out
 
 
+class AuthFileUnreadable(ValueError):
+    """fansly_auth.json exists but isn't JSON holding an object."""
+
+
 def read_auth(path=None) -> dict:
     """Auth from the profile's file (missing file gives empty values)."""
     path = pathlib.Path(path or auth_path())
@@ -87,7 +91,13 @@ def read_auth(path=None) -> dict:
         return empty()
     if _cache["path"] == path and _cache["mtime"] == mtime:
         return dict(_cache["auth"])
-    auth = normalize(json.loads(encoding.read_text_file(path)))
+    try:
+        raw = json.loads(encoding.read_text_file(path))
+        if raw is not None and not isinstance(raw, dict):
+            raise ValueError("it doesn't hold an object")
+    except (ValueError, OSError) as e:
+        raise AuthFileUnreadable(f"{path.name} can't be read: {e}") from e
+    auth = normalize(raw)
     hide_token(auth.get("authorization_token"))
     _cache.update(path=path, mtime=mtime, auth=dict(auth))
     return auth
@@ -195,7 +205,13 @@ def token_prompt(current):
 
 def load() -> dict:
     """Auth for this run; prompts when it is missing or unusable."""
-    auth = read_auth()
+    try:
+        auth = read_auth()
+    except AuthFileUnreadable as e:
+        import ofscraper.main.close.exit_status as exit_status
+
+        log.error(f"{e}. Fix the file, or delete it to enter the auth again.")
+        raise SystemExit(exit_status.AUTH)
     if problems(auth):
         log.info("Fansly auth is missing or incomplete")
         auth = make_auth(auth)

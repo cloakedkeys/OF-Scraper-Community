@@ -320,6 +320,56 @@ def test_unreadable_config_in_load_exits_6(monkeypatch):
     assert exc.value.code == exit_status.CONFIG
 
 
+def test_malformed_config_json_exits_6(monkeypatch, tmp_path):
+    # the real loader: settings are read before readConfig(), and they open
+    # config.json first
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.main.open.load as load
+    import ofscraper.utils.config.config as config_
+    import ofscraper.utils.settings as settings
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    config_dir = tmp_path / ".config" / "ofscraper"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(settings, "settings", {})
+    monkeypatch.setattr(config_, "config", None)
+    monkeypatch.setattr(load, "systemSet", lambda: None)
+    with pytest.raises(SystemExit) as exc:
+        load.main()
+    assert exc.value.code == exit_status.CONFIG
+
+
+def test_corrupt_fansly_auth_file_exits_3(monkeypatch, tmp_path):
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.sites.fansly.auth as fansly_auth
+
+    for text in ("{not json", "[1, 2]"):
+        path = tmp_path / "fansly_auth.json"
+        path.write_text(text, encoding="utf-8")
+        monkeypatch.setattr(fansly_auth, "auth_path", lambda: path)
+        with pytest.raises(SystemExit) as exc:
+            fansly_auth.load()
+        assert exc.value.code == exit_status.AUTH
+        path.unlink()
+
+
+def test_ctrl_c_during_error_shutdown_exits_130(monkeypatch):
+    import ofscraper.main.close.exit_status as exit_status
+
+    def interrupted_shutdown():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run, "check_database", lambda: None)
+    monkeypatch.setattr(run, "start_manager", _fail)
+    monkeypatch.setattr(run.exit_manager, "shutdown", interrupted_shutdown)
+    monkeypatch.setattr(run.exit_manager, "forcedShutDown", lambda: None)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.INTERRUPTED
+
+
 def test_daemon_pass_logs_outcome_and_resets_status(monkeypatch, caplog):
     import queue
     import ofscraper.commands.scraper.scraper as scraper
@@ -405,7 +455,10 @@ def test_startup_error_in_load_exits_1(monkeypatch):
         raise RuntimeError("startup failed")
 
     monkeypatch.setattr(load, "systemSet", lambda: None)
-    monkeypatch.setattr(load, "settings_loader", boom)
+    monkeypatch.setattr(load, "settings_loader", lambda: None)
+    monkeypatch.setattr(load, "setdate", lambda: None)
+    monkeypatch.setattr(load, "readConfig", lambda: None)
+    monkeypatch.setattr(load, "setLogger", boom)
     with pytest.raises(SystemExit) as exit_info:
         load.main()
     assert exit_info.value.code == 1

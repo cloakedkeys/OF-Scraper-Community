@@ -28,9 +28,11 @@ def _report_startup_error(error):
 def main():
     try:
         systemSet()
-        settings_loader()
-        setdate()
         try:
+            # settings are read from config.json, so a broken file can stop
+            # either of these
+            settings_loader()
+            setdate()
             readConfig()
         except Exception as E:
             _report_startup_error(E)
