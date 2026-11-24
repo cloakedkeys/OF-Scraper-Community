@@ -8,8 +8,6 @@ import ofscraper.sites as sites
 import ofscraper.utils.settings as settings
 
 html_parser = "lxml" if importlib.util.find_spec("lxml") else "html.parser"
-# an HTML entity with its ";": "&amp;", "&#39;", "&#x0A;"
-_ENTITY = re.compile(r"&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);")
 
 
 class base:
@@ -59,7 +57,11 @@ class base:
             # tags are gone, so a decoded "<" isn't read as one. Only an
             # entity ending in ";" is decoded: a cleaned name has none left,
             # so cleaning it again decodes nothing twice.
-            text = _ENTITY.sub(lambda m: html.unescape(m[0]), text)
+            text = re.sub(
+                r"&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);",
+                lambda m: html.unescape(m[0]),
+                text,
+            )
         # a line break or a tab, written or decoded ("&#10;"), separates
         # words: removing it would join the words on either side
         text = re.sub(r"[\r\n\t]+", " ", text)
