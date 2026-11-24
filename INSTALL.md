@@ -21,7 +21,17 @@ This fork's package is **`ofscraper-community`**. [datawhores/OF-Scraper](https:
 |---|---|
 | `ffmpeg` | A bundled ffmpeg (pyffmpeg), used when no other ffmpeg is found. |
 | `postgres` | [PostgreSQL](POSTGRESQL.md) support. |
-| `live` | Recording OnlyFans livestreams. Run `playwright install chromium` afterwards. |
+| `live` | Recording OnlyFans livestreams. Download its Chromium browser afterwards, as below. |
+
+The `live` extra also needs Playwright's Chromium browser, downloaded with `playwright install chromium`. uv and pipx don't put Playwright's own `playwright` command on your `PATH` unless asked to, so install with:
+
+| Tool | Install | Then |
+|---|---|---|
+| uv | `uv tool install "ofscraper-community[live]" --with-executables-from playwright` | `playwright install chromium` |
+| pipx | `pipx install --include-deps "ofscraper-community[live]"` | `playwright install chromium` |
+| pip | `pip install "ofscraper-community[live]"` | `playwright install chromium` |
+
+**Planned** ([#720](https://github.com/cloakedkeys/OF-Scraper-Community/pull/720), [#721](https://github.com/cloakedkeys/OF-Scraper-Community/pull/721), not released yet): the first `--live` run installs Playwright and Chromium itself, the first run with `OFSC_DATABASE_URL` set installs the PostgreSQL driver where it's missing, and the driver comes with the install on most systems, so the `live` and `postgres` extras are only needed where that automatic install is turned off (`OFSC_INSTALL_EXTRAS=False`) or fails. Until a release includes them, install the extras as above.
 
 Without Python, download a build for Windows, macOS or Linux from the [releases](https://github.com/cloakedkeys/OF-Scraper-Community/releases), or use the Docker image (`ghcr.io/cloakedkeys/of-scraper-community`).
 
@@ -29,7 +39,7 @@ The first run of `ofscraper` asks for your auth details and creates `config.json
 
 ## 2. ffmpeg
 
-ffmpeg is needed for protected (DRM) videos and Fansly streams. Everything else downloads without it.
+ffmpeg is needed for protected (DRM) videos, Fansly streams and recording livestreams (`--live`). Everything else downloads without it.
 
 - **Version:** any build of version 6 or newer (6, 7 and 8 all work). A version older than 6 is skipped with a warning.
 - **Build:** use the full build.
@@ -43,7 +53,7 @@ ffmpeg is needed for protected (DRM) videos and Fansly streams. Everything else 
 
   In JSON, each `\` in a Windows path is written twice. Quotes around the path, as Windows' "Copy as path" adds, are removed.
 
-If the setting is empty or doesn't point to a working ffmpeg 6+, OF-Scraper tries, in order: the `OFSC_FFMPEG_DEFAULT` environment variable, the bundled ffmpeg from the `ffmpeg` extra, and then `ffmpeg` on your `PATH`.
+If the setting is empty, the path in the `OFSC_FFMPEG_DEFAULT` environment variable is used instead. If that path doesn't point to a working ffmpeg 6+, OF-Scraper tries the bundled ffmpeg from the `ffmpeg` extra, and then `ffmpeg` on your `PATH`.
 
 ## 3. DRM keys
 
