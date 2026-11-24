@@ -133,3 +133,30 @@ def test_a_caption_with_nothing_for_a_name_is_the_post_id(naming):
     assert (text, media) == ("8.txt", "8.jpg")
     # a text file's {filename} is its caption too
     assert naming("{filename}.{ext}", "???")[0] == "8.txt"
+
+
+@pytest.mark.parametrize(
+    "caption, expected",
+    [
+        # an encoded line break or tab separates words, as a written one does
+        ("first&#10;second", "first second"),
+        ("first&#13;&#10;second&#9;third", "first second third"),
+        ("first&#x0A;second", "first second"),
+    ],
+)
+def test_an_encoded_line_break_separates_words(naming, caption, expected):
+    text, (media,) = naming("{text}.{ext}", caption)
+    assert (text, media) == (f"{expected}.txt", f"{expected}.jpg")
+
+
+@pytest.mark.parametrize(
+    "caption",
+    # an entity written in the caption ("&amp;" typed) reaches OnlyFans'
+    # text escaped once more: decoded once, it's the entity, as typed
+    ["Tom &amp;amp; Jerry", "&amp;copy; 2026", "a &amp;lt;3 b", "&amp;#39;x"],
+)
+def test_a_media_name_and_a_text_name_read_a_caption_the_same(naming, caption):
+    # a media file's {text} is cleaned from the post's cleaned caption: a
+    # second clean mustn't decode the caption again
+    text, (media,) = naming("{text}.{ext}", caption)
+    assert text[: -len(".txt")] == media[: -len(".jpg")]

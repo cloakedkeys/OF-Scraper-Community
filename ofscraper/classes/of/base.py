@@ -8,6 +8,8 @@ import ofscraper.sites as sites
 import ofscraper.utils.settings as settings
 
 html_parser = "lxml" if importlib.util.find_spec("lxml") else "html.parser"
+# an HTML entity with its ";": "&amp;", "&#39;", "&#x0A;"
+_ENTITY = re.compile(r"&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);")
 
 
 class base:
@@ -41,9 +43,6 @@ class base:
 
     def file_cleanup(self, text):
         text = str(text)
-        # a line break or a tab separates words: removing it would join the
-        # words on either side
-        text = re.sub(r"[\r\n\t]+", " ", text)
         # OnlyFans captions are HTML; Fansly captions are plain text, so a
         # "<3 you >" or an "&amp;" there is what was written
         if not sites.is_fansly():
@@ -57,8 +56,13 @@ class base:
             text = re.sub("<[^>]*>", "", text)
             # OnlyFans sends text HTML-escaped ("Tom &amp; Jerry"), as it
             # does label names (labels.decode_label_name). Decoded after the
-            # tags are gone, so a decoded "<" isn't read as one.
-            text = html.unescape(text)
+            # tags are gone, so a decoded "<" isn't read as one. Only an
+            # entity ending in ";" is decoded: a cleaned name has none left,
+            # so cleaning it again decodes nothing twice.
+            text = _ENTITY.sub(lambda m: html.unescape(m[0]), text)
+        # a line break or a tab, written or decoded ("&#10;"), separates
+        # words: removing it would join the words on either side
+        text = re.sub(r"[\r\n\t]+", " ", text)
         text = text.replace("\xa0", " ")
         # Fansly text is plain already (normalize._item_dict); removing the
         # codes again would drop an escaped "\[s:lg\]", shown as "[s:lg]"
