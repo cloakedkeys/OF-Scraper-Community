@@ -221,8 +221,10 @@ def main():
                 scrapper()
             finally:
                 # each finished scan reported itself (dry_run.finish); a scan
-                # that failed or was stopped has no report, only copies
+                # that failed or was stopped has no report, only copies and
+                # counts, which a later report mustn't include
                 if dry_run.active():
+                    dry_run.reset()
                     dry_run.cleanup()
             paths.temp_cleanup()
             paths.cleanDB()

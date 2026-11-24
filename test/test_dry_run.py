@@ -548,3 +548,32 @@ def test_each_pass_of_the_action_loop_has_its_own_report(scraper_run, monkeypatc
     for text in scraper_run.reports:
         assert "1 video)" in text
         assert "up to 1 file from 1 creator" in text
+
+
+# --- second review round -------------------------------------------------------
+
+
+def test_a_failed_scan_leaves_no_counts_for_the_next_report(scraper_run, monkeypatch):
+    def scan():
+        asyncio.run(dry_run.record("a creator", [media("Timeline", "Images", 1)]))
+        raise RuntimeError("auth failed")
+
+    monkeypatch.setattr(scraper_run.scraper, "scrapper", scan)
+    with pytest.raises(RuntimeError):
+        scraper_run.scraper.main()
+    assert dry_run.data()["creators"] == []
+
+
+def test_the_action_loop_offers_no_menu_or_check_table_in_a_dry_run(library, monkeypatch):
+    import ofscraper.prompts.prompt_groups.actions as actions_prompt
+
+    args = SimpleNamespace(daemon=None, site="onlyfans")
+    monkeypatch.setattr(actions_prompt.sites, "is_fansly", lambda: False)
+    names = [c for c in actions_prompt.action_menu_choices(args) if isinstance(c, str)]
+    assert "Go to main menu" in names and "Browse and pick media (check table)" in names
+    monkeypatch.setitem(library.settings, "dry_run", True)
+    names = [c for c in actions_prompt.action_menu_choices(args) if isinstance(c, str)]
+    # the main menu and the check table change things for real
+    assert "Go to main menu" not in names
+    assert "Browse and pick media (check table)" not in names
+    assert "Download content from a user" in names and "Quit" in names
