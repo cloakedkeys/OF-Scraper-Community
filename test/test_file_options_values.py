@@ -112,6 +112,18 @@ def test_a_space_replacer_that_cant_be_in_a_name_is_refused(config_json, logged,
     ]
 
 
+@pytest.mark.parametrize("value", [123, True, 1.5, ["_"], {"a": "_"}])
+def test_a_space_replacer_that_isnt_text_is_refused(config_json, logged, value):
+    # JSON that isn't a string can't replace a space: it crashed naming
+    assert config_json(space_replacer=value).space_replacer == " "
+    assert base().file_cleanup("good luck") == "good luck"
+    load.checkFileOptions()
+    assert warnings(logged) == [
+        f"file_options.space_replacer is {json.dumps(value)}, which isn't text,"
+        " so a space is used"
+    ]
+
+
 @pytest.mark.parametrize("value", ["_", "-", ".", "&", "__"])
 def test_a_space_replacer_is_used_as_literal_text(config_json, logged, value):
     assert config_json(space_replacer=value).space_replacer == value
@@ -213,6 +225,15 @@ def test_an_unknown_placeholder_is_reported_once_naming_the_setting(config_json,
         " {foo}. Each file will fail to download until it's fixed",
         'file_options.file_format "{bar}_{post_id}.{ext}" has an unknown placeholder:'
         " {bar}. Each file will fail to download until it's fixed",
+    ]
+
+
+def test_two_unknown_placeholders_are_reported_together(config_json, logged):
+    config_json(file_format="{foo}_{bar}.{ext}")
+    load.checkFileOptions()
+    assert warnings(logged) == [
+        'file_options.file_format "{foo}_{bar}.{ext}" has unknown placeholders:'
+        " {foo}, {bar}. Each file will fail to download until it's fixed"
     ]
 
 

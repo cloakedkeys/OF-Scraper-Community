@@ -133,7 +133,7 @@ The maximum length of post text used in names (the `{text}` placeholder and text
 
 **Default:** `" "` · **CLI override:** `--space-replacer` · **Env default:** [`SPACE_REPLACER_DEFAULT`](env.md#space_replacer_default) · **Also reads:** `space-replacer` · **Read by:** `get_spacereplacer()` in `ofscraper/utils/config/data.py`
 
-The character that replaces spaces in post text used for file and folder names. In word mode it also serves as the word separator. It is used as literal text. An empty value falls back to a space, and so does a value with a character a file name can't hold (such as `/`, `\`, `:` or `?`), with a warning at startup. The `-sr`/`--space-replacer` option overrides it.
+The character that replaces spaces in post text used for file and folder names. In word mode it also serves as the word separator. It is used as literal text. An empty value falls back to a space, and so does a value that isn't a string (such as `123` or `true`) or has a character a file name can't hold (such as `/`, `\`, `:` or `?`), with a warning at startup. The `-sr`/`--space-replacer` option overrides it.
 
 ### `file_options.date`
 

@@ -51,7 +51,8 @@ def name_safe(text):
 
 
 def space_replacer_ok(value):
-    return not NOT_IN_A_NAME.search(str(value))
+    # JSON can hold a number or a list there, which can't replace a space
+    return isinstance(value, str) and not NOT_IN_A_NAME.search(value)
 
 
 def template_problem(template, known):
@@ -73,7 +74,7 @@ def template_problem(template, known):
             unknown.append(f"{{{name}}}")
     if unknown:
         return (
-            f"has an unknown placeholder{'s' if len(unknown) > 1 else ''}:"
+            f"has {'unknown placeholders' if len(unknown) > 1 else 'an unknown placeholder'}:"
             f" {', '.join(unknown)}. Each file will fail to download until it's fixed"
         )
     return None
@@ -104,9 +105,14 @@ def problems():
         setting = (
             "--space-replacer" if args.space_replacer else "file_options.space_replacer"
         )
+        why = (
+            "has characters a file name can't hold"
+            if isinstance(chosen, str)
+            else "isn't text"
+        )
         out.append(
-            f"{setting} is {json.dumps(chosen)}, which has characters"
-            f" a file name can't hold, so {_describe(merged.space_replacer)} is used"
+            f"{setting} is {json.dumps(chosen)}, which {why},"
+            f" so {_describe(merged.space_replacer)} is used"
         )
     for key, template, known in (
         ("dir_format", data.get_dirformat(), DIR_PLACEHOLDERS),
