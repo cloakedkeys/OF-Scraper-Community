@@ -2,6 +2,7 @@
 (#716), not on `/`. OFSC_DISK_SPACE_CHECK_PATH still wins when it's set."""
 
 import json
+import os
 import pathlib
 import shutil
 from types import SimpleNamespace
@@ -20,11 +21,18 @@ def measured(monkeypatch, tmp_path):
     home = tmp_path / "home"
     config = home / ".config" / "ofscraper" / "config.json"
     config.parent.mkdir(parents=True)
+    # an OFSC_DISK_SPACE_CHECK_PATH in the environment running the tests
+    # would be measured instead of save_location
+    monkeypatch.delenv("DISK_SPACE_CHECK_PATH", raising=False)
+    monkeypatch.delenv("OFSC_DISK_SPACE_CHECK_PATH", raising=False)
+    monkeypatch.setitem(of_env.get_all_configs(), "DISK_SPACE_CHECK_PATH", "")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(
         settings, "get_settings", lambda: SimpleNamespace(system_free_min=1)
     )
+    # paths are compared resolved: a temp folder can sit behind a link
+    # (/var on macOS) or a short 8.3 name on Windows
     calls = []
     real = shutil.disk_usage
 
@@ -34,11 +42,13 @@ def measured(monkeypatch, tmp_path):
 
     monkeypatch.setattr(free.shutil, "disk_usage", disk_usage)
 
-    def write_config(save_location):
+    def write_config(save_location, mtime=None):
         config.write_text(
             json.dumps({"file_options": {"save_location": str(save_location)}}),
             encoding="utf-8",
         )
+        if mtime is not None:
+            os.utime(config, (mtime, mtime))
 
     return SimpleNamespace(calls=calls, write_config=write_config)
 
@@ -49,7 +59,7 @@ def test_free_space_is_measured_on_the_save_location(measured, tmp_path):
     measured.write_config(save)
 
     assert free.check_free_size()
-    assert measured.calls == [save]
+    assert measured.calls == [save.resolve()]
 
 
 def test_a_save_location_not_made_yet_is_measured_on_its_nearest_folder(
@@ -59,7 +69,7 @@ def test_a_save_location_not_made_yet_is_measured_on_its_nearest_folder(
     measured.write_config(tmp_path / "not" / "made" / "yet")
 
     assert free.check_free_size()
-    assert measured.calls == [tmp_path]
+    assert measured.calls == [tmp_path.resolve()]
 
 
 def test_the_env_path_still_wins(measured, tmp_path, monkeypatch):
@@ -68,14 +78,46 @@ def test_the_env_path_still_wins(measured, tmp_path, monkeypatch):
     measured.write_config(save)
     other = tmp_path / "other"
     other.mkdir()
-    real = of_env.getattr
-    monkeypatch.setattr(
-        of_env,
-        "getattr",
-        lambda key, default=None: str(other)
-        if key == "DISK_SPACE_CHECK_PATH"
-        else real(key, default),
-    )
+    monkeypatch.setenv("DISK_SPACE_CHECK_PATH", str(other))
 
     assert free.check_free_size()
     assert measured.calls == [other]
+
+
+def test_config_json_is_read_once_until_it_changes(measured, tmp_path, monkeypatch):
+    import ofscraper.utils.config.file as config_file
+
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    measured.write_config(first, mtime=1_700_000_000)
+    reads = []
+    real = config_file.open_config
+    monkeypatch.setattr(config_file, "open_config", lambda: reads.append(1) or real())
+
+    for _ in range(3):
+        assert free.check_free_size()
+    assert len(reads) == 1 and measured.calls == [first.resolve()] * 3
+
+    # an edited config.json is read again
+    measured.write_config(second, mtime=1_700_000_100)
+    assert free.check_free_size()
+    assert len(reads) == 2 and measured.calls[-1] == second.resolve()
+
+
+def test_a_save_location_linked_to_a_missing_folder_is_measured_on_the_target(
+    measured, tmp_path
+):
+    # a symlink to a drive not mounted yet: its disk is the target's, not the
+    # disk the link sits on
+    target_disk = tmp_path / "mnt"
+    target_disk.mkdir()
+    link = tmp_path / "downloads"
+    try:
+        link.symlink_to(target_disk / "external" / "downloads", target_is_directory=True)
+    except OSError:
+        pytest.skip("this system can't create symlinks")
+    measured.write_config(link)
+
+    assert free.check_free_size()
+    assert measured.calls == [target_disk.resolve()]
