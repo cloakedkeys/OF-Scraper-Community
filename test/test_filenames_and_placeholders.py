@@ -204,8 +204,8 @@ from ofscraper.utils.args.parse.commands.main import program
 from test_undated_posts import names_env  # noqa: F401  (fixture)
 
 
-def _post(caption, media=1):
-    raw = {"id": 8, "text": caption, "price": 0, "isOpened": True,
+def _post(caption, media=1, post_id=8):
+    raw = {"id": post_id, "text": caption, "price": 0, "isOpened": True,
            "responseType": "post", "postedAt": "2026-10-31T12:00:00+00:00",
            "media": [{"id": 70 + n, "type": "photo", "canView": True,
                       "files": {"full": {"url": f"https://example.invalid/pic{n}.jpg"}}}
@@ -369,3 +369,51 @@ def test_a_long_name_is_shortened_by_default(naming):
     media, text = _paths(naming)
     assert len(media.name) < len(LONG_CAPTION) and media.suffix == ".jpg"
     assert len(text.name) < len(LONG_CAPTION) and text.suffix == ".txt"
+
+
+# Two posts whose text files get the same name both keep their text (#746).
+
+
+def _text_files(tmp_path):
+    return {
+        path.name: path.read_text(encoding="utf-8")
+        for path in (tmp_path / "data").rglob("*.txt")
+    }
+
+
+def _write_texts(naming, monkeypatch, captions, *options, collision="media_id"):
+    async def no_script(path):
+        pass
+
+    naming("{filename}.{ext}", "x", "--text-type", "word", "--textlength", "2", *options)
+    monkeypatch.setattr(text, "after_download_script", no_script)
+    monkeypatch.setattr(
+        text.config_data, "get_filename_collision", lambda *a, **k: collision
+    )
+    posts = [_post(caption, 0, post_id=n) for n, caption in enumerate(captions, 8)]
+    asyncio.run(text.get_text("u", posts))
+
+
+CAPTIONS = ["Good morning everyone", "Good morning to my fans"]
+
+
+def test_a_taken_text_file_name_gets_the_post_id(naming, monkeypatch, tmp_path):
+    _write_texts(naming, monkeypatch, CAPTIONS)
+    both = {"Good morning.txt": CAPTIONS[0], "Good morning_9.txt": CAPTIONS[1]}
+    assert _text_files(tmp_path) == both
+    # a second run finds each post's own file, and writes nothing new
+    _write_texts(naming, monkeypatch, CAPTIONS)
+    assert _text_files(tmp_path) == both
+    # --force-all rewrites each post's own file, not the other post's
+    _write_texts(naming, monkeypatch, CAPTIONS, "--force-all")
+    assert _text_files(tmp_path) == both
+
+
+def test_the_same_caption_twice_is_one_text_file(naming, monkeypatch, tmp_path):
+    _write_texts(naming, monkeypatch, ["Good morning", "Good morning"])
+    assert _text_files(tmp_path) == {"Good morning.txt": "Good morning"}
+
+
+def test_overwrite_mode_keeps_the_first_text_file(naming, monkeypatch, tmp_path):
+    _write_texts(naming, monkeypatch, CAPTIONS, collision="overwrite")
+    assert list(_text_files(tmp_path)) == ["Good morning.txt"]
