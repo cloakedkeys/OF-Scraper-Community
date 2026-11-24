@@ -112,9 +112,13 @@ def _windows_truncateHelper(path):
         - get_string_byte_size_windows(ntpath.sep)
         - get_string_byte_size_windows(ext)
     )
-    if max_bytes <= 0:
+    name = _longest_fitting(file, get_string_byte_size_windows, max_bytes)
+    if not ext:
+        # Windows drops trailing spaces and dots from a name
+        name = name.rstrip(" .")
+    if not name:
         raise ValueError(f"the folder is too long for any file name to fit: {path}")
-    newFile = f"{_longest_fitting(file, get_string_byte_size_windows, max_bytes)}{ext}"
+    newFile = f"{name}{ext}"
     final_path = pathlib.PureWindowsPath(dir, newFile)
     log.debug(
         f"path: {path} filepath bytesize: {get_string_byte_size_windows(final_path)}"
@@ -143,7 +147,10 @@ def _linux_truncateHelper(path):
     max_bytes = of_env.getattr("LINUX_MAX_FILE_NAME_BYTES") - get_string_byte_size_unix(
         ext
     )
-    newFile = f"{_longest_fitting(file, get_string_byte_size_unix, max_bytes)}{ext}"
+    name = _longest_fitting(file, get_string_byte_size_unix, max_bytes)
+    if file and not name:
+        raise ValueError(f"the name limit leaves no room for any of the name: {path}")
+    newFile = f"{name}{ext}"
     log.debug(f"path: {path} filename bytesize: {get_string_byte_size_unix(newFile)}")
     return pathlib.Path(dir, newFile)
 

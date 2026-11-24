@@ -9,7 +9,7 @@ import ofscraper.utils.paths.paths as paths
 
 # a folder like a real Fansly one, under a Windows home
 FOLDER = r"C:\Users\someone\Data\ofscraper\OnlyFans\Fansly\a_creator\Posts\2026-10-31"
-CAPTION = "Look at this dildo disappear inside of me! 💀🪄 #fyp #pussy #dildo #ass #asshole " * 3
+CAPTION = "Look at this sunset fading behind the bay! 💀🪄 #fyp #beach #ocean #sky #sunsets " * 3
 
 
 @pytest.fixture(autouse=True)
@@ -76,3 +76,34 @@ def test_an_extension_with_digits_is_kept(ext):
     assert out.name.endswith(ext) and windows_chars(out) <= 259
     out = paths._linux_truncateHelper(f"/data/2026-10-31 {CAPTION * 3}{ext}")
     assert out.name.endswith(ext)
+
+
+@pytest.mark.parametrize("name", ["💀" * 200 + ".txt", "💀" * 200])
+def test_a_folder_that_leaves_no_room_for_a_character_says_so(name):
+    # room for 2 bytes after the folder: not one emoji (4), so nothing of the
+    # name would be left, giving ".txt", or with no extension the folder itself
+    folder = "C:\\" + "d" * (250 if name.endswith(".txt") else 254)
+    with pytest.raises(ValueError, match="folder"):
+        cut(f"{folder}\\{name}")
+
+
+@pytest.mark.parametrize("end", [" ", ". ", " . "])
+def test_a_cut_without_an_extension_drops_trailing_spaces_and_dots(end):
+    # Windows silently drops them from a name; the cut must not end on one
+    room = 259 - len(FOLDER) - 1
+    kept = "a" * (room - len(end))
+    out = cut(f"{FOLDER}\\{kept}{end}{'b' * 300}")
+    assert out.name == kept and str(out.parent) == FOLDER
+
+
+def test_a_cut_that_is_only_spaces_and_dots_says_so():
+    room = 259 - len(FOLDER) - 1
+    with pytest.raises(ValueError, match="folder"):
+        cut(f"{FOLDER}\\{'. ' * room}{'b' * 300}")
+
+
+def test_a_linux_name_with_no_room_for_a_character_says_so(monkeypatch):
+    # room for 2 bytes beside ".txt": not one emoji (4)
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "10")
+    with pytest.raises(ValueError, match="no room"):
+        paths._linux_truncateHelper(f"/data/{'💀' * 100}.txt")
