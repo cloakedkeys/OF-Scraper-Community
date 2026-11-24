@@ -6,6 +6,7 @@ child's exit code, and writes a daemon-level status file.
 """
 
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 import os
 import signal
@@ -185,13 +186,34 @@ def _failing_alerts():
         return []
 
 
-def _write_daemon_status(state, results, next_pass_at=None, last_success=None):
+def _parse_iso(value):
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+
+def _child_heartbeat(profile):
+    """The heartbeat in a child's own status.json (its profile folder), which
+    it moves on as it makes progress, or None."""
+    try:
+        import ofscraper.utils.paths.common as common_paths
+
+        path = common_paths.get_profile_path(profile) / "status.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return _parse_iso(data.get("heartbeat")) if isinstance(data, dict) else None
+
+
+def _write_daemon_status(state, results, next_pass_at=None, last_success=None, heartbeat=None):
     payload = {
         "version": status_file.VERSION,
         "pid": os.getpid(),
         "mode": "daemon",
         "state": state,
-        "heartbeat": _now_iso(),
+        "heartbeat": heartbeat or _now_iso(),
         "next_pass_at": next_pass_at,
         "auth": _overall_auth(results),
         "profiles": dict(results),
@@ -225,7 +247,10 @@ def run_profiles_pass(
     for profile in profiles:
         cmd = build_child_command(profile, raw_argv=raw_argv)
         log.info(f"Daemon pass: starting profile '{profile}'")
-        _write_daemon_status("running", state_results, next_pass_at=None, last_success=last_success)
+        progress = _now_iso()
+        _write_daemon_status(
+            "running", state_results, next_pass_at=None, last_success=last_success, heartbeat=progress
+        )
         proc = popen(cmd, env=_child_env())
         try:
             while True:
@@ -233,9 +258,14 @@ def run_profiles_pass(
                     returncode = proc.wait(timeout=status_file.HEARTBEAT_INTERVAL)
                     break
                 except subprocess.TimeoutExpired:
-                    # a pass can take hours: health reads the heartbeat
+                    # a pass can take hours: the heartbeat moves on only when
+                    # the child's own does, so health sees a child that hangs
+                    child = _child_heartbeat(profile)
+                    if child is not None and child > _parse_iso(progress):
+                        progress = child.astimezone(timezone.utc).isoformat()
                     _write_daemon_status(
-                        "running", state_results, next_pass_at=None, last_success=last_success
+                        "running", state_results, next_pass_at=None,
+                        last_success=last_success, heartbeat=progress,
                     )
         except BaseException as exc:
             terminal_ctrl_c = (

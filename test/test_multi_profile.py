@@ -235,6 +235,72 @@ def test_heartbeat_is_refreshed_while_a_long_child_runs(tmp_path, monkeypatch):
     assert beats.count("running") == 6
 
 
+
+
+def _health_while_waiting(tmp_path, monkeypatch, progress):
+    """Run a pass whose child takes 30 minutes per wait, writing its own
+    heartbeat during a wait when progress says so, and ask health
+    (--max-quiet 60) about the parent's file after each wait."""
+    from datetime import datetime, timedelta, timezone
+
+    import ofscraper.utils.paths.common as common_paths
+
+    clock = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    monkeypatch.setattr(multi_profile, "_now_iso", lambda: clock[0].isoformat())
+    status_path = tmp_path / "status.json"
+    monkeypatch.setenv("OFSC_STATUS_FILE", str(status_path))
+    monkeypatch.setattr(common_paths, "get_config_home", lambda: tmp_path)
+    child_status = common_paths.get_profile_path("first") / "status.json"
+    child_status.parent.mkdir()
+    # an earlier run's file counts for nothing
+    child_status.write_text(json.dumps({"mode": "once", "heartbeat": "2020-01-01T00:00:00+00:00"}), encoding="utf-8")
+    verdicts = []
+    real_write = multi_profile.status_file.write_custom
+
+    def write(payload, path=None):
+        out = real_write(payload, path=path)
+        if payload["state"] == "running" and not payload["profiles"]:
+            data = json.loads(status_path.read_text(encoding="utf-8"))
+            verdicts.append(health.evaluate(data, max_quiet_minutes=60, now=clock[0])[0])
+        return out
+
+    monkeypatch.setattr(multi_profile.status_file, "write_custom", write)
+    steps = iter(progress)
+
+    class Child(_Proc):
+        def wait(self, timeout=None):
+            step = next(steps, None)
+            if step is None:
+                self.returncode = self.code
+                return self.code
+            clock[0] += timedelta(minutes=30)
+            if step:
+                child_status.write_text(
+                    json.dumps({"mode": "once", "state": "running", "heartbeat": clock[0].isoformat()}),
+                    encoding="utf-8",
+                )
+            raise subprocess.TimeoutExpired("ofscraper", timeout)
+
+    proc = Child(code=0)
+    multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, env=None: proc)
+    return verdicts
+
+
+def test_a_child_that_makes_no_progress_turns_the_daemon_unhealthy(tmp_path, monkeypatch):
+    # Given a child that writes no heartbeat for two hours
+    verdicts = _health_while_waiting(tmp_path, monkeypatch, [False] * 4)
+    # Then the parent's waiting doesn't keep the daemon healthy: healthy at
+    # the start, 30 and 60 minutes in, unhealthy past --max-quiet
+    assert verdicts == [True, True, True, True, False, False]
+
+
+def test_a_child_that_makes_progress_keeps_the_daemon_healthy(tmp_path, monkeypatch):
+    # Given a child whose own heartbeat moves on now and then
+    verdicts = _health_while_waiting(tmp_path, monkeypatch, [False, True, False, True, False])
+    # Then the daemon stays healthy for the two and a half hours
+    assert verdicts == [True] * 7
+
+
 def test_parent_status_file_is_not_a_profile_folder(tmp_path, monkeypatch):
     # OFSC_STATUS_FILE unset: a child (main_profile included) writes its own
     # profile's status.json, so the parent must write somewhere else
