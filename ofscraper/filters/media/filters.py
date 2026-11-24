@@ -30,10 +30,20 @@ def sort_by_date(media):
     return sorted(media, key=lambda x: undated_first(x.date))
 
 
+def is_purchased_copy(item):
+    """Whether the media was found in Purchased (OnlyFans or Fansly)."""
+    return str(item.responsetype).lower() == "paid"
+
+
 def media_key(item):
     """What makes a media one download: its id, or with allow-dupes its id
-    and post, so each post gets its own copy."""
-    return (item.id, item.post_id) if settings.allow_dupes() else item.id
+    and post, so each post gets its own copy. With --skip-purchased-dupes a
+    Purchased copy is keyed by its id alone, so any saved copy covers it."""
+    if not settings.allow_dupes():
+        return item.id
+    if settings.skip_purchased_dupes() and is_purchased_copy(item):
+        return item.id
+    return (item.id, item.post_id)
 
 
 # dupe filters that prioritize viewable
@@ -43,9 +53,18 @@ def dupefiltermedia(media):
         media, key=lambda item: (undated_first(item.post.date), item.id, item.count)
     )
     if settings.allow_dupes():
+        # --skip-purchased-dupes: a Purchased copy of media in another post
+        # isn't a copy of its own
+        elsewhere = (
+            {item.id for item in media if not is_purchased_copy(item)}
+            if settings.skip_purchased_dupes()
+            else set()
+        )
         for item in media:
-            if not output[(item.id, item.post_id)]:
-                output[(item.id, item.post_id)] = item
+            if is_purchased_copy(item) and item.id in elsewhere:
+                continue
+            if not output[media_key(item)]:
+                output[media_key(item)] = item
     else:
         for item in media:
             if not output[item.id]:
@@ -236,6 +255,9 @@ def downloaded_media_ids(username=None, model_id=None):
         log.debug(
             f"Number of downloaded media and post pairs in database: {len(media_ids)}"
         )
+        if settings.skip_purchased_dupes():
+            # a Purchased copy (keyed by media id) is covered by any saved copy
+            media_ids |= {media_id for media_id, _ in media_ids}
     elif per_creator():
         log.info(f"Downloading unique media for model: {username}")
         media_ids = set(

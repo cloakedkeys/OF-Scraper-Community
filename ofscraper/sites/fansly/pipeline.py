@@ -168,6 +168,9 @@ class Selector:
             if key in self.seen:
                 continue
             self.seen.add(key)
+            # a Purchased copy keyed by media id (--skip-purchased-dupes) is
+            # covered by a copy an earlier area found
+            self.seen.add(item.id)
             if self.downloaded is not None and key in self.downloaded:
                 continue
             out.append(item)

@@ -101,6 +101,28 @@ def test_the_env_default_and_the_option_make_one_switch(monkeypatch, env, option
     assert settings.allow_dupes() is expected
 
 
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["--allow-dupes", "--skip-purchased-dupes"], True),
+        (["--allow-dupes"], False),
+        # nothing to skip without --allow-dupes: one copy per media already
+        (["--skip-purchased-dupes"], False),
+    ],
+)
+def test_skip_purchased_dupes_from_the_command_line(monkeypatch, argv, expected):
+    from ofscraper.utils.args.main import AutoDotDict
+    from ofscraper.utils.args.parse.commands.main import program
+
+    params, _ = program.main(args=argv, standalone_mode=False, prog_name="OF-Scraper")
+    args = AutoDotDict(params)
+    args.command = "OF-Scraper"
+    monkeypatch.setattr(read_args, "retriveArgs", lambda *a, **k: args)
+    merged = settings.merged_settings()
+    monkeypatch.setattr(settings, "get_settings", lambda *a, **k: merged)
+    assert settings.skip_purchased_dupes() is expected
+
+
 # ------------------------------------------------------------------ OnlyFans
 
 
@@ -217,6 +239,44 @@ def test_on_purchased_copy_of_a_media_downloaded_earlier_is_downloaded(env):
     mark(message, "a.jpg")
     # a later run that sees the purchase: its copy hasn't been saved yet
     assert todo([item(7, 2, "paid")]) == [(7, 2)]
+
+
+
+# --skip-purchased-dupes: with allow-dupes, a Purchased copy of media that's
+# in another post isn't downloaded again; reposts still are (#760)
+
+
+def test_skip_purchased_the_message_copy_is_the_only_download(env):
+    env.stub.allow_dupe_downloads = True
+    env.stub.skip_purchased_dupes = True
+    assert todo([item(7, 2, "paid"), item(7, 1, "message")]) == [(7, 1)]
+
+
+def test_skip_purchased_reposts_still_download_once_per_post(env):
+    env.stub.allow_dupe_downloads = True
+    env.stub.skip_purchased_dupes = True
+    assert todo([item(7, 1), item(7, 2, "message"), item(7, 3, "paid")]) == [(7, 1), (7, 2)]
+
+
+def test_skip_purchased_a_copy_downloaded_earlier_covers_the_purchase(env):
+    env.stub.allow_dupe_downloads = True
+    env.stub.skip_purchased_dupes = True
+    message = item(7, 1, "message")
+    todo([message])
+    mark(message, "a.jpg")
+    assert todo([item(7, 2, "paid")]) == []
+
+
+def test_skip_purchased_media_only_in_purchased_still_downloads(env):
+    env.stub.allow_dupe_downloads = True
+    env.stub.skip_purchased_dupes = True
+    assert todo([item(8, 2, "paid"), item(7, 1, "message")]) == [(7, 1), (8, 2)]
+
+
+def test_skip_purchased_does_nothing_without_allow_dupes(env):
+    env.stub.skip_purchased_dupes = True
+    # one download per media, as without the flag
+    assert todo([item(7, 2, "paid"), item(7, 1, "message"), item(7, 3)]) == [(7, 1)]
 
 
 # ------------------------------------------------------------------ records
@@ -448,3 +508,24 @@ def test_fansly_on_purchased_copy_of_a_media_downloaded_earlier_is_downloaded(
     got = messages_and_purchased(harness)
     harness.run()
     assert got == [(101, 2)]
+
+
+def test_fansly_skip_purchased_the_message_copy_is_the_only_download(
+    harness, settings_stub
+):
+    settings_stub.allow_dupe_downloads = True
+    settings_stub.skip_purchased_dupes = True
+    got = messages_and_purchased(harness)
+    harness.run()
+    assert got == [(101, 1)]
+
+
+def test_fansly_skip_purchased_a_copy_downloaded_earlier_covers_the_purchase(
+    harness, settings_stub
+):
+    settings_stub.allow_dupe_downloads = True
+    settings_stub.skip_purchased_dupes = True
+    harness.downloaded = {(101, 1)}
+    got = messages_and_purchased(harness)
+    harness.run()
+    assert got == []
