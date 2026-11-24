@@ -123,9 +123,81 @@ def auto_update_config(config: dict) -> dict:
     # keys missing from the file get the built-in defaults, not environment
     # values; the environment still applies at runtime
     with of_env.builtin_defaults():
-        new_config = schema.get_current_config_schema(config)
+        with data.recording_reads() as reads:
+            new_config = schema.get_current_config_schema(config)
+        defaults = schema.get_current_config_schema(config=False)
+    _notes.extend(rewrite_notes(unwrap(config), new_config, defaults, reads))
+    if log.handlers:
+        log_notes()
     write_config(new_config)
     return new_config
+
+
+# what auto_update_config dropped or replaced, kept until the shared log is
+# set up: the config is first read before it is, and a warning then reaches
+# only the console, never the log file people send when asking for help
+_notes = []
+
+
+def log_notes():
+    while _notes:
+        log.warning(_notes.pop(0))
+
+
+def _leaves(config):
+    """{"key" or "section.key": value} for a config's settings"""
+    out = {}
+    for key, value in config.items():
+        if isinstance(value, dict):
+            out.update({f"{key}.{sub}": v for sub, v in value.items()})
+        else:
+            out[key] = value
+    return out
+
+
+def rewrite_notes(old, new, defaults, reads):
+    """
+    One line for each key of old that the rewrite to new drops without any
+    getter reading it, and each value it replaces with the default. Values of
+    dropped keys aren't repeated: they can be auth values pasted in.
+    """
+    notes = []
+    new_leaves, default_leaves = _leaves(new), _leaves(defaults)
+    for path, value in _leaves(old).items():
+        # has its own warning, without the address (it holds a password)
+        if path == "advanced_options.database_url":
+            continue
+        if isinstance(new.get(path), dict):
+            notes.append(
+                f'config.json: "{path}" should hold settings but holds'
+                f" {_json_type(value)}, so its settings were reset to the defaults"
+            )
+        elif path not in new_leaves:
+            if path not in reads:
+                notes.append(
+                    f'config.json: "{path}" isn\'t read (not a setting, or an older'
+                    " name for one that's set under its current name), so it was"
+                    " removed from the file"
+                )
+        elif path not in reads:
+            notes.append(
+                f'config.json: "{path}" isn\'t read, because an older name for the'
+                " same setting is also set and is used instead. The older name was"
+                f" removed from the file, and its value saved here"
+            )
+        elif _replaced(value, new_leaves[path], default_leaves.get(path)):
+            notes.append(
+                f'config.json: "{path}" was {json.dumps(value)}, which it doesn\'t'
+                f" take, so the default {json.dumps(new_leaves[path])} is used and saved"
+            )
+    return notes
+
+
+def _replaced(old, new, default):
+    """old was swapped for the default, not unset or saved in another form"""
+    if old in (None, "") or old == new or new != default:
+        return False
+    return str(old).strip().lower() != str(new).lower()
 
 
 def json_loads(configText):

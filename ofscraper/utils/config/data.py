@@ -11,6 +11,8 @@ r"""
 
 """
 
+import contextlib
+
 from ofscraper.utils.cache.safe_disk import SafeDisk, SafeJSONDisk
 from humanfriendly import InvalidSize, parse_size
 
@@ -37,9 +39,26 @@ def strip_path_quotes(val):
     return val
 
 
+# the paths _lookup() is asked for while this is a set: auto_update_config
+# uses it to tell an older name the getters read from a key nothing reads
+_reads = None
+
+
+@contextlib.contextmanager
+def recording_reads():
+    global _reads
+    _reads = set()
+    try:
+        yield _reads
+    finally:
+        _reads = None
+
+
 def _lookup(config, path):
     """the value at a "key" or "section.key" path; a section that isn't a
     dict, e.g. a hand-edited null, counts as empty"""
+    if _reads is not None:
+        _reads.add(path)
     section, _, key = path.rpartition(".")
     if not section:
         return config.get(key)
@@ -97,7 +116,7 @@ def _truthy_value(config, env_key, *paths):
 def get_main_profile(config=None):
     if config is False:
         return of_env.getattr("PROFILE_DEFAULT")
-    value = config.get(of_env.getattr("mainProfile"))
+    value = _lookup(config, of_env.getattr("mainProfile"))
     return value or of_env.getattr("PROFILE_DEFAULT")
 
 
@@ -371,7 +390,9 @@ def get_database_url_note(config=None):
 def get_metadata(config=None):
     if config is False:
         return of_env.getattr("METADATA_DEFAULT")
-    return config.get("metadata", of_env.getattr("METADATA_DEFAULT"))
+    if "metadata" not in config:
+        return of_env.getattr("METADATA_DEFAULT")
+    return _lookup(config, "metadata")
 
 
 @wrapper.config_reader
@@ -591,7 +612,7 @@ def get_part_file_clean(config=None):
     val = _first_set(config, "auto_resume", "download_options.auto_resume")
     if val is not None:
         return val
-    legacy_val = config.get("partfileclean")
+    legacy_val = _lookup(config, "partfileclean")
     if legacy_val is not None:
         return legacy_val is False
     return of_env.getattr("RESUME_DEFAULT")
