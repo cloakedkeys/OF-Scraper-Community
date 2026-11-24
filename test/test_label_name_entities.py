@@ -94,3 +94,42 @@ def test_label_placeholder_is_safe_in_a_path(name, folder):
     from ofscraper.classes.placeholder import path_safe_label
 
     assert path_safe_label(name) == folder
+
+
+# --- captions in file names ---------------------------------------------------
+# A caption reads in a file name as it does on the site (#748): OnlyFans sends
+# it HTML-escaped too, and a line break or a <br> separates words.
+
+from naming_helpers import naming  # noqa: F401  (fixture)
+
+
+@pytest.mark.parametrize(
+    "caption, expected",
+    [
+        ("first line\nsecond line\n\n#tag1 #tag2", "first line second line #tag1 #tag2"),
+        ("<p>first line<br />second line</p><p>third</p>", "first line second line third"),
+        ("a tab\there, a return\r\nthere", "a tab here, a return there"),
+        ("Tom &amp; Jerry don&#039;t", "Tom & Jerry don't"),
+        ("non&nbsp;breaking\u00a0space", "non breaking space"),
+        # decoded, then what a name can't hold is removed, as for {label}
+        ("Q&amp;A &lt;3 &quot;best&quot;", "Q&A 3 best"),
+        ("<b>bold</b> and <i>italic</i>", "bold and italic"),
+    ],
+)
+def test_a_caption_reads_in_a_name_as_on_the_site(naming, caption, expected):
+    text, (media,) = naming("{text}.{ext}", caption)
+    assert (text, media) == (f"{expected}.txt", f"{expected}.jpg")
+
+
+def test_words_on_separate_lines_count_as_separate_words(naming):
+    text, (media,) = naming(
+        "{text}.{ext}", "one\ntwo three", "--text-type", "word", "--textlength", "2"
+    )
+    assert (text, media) == ("one two.txt", "one two.jpg")
+
+
+def test_a_caption_with_nothing_for_a_name_is_the_post_id(naming):
+    text, (media,) = naming("{text}.{ext}", "???")
+    assert (text, media) == ("8.txt", "8.jpg")
+    # a text file's {filename} is its caption too
+    assert naming("{filename}.{ext}", "???")[0] == "8.txt"

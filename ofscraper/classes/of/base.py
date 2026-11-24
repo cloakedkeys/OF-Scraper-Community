@@ -1,3 +1,4 @@
+import html
 import importlib
 import re
 
@@ -39,12 +40,24 @@ class base:
 
     def file_cleanup(self, text):
         text = str(text)
+        # a line break, a tab, a <br> or the end of a paragraph separates
+        # words: removing it would join the words on either side
+        text = re.sub(
+            r"<br\s*/?>|</?(?:p|div|li|h[1-6])\b[^>]*>|[\r\n\t]+",
+            " ",
+            text,
+            flags=re.IGNORECASE,
+        )
         text = re.sub("<[^>]*>", "", text)
+        # OnlyFans sends text HTML-escaped ("Tom &amp; Jerry"), as it does
+        # label names (labels.decode_label_name). Decoded after the tags are
+        # gone, so a decoded "<" isn't read as one.
+        text = html.unescape(text).replace("\xa0", " ")
         # Fansly text is plain already (normalize._item_dict); removing the
         # codes again would drop an escaped "\[s:lg\]", shown as "[s:lg]"
         text = re.sub(r'[\n<>:"/\|?*:;]+', "", text)
         text = re.sub("-+", "_", text)
-        text = re.sub(" +", " ", text)
+        text = re.sub(" +", " ", text).strip(" ")
         text = re.sub(" ", settings.get_settings().space_replacer, text)
         return text
 
