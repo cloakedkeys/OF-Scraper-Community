@@ -180,3 +180,25 @@ def test_an_older_version_s_text_file_is_corrected_in_place(
         collision=collision, before=OLD_FORM,
     )
     assert text_files(tmp_path) == {"caption.txt": "Line one\nLine two\n\nTom & Jerry"}
+
+
+@pytest.mark.parametrize("caption", ["<p></p>", "<br />", "<p> </p><br>"])
+def test_a_caption_of_only_markup_writes_no_text_file(
+    naming, monkeypatch, tmp_path, caption
+):
+    # skipped, as a post with no caption is, not saved as an empty file
+    _write_text(naming, monkeypatch, caption)
+    assert text_files(tmp_path) == {}
+    post = make_post(caption, 0)
+    asyncio.run(text.get_text("u", [post]))
+    assert post.text_download_attempted is False
+    assert text_files(tmp_path) == {}
+
+
+def test_the_end_of_a_block_is_a_line_break(naming, monkeypatch, tmp_path):
+    # as </p> is, and as file names treat these tags (#748)
+    _write_text(
+        naming, monkeypatch,
+        "<div>a</div><div>b</div><ul><li>c</li><li>d</li></ul><h2>e</h2>f",
+    )
+    assert text_files(tmp_path) == {"caption.txt": "a\nb\nc\nd\ne\nf"}

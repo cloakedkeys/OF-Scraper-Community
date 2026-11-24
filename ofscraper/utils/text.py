@@ -29,12 +29,15 @@ async def get_text(username, values):
 
 def file_text(text):
     """What a post's text file holds: the caption as it reads on the site.
-    An OnlyFans caption is HTML, so a <br> or the end of a paragraph is a
-    line break, the other tags are removed and entities are decoded, as
-    stash_sync.clean_text does. A Fansly caption is plain text already. Each
-    of the caption's lines is wrapped on its own, so its line breaks stay."""
+    An OnlyFans caption is HTML, so a <br> or the end of a paragraph, div,
+    list item or heading is a line break, the other tags are removed and
+    entities are decoded, much as stash_sync.clean_text does. A Fansly
+    caption is plain text already. Each of the caption's lines is wrapped on
+    its own, so its line breaks stay."""
     if not sites.is_fansly():
-        text = re.sub(r"<br\s*/?>|</p\s*>", "\n", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"<br\s*/?>|</(?:p|div|li|h[1-6])\s*>", "\n", text, flags=re.IGNORECASE
+        )
         text = html.unescape(re.sub(r"<[^>]+>", "", text))
         text = "\n".join(line.strip() for line in text.splitlines())
     width = of_env.getattr("MAX_TEXT_LENGTH")
@@ -97,12 +100,16 @@ async def _write_text(ele):
         return
 
     try:
+        content = file_text(ele.text)
+        # a caption of only markup, e.g. "<p></p>", has no text to save
+        if not content:
+            return
+
         new_ele = copy.deepcopy(ele)
         new_ele.mediatype = "Text"
 
         placeholderObj = await placeholder.Textholders(new_ele, "txt").init()
 
-        content = file_text(new_ele.text)
         older = _older_file_text(new_ele.text)
         filepath, own_name = _own_path(
             placeholderObj.filepath, new_ele, content, older
