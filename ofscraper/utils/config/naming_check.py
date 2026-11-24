@@ -12,7 +12,7 @@ import string
 log = logging.getLogger("shared")
 
 # can't be in a file name on Windows; a slash would add a folder
-NOT_IN_A_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+NOT_IN_A_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 
 TEXT_TYPES = ("letter", "word")
 
@@ -48,6 +48,12 @@ def text_type(value):
 def name_safe(text):
     """text without the characters a file name can't hold"""
     return NOT_IN_A_NAME.sub("", str(text))
+
+
+def folder_safe(text):
+    """text without the characters a folder name can't hold: "/" is kept, as
+    it adds a folder"""
+    return "/".join(name_safe(part) for part in str(text).split("/"))
 
 
 def space_replacer_ok(value):
@@ -112,7 +118,7 @@ def problems():
         )
         out.append(
             f"{setting} is {json.dumps(chosen)}, which {why},"
-            f" so {_describe(merged.space_replacer)} is used"
+            " so a space is used"
         )
     for key, template, known in (
         ("dir_format", data.get_dirformat(), DIR_PLACEHOLDERS),
@@ -122,10 +128,6 @@ def problems():
         if problem:
             out.append(f"file_options.{key} {json.dumps(template)} {problem}")
     return out
-
-
-def _describe(replacer):
-    return "a space" if replacer == " " else json.dumps(replacer)
 
 
 def report():

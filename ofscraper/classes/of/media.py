@@ -20,7 +20,6 @@ import ofscraper.utils.dates as dates
 import ofscraper.utils.host_allowlist as host_allowlist
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.logs.utils.sensitive as sensitive
-import ofscraper.utils.settings as settings
 
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
@@ -447,8 +446,8 @@ class Media(base.base):
             filename = re.sub("_[a-z0-9]+$", "", filename)
 
         try:
+            # file_cleanup puts in space_replacer
             filename = self.file_cleanup(filename)
-            filename = filename.replace(" ", settings.get_settings().space_replacer)
         except Exception as e:
             log.debug(f"Error cleaning filename: {e}")
         return filename
@@ -759,8 +758,8 @@ class Media(base.base):
             filename = f"{filename}_{quality_placeholder}"
 
         try:
+            # file_cleanup puts in space_replacer
             filename = self.file_cleanup(filename)
-            filename = filename.replace(" ", settings.get_settings().space_replacer)
         except Exception as e:
             log.debug(f"Error creating final filename: {e}")
 

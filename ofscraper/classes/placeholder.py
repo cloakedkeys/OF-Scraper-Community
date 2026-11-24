@@ -16,7 +16,7 @@ import ofscraper.utils.paths.paths as paths
 import ofscraper.utils.profiles.data as profile_data
 import ofscraper.utils.settings as settings
 from ofscraper.utils.string import parse_safe
-from ofscraper.utils.config.naming_check import name_safe
+from ofscraper.utils.config.naming_check import folder_safe, name_safe
 import ofscraper.managers.manager as manager
 from ofscraper.scripts.naming_script import naming_script
 
@@ -349,6 +349,10 @@ class Placeholders(basePlaceholder):
         model_id = ele.model_id
         root = pathlib.Path(root or default_media_root())
         await self.add_common_variables(ele, username, model_id)
+        # the date setting can hold ":" or "*", which a folder name can't on
+        # Windows; a "/" adds a folder
+        if "date" in self._variables:
+            self._variables["date"] = folder_safe(self._variables["date"])
         globals().update(self._variables)
         log.trace(
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
@@ -372,8 +376,8 @@ class Placeholders(basePlaceholder):
         model_id = ele.model_id
         self._variables.update({"ext": ext})
         await self.add_common_variables(ele, username, model_id)
-        # the date setting can hold / or :, which a folder can use but a
-        # file name can't
+        # the date setting can hold "/", which a folder can use but a file
+        # name can't
         self._variables.update({"date": name_safe(self._variables["date"])})
         globals().update(self._variables)
         log.trace(
@@ -562,6 +566,10 @@ class Textholders(basePlaceholder):
         model_id = ele.model_id
         root = pathlib.Path(root or default_media_root())
         await self.add_common_variables(ele, username, model_id)
+        # the date setting can hold ":" or "*", which a folder name can't on
+        # Windows; a "/" adds a folder
+        if "date" in self._variables:
+            self._variables["date"] = folder_safe(self._variables["date"])
         globals().update(self._variables)
         log.trace(
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
@@ -584,8 +592,8 @@ class Textholders(basePlaceholder):
         model_id = ele.model_id
         self._variables.update({"ext": ext})
         await self.add_common_variables(ele, username, model_id)
-        # the date setting can hold / or :, which a folder can use but a
-        # file name can't
+        # the date setting can hold "/", which a folder can use but a file
+        # name can't
         self._variables.update({"date": name_safe(self._variables["date"])})
         globals().update(self._variables)
         log.trace(
@@ -593,8 +601,8 @@ class Textholders(basePlaceholder):
         )
         out = None
         if ele.responsetype.capitalize() == "Profile":
+            # file_cleanup has put in space_replacer
             text = ele.file_sanitized_text
-            text = text.replace(" ", settings.get_settings().space_replacer)
             out = f"{text}.{ext}"
         else:
             out = data.get_fileformat().format(**self._variables)

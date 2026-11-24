@@ -54,11 +54,15 @@ def config_json(monkeypatch, tmp_path):
     monkeypatch.setattr(config_, "config", None)  # read_config's cache
     monkeypatch.setattr("builtins.print", lambda *a, **k: None)
 
-    def write(**file_options):
+    def write(cli=None, **file_options):
+        """cli: command-line values that override file_options"""
         path.write_text(json.dumps({"file_options": file_options}), encoding="utf-8")
         args = settings.get_args(copy=True)
         args.text_type = args.space_replacer = args.textlength = None
+        for key, value in (cli or {}).items():
+            setattr(args, key, value)
         monkeypatch.setattr(settings, "get_args", lambda copy=False: args)
+        monkeypatch.setattr(settings.read_args, "retriveArgs", lambda: args)
         with of_env.builtin_defaults():
             merged = settings.merged_settings()
         monkeypatch.setattr(settings, "get_settings", lambda: merged)
@@ -132,6 +136,56 @@ def test_a_space_replacer_is_used_as_literal_text(config_json, logged, value):
     assert warnings(logged) == []
 
 
+def test_a_space_replacer_with_spaces_is_put_in_once(config_json, names_env):
+    # file_cleanup already puts it in: a second pass would add it again to
+    # its own spaces, " - " becoming " - - - "
+    config_json(space_replacer=" - ", file_format="{filename}.{ext}")
+    item = evening_post(url="https://example.invalid/good luck.jpg").all_media[0]
+    assert item.no_quality_final_filename == "good - luck"
+    assert asyncio.run(item.final_filename) == "good - luck"
+    assert asyncio.run(placeholder.Placeholders(item, "jpg").createfilename()) == "good - luck.jpg"
+
+
+def test_a_profile_text_file_puts_in_a_space_replacer_once(config_json, names_env):
+    config_json(space_replacer=" - ")
+    post = evening_post(text="good luck")
+    post._responsetype = "profile"
+    assert asyncio.run(placeholder.Textholders(post, "txt").createfilename()) == "good - luck.txt"
+
+
+def test_a_delete_character_is_not_put_in_a_name(config_json, logged):
+    assert config_json(space_replacer="\x7f").space_replacer == " "
+    assert naming_check.name_safe("a\x7fb") == "ab"
+
+
+# ---------------------------------------------------------------- command line
+
+
+def test_a_bad_space_replacer_on_the_command_line_names_the_option(config_json, logged):
+    assert config_json(cli={"space_replacer": "a/b"}, space_replacer="_").space_replacer == " "
+    load.checkFileOptions()
+    assert [line for line in logged if "--space-replacer" in line] == [
+        '--space-replacer is "a/b", which has characters a file name can\'t hold,'
+        " so a space is used"
+    ]
+
+
+def test_a_good_space_replacer_on_the_command_line_wins(config_json, logged):
+    assert config_json(cli={"space_replacer": "_"}, space_replacer="?").space_replacer == "_"
+    load.checkFileOptions()
+    assert logged == []
+
+
+def test_a_negative_textlength_on_the_command_line_names_the_option(config_json, logged):
+    config_json(cli={"textlength": -1}, textlength=5)
+    load.checkFileOptions()
+    assert logged == ["--textlength is -1; a negative length is read as 0, no limit"]
+
+
+def test_a_text_type_on_the_command_line_wins(config_json):
+    assert config_json(cli={"text_type": "word"}, text_type_default="letter").text_type == "word"
+
+
 # ---------------------------------------------------------------- {date}
 
 
@@ -158,11 +212,11 @@ def names_env(monkeypatch, tmp_path):
     return tmp_path
 
 
-def evening_post():
+def evening_post(url="https://example.invalid/a.jpg", text="hello"):
     raw = {
         "id": 2000,
         "postedAt": "2024-05-01T20:00:00+00:00",
-        "text": "hello",
+        "text": text,
         "price": 0,
         "isOpened": True,
         "responseType": "post",
@@ -171,7 +225,7 @@ def evening_post():
                 "id": 3000,
                 "type": "photo",
                 "canView": True,
-                "files": {"full": {"url": "https://example.invalid/a.jpg"}},
+                "files": {"full": {"url": url}},
             }
         ],
     }
@@ -182,7 +236,9 @@ def evening_post():
     "date,folder,file_name",
     [
         ("YYYY/MM/DD", pathlib.Path("2024", "05", "01"), "20240501.jpg"),
-        ("YYYY-MM-DD HH:mm:ss", pathlib.Path("2024-05-01 20:00:00"), "2024-05-01 200000.jpg"),
+        # ":" can't be in a folder name on Windows either
+        ("YYYY-MM-DD HH:mm:ss", pathlib.Path("2024-05-01 200000"), "2024-05-01 200000.jpg"),
+        ('YYYY/MM/DD "HH|mm?ss*"', pathlib.Path("2024", "05", "01 200000"), "20240501 200000.jpg"),
         ("MM-DD-YYYY", pathlib.Path("05-01-2024"), "05-01-2024.jpg"),
     ],
 )
