@@ -45,7 +45,7 @@ _reads = None
 
 
 @contextlib.contextmanager
-def recording_reads():
+def _recording_reads():
     global _reads
     _reads = set()
     try:

@@ -123,7 +123,7 @@ def auto_update_config(config: dict) -> dict:
     # keys missing from the file get the built-in defaults, not environment
     # values; the environment still applies at runtime
     with of_env.builtin_defaults():
-        with data.recording_reads() as reads:
+        with data._recording_reads() as reads:
             new_config = schema.get_current_config_schema(config)
         defaults = schema.get_current_config_schema(config=False)
     _notes.extend(rewrite_notes(unwrap(config), new_config, defaults, reads))
