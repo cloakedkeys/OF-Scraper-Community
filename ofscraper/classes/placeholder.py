@@ -469,12 +469,39 @@ _CAPTION_NAMES = (
 _LEFT_OUT = "\0"
 
 
+_SEP = r"[ _.-]*"
+
+
 def _without_left_out(name):
-    """The name without a left-out placeholder and the separator beside it:
-    the one after it ("{date} {filename} {text}" gives "date text"), or the
-    one before it when it ends the name ("{text} - {filename}.{ext}")."""
-    name = re.sub(rf"[ _-]*{_LEFT_OUT}(?=\.|$)", "", name)
-    return re.sub(rf"{_LEFT_OUT}[ _-]*", "", name)
+    """The name without a left-out placeholder and the separators beside it.
+    Brackets around it go too. Between two parts, one separator is kept: the
+    one after it ("{date} {filename} {text}" gives "date text"), or the one
+    before it when nothing follows it. A folder named by it alone is left out
+    with its slash ("{filename}/{text}" gives "text")."""
+    name = re.sub(rf"[(\[]\s*{_LEFT_OUT}\s*[)\]]", _LEFT_OUT, name)
+    parts = re.split(r"([/\\])", name)
+    kept = []
+    for i, part in enumerate(parts):
+        if i % 2:  # a slash
+            kept.append(part)
+            continue
+        ext = ""
+        if i == len(parts) - 1:
+            match = re.search(r"\.[A-Za-z0-9]+$", part)
+            if match:
+                part, ext = part[: match.start()], match.group()
+        while _LEFT_OUT in part:
+            part = re.sub(
+                rf"^{_SEP}{_LEFT_OUT}{_SEP}|{_SEP}{_LEFT_OUT}{_SEP}$", "", part
+            )
+            part = re.sub(
+                rf"({_SEP}){_LEFT_OUT}({_SEP})", lambda m: m[2] or m[1], part, count=1
+            )
+        if not part and not ext and kept:
+            kept.pop()  # an empty folder name: drop it with its slash
+            continue
+        kept.append(part + ext)
+    return re.sub(r"^[/\\]", "", "".join(kept))
 
 
 class Textholders(basePlaceholder):

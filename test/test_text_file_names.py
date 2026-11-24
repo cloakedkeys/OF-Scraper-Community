@@ -12,7 +12,7 @@ from ofscraper.utils.args.main import AutoDotDict
 from ofscraper.utils.args.parse.commands.main import program
 from test_undated_posts import names_env  # noqa: F401  (fixture)
 
-CAPTION = "Look at this dildo disappear inside of me"
+CAPTION = "Look at this sunset over the bay"
 
 
 @pytest.fixture
@@ -43,18 +43,18 @@ def text_name(monkeypatch, file_format):
 def test_text_and_filename_together_name_the_caption_once(monkeypatch, text_settings, name):
     out = text_name(monkeypatch, "{date} {%s} {text}.{ext}" % name)
     # {filename} is left out, with the space after it
-    assert out == "2026-10-31 Look at this dildo.txt"
+    assert out == "2026-10-31 Look at this sunset.txt"
 
 
 @pytest.mark.parametrize("file_format, name", [
     # the separator next to {filename} goes with it, wherever it is
-    ("{filename} {text}.{ext}", "Look at this dildo.txt"),
-    ("{filename}_{text}.{ext}", "Look at this dildo.txt"),
-    ("{text} {filename}.{ext}", "Look at this dildo.txt"),
-    ("{text} - {filename}.{ext}", "Look at this dildo.txt"),
-    ("{date} - {filename} - {text}.{ext}", "2026-10-31 - Look at this dildo.txt"),
-    ("{date}_{filename}_{post_id}_{text}.{ext}", "2026-10-31_8_Look at this dildo.txt"),
-    ("{filename}{text}.{ext}", "Look at this dildo.txt"),
+    ("{filename} {text}.{ext}", "Look at this sunset.txt"),
+    ("{filename}_{text}.{ext}", "Look at this sunset.txt"),
+    ("{text} {filename}.{ext}", "Look at this sunset.txt"),
+    ("{text} - {filename}.{ext}", "Look at this sunset.txt"),
+    ("{date} - {filename} - {text}.{ext}", "2026-10-31 - Look at this sunset.txt"),
+    ("{date}_{filename}_{post_id}_{text}.{ext}", "2026-10-31_8_Look at this sunset.txt"),
+    ("{filename}{text}.{ext}", "Look at this sunset.txt"),
 ])
 def test_the_separator_beside_filename_goes_with_it(monkeypatch, text_settings, file_format, name):
     assert text_name(monkeypatch, file_format) == name
@@ -70,12 +70,28 @@ def test_a_media_file_keeps_its_filename(monkeypatch, text_settings):
                       "files": {"full": {"url": "https://example.invalid/pic.jpg"}}}]}
     item = posts_.Post(raw, 1, "u", "timeline").all_media[0]
     out = asyncio.run(placeholder.Placeholders(item, "jpg").createfilename())
-    assert out == "2026-10-31 pic Look at this dildo.jpg"
+    assert out == "2026-10-31 pic Look at this sunset.jpg"
 
 
 def test_filename_alone_is_still_the_caption(monkeypatch, text_settings):
-    assert text_name(monkeypatch, "{date} {filename}.{ext}") == "2026-10-31 Look at this dildo.txt"
+    assert text_name(monkeypatch, "{date} {filename}.{ext}") == "2026-10-31 Look at this sunset.txt"
 
 
 def test_text_alone_is_unchanged(monkeypatch, text_settings):
-    assert text_name(monkeypatch, "{date} {text}.{ext}") == "2026-10-31 Look at this dildo.txt"
+    assert text_name(monkeypatch, "{date} {text}.{ext}") == "2026-10-31 Look at this sunset.txt"
+
+
+@pytest.mark.parametrize("file_format, name", [
+    # other separators: one is kept between the parts that remain
+    ("{date}.{filename}.{text}.{ext}", "2026-10-31.Look at this sunset.txt"),
+    ("{text} - {filename} ({post_id}).{ext}", "Look at this sunset (8).txt"),
+    ("{text}.{filename}.{ext}", "Look at this sunset.txt"),
+    # brackets around {filename} go with it
+    ("{text} ({filename}).{ext}", "Look at this sunset.txt"),
+    ("{text} [{filename}] {post_id}.{ext}", "Look at this sunset 8.txt"),
+    # a folder named by {filename} alone is left out with its slash
+    ("{filename}/{text}.{ext}", "Look at this sunset.txt"),
+    ("{date}/{filename}/{text}.{ext}", "2026-10-31/Look at this sunset.txt"),
+])
+def test_uncommon_separators_beside_filename_go_with_it(monkeypatch, text_settings, file_format, name):
+    assert text_name(monkeypatch, file_format) == name
