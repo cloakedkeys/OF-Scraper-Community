@@ -216,6 +216,8 @@ def get_string_byte_size_windows(text):
 
 
 def cleanDB():
+    if dry_run.active():
+        return  # a dry run deletes nothing
     try:
         pathlib.Path(common_paths.get_profile_path() / "db.lock").unlink(
             missing_ok=True

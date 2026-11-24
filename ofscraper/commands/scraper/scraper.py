@@ -220,15 +220,10 @@ def main():
             try:
                 scrapper()
             finally:
+                # each finished scan reported itself (dry_run.finish); a scan
+                # that failed or was stopped has no report, only copies
                 if dry_run.active():
-                    try:
-                        log.warning(dry_run.report())
-                        json_path = getattr(settings.get_settings(), "dry_run_json", None)
-                        if json_path:
-                            dry_run.write_json(json_path)
-                            log.warning(f"Dry run report written to {json_path}")
-                    finally:
-                        dry_run.cleanup()
+                    dry_run.cleanup()
             paths.temp_cleanup()
             paths.cleanDB()
         except KeyboardInterrupt:
@@ -335,6 +330,8 @@ def process_selected_areas():
     log.debug("[bold deep_sky_blue2] Running Action Mode [/bold deep_sky_blue2]")
     scrapingManager = scraperManager()
     scrapingManager.runner()
+    if dry_run.active():
+        dry_run.finish()
     while True:
         if not data.get_InfiniteLoop() or prompts.continue_prompt() == "No":
             break
@@ -351,6 +348,8 @@ def process_selected_areas():
             else:
                 menu.get_count() > 0 and menu.reset_menu_helper()
                 scrapingManager.runner()
+                if dry_run.active():
+                    dry_run.finish()
                 menu.update_count()
 
 

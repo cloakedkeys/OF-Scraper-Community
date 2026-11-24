@@ -256,8 +256,8 @@ def test_report_by_creator_area_and_type(report_env):
 
     text = dry_run.report()
     assert text.startswith("Dry run: nothing was downloaded and nothing was changed.")
-    assert "  timeline        3 to download (2 images, 1 videos)" in text
-    assert "  messages        1 to download (1 videos, 1 protected)" in text
+    assert "  timeline        3 to download (2 images, 1 video)" in text
+    assert "  messages        1 to download (1 video, 1 protected)" in text
     assert "    lib/Messages/4.mp4" in text
     assert "A download would attempt up to 5 files from 2 creators." in text
     assert "aren't applied" not in text
@@ -463,3 +463,88 @@ def test_postgresql_is_refused_before_connecting(monkeypatch):
         run.main()
     assert exc.value.code == 2
     assert touched == []
+
+
+# --- the end of a run ---------------------------------------------------------
+
+
+def test_closing_the_cache_after_cleanup_makes_no_new_copy(library, monkeypatch):
+    # shutdown closes the cache after the dry run removed its copy
+    monkeypatch.setitem(library.settings, "dry_run", True)
+    assert cache.get("scan_mark") == "real"
+    dry_run.cleanup()
+    cache.close()
+    assert dry_run._root is None
+
+
+def test_a_dry_run_leaves_the_database_lock_and_makes_no_folder(library, monkeypatch, tmp_path):
+    monkeypatch.setitem(library.settings, "dry_run", True)
+    lock = library.profile / "db.lock"
+    lock.write_text("held")
+    paths.cleanDB()
+    assert lock.exists()
+    missing = tmp_path / "cfg" / "other_profile"
+    monkeypatch.setattr(common_paths, "get_profile_path", lambda *a, **k: missing)
+    common_paths.getcachepath()
+    assert not missing.exists()
+
+
+@pytest.fixture
+def scraper_run(monkeypatch, library, tmp_path):
+    """scraper.main() with the scan replaced; the report is collected."""
+    import ofscraper.commands.scraper.scraper as scraper
+
+    reports = []
+    monkeypatch.setattr(scraper.network, "check_cdm", lambda: None)
+    monkeypatch.setattr(scraper, "print_start", lambda: None)
+    monkeypatch.setattr(scraper.log, "traceback_", lambda *a: None, raising=False)
+    monkeypatch.setattr(
+        dry_run.log, "warning",
+        lambda msg, *a, **k: reports.append(msg) if msg.startswith("Dry run:") else None,
+    )
+    monkeypatch.setitem(library.settings, "dry_run", True)
+    monkeypatch.setitem(library.settings, "dry_run_json", str(tmp_path / "report.json"))
+    for name in ("size_max", "size_min", "skip_download_script"):
+        monkeypatch.setitem(library.settings, name, None)
+    return SimpleNamespace(scraper=scraper, reports=reports, json=tmp_path / "report.json")
+
+
+def test_no_report_when_the_scan_fails(scraper_run, monkeypatch):
+    def scan():
+        asyncio.run(dry_run.record("a creator", [media("Timeline", "Images", 1)]))
+        raise RuntimeError("auth failed")
+
+    monkeypatch.setattr(scraper_run.scraper, "scrapper", scan)
+    with pytest.raises(RuntimeError):
+        scraper_run.scraper.main()
+    assert scraper_run.reports == []
+    assert not scraper_run.json.exists()
+    assert dry_run._root is None  # the copies were still removed
+
+
+def test_each_pass_of_the_action_loop_has_its_own_report(scraper_run, monkeypatch):
+    scraper = scraper_run.scraper
+
+    class Manager:
+        def runner(self):
+            # each pass sees the real database, not the last pass's copy
+            copy = placeholder.databasePlaceholder().databasePathHelper(5, "a creator")
+            assert media_ids(copy) == [1]
+            with contextlib.closing(sqlite3.connect(copy)) as conn:
+                conn.execute("DELETE FROM medias")
+                conn.commit()
+            asyncio.run(dry_run.record("a creator", [media("Timeline", "Videos", 1)]))
+
+    answers = iter(["Yes", "No"])
+    monkeypatch.setattr(scraper, "scraperManager", Manager)
+    monkeypatch.setattr(scraper.data, "get_InfiniteLoop", lambda: True)
+    monkeypatch.setattr(scraper.prompts, "continue_prompt", lambda: next(answers))
+    monkeypatch.setattr(scraper.prompts, "action_prompt", lambda: "download")
+    monkeypatch.setattr(scraper.menu, "get_count", lambda: 0)
+    monkeypatch.setattr(scraper.menu, "update_count", lambda: None)
+    monkeypatch.setattr(scraper, "scrapper", scraper.process_selected_areas)
+    scraper.main()
+    assert len(scraper_run.reports) == 2
+    for text in scraper_run.reports:
+        assert "1 video)" in text
+        assert "up to 1 file from 1 creator" in text

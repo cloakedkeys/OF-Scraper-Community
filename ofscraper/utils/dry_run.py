@@ -182,6 +182,20 @@ def reset():
         _samples.clear()
 
 
+def finish():
+    """Report a scan that finished, then forget it and remove the copies, so
+    a next pass (infinite_loop_action_mode) starts again from the real files."""
+    try:
+        log.warning(report())
+        json_path = getattr(settings.get_settings(), "dry_run_json", None)
+        if json_path:
+            write_json(json_path)
+            log.warning(f"Dry run report written to {json_path}")
+    finally:
+        reset()
+        cleanup()
+
+
 def data():
     """The report as data (--dry-run-json)."""
     s = settings.get_settings()
@@ -213,6 +227,13 @@ def _plural(n, word):
     return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
+def _count_of(n, kind):
+    """'1 video', '2 videos': the types are plural words (Videos, Images)."""
+    if n == 1 and kind.endswith("s"):
+        kind = kind[:-1]
+    return f"{n} {kind}"
+
+
 def report():
     """What the dry run would have done, as text."""
     d = data()
@@ -225,7 +246,7 @@ def report():
             by_area.setdefault(a["area"], []).append(a)
         for area, kinds in by_area.items():
             total = sum(k["count"] for k in kinds)
-            parts = ", ".join(f"{k['count']} {k['type']}" for k in kinds)
+            parts = ", ".join(_count_of(k["count"], k["type"]) for k in kinds)
             protected = sum(k["protected"] for k in kinds)
             extra = f", {protected} protected" if protected else ""
             lines.append(f"  {area:<12}{total:>5} to download ({parts}{extra})")
