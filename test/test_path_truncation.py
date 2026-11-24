@@ -131,3 +131,12 @@ def test_a_linux_extension_over_the_name_limit_says_so(monkeypatch):
     monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "3")
     with pytest.raises(ValueError, match="no room"):
         paths._linux_truncateHelper("/data/.txt")
+
+
+def test_a_long_dotted_tail_is_not_taken_for_an_extension():
+    # a name with no extension whose caption ends ".word...": no real
+    # extension is that long, so the tail is cut like the rest of the name
+    name = f"2026-10-31 {CAPTION}.{'y' * 300}"
+    assert paths._split_ext(name) == (name, "")
+    assert str(cut(f"{FOLDER}\\{name}").parent) == FOLDER
+    assert paths._linux_truncateHelper(f"/data/{name}").name.startswith("2026-10-31")
