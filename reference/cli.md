@@ -137,12 +137,12 @@ Run `ofscraper creator_names [--all | --find NAME | --add MODEL_ID NAME [--seen 
 
 ### `health` (separate entry point)
 
-`ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health`). Offline tool using argparse. Reads `status.json` (from `STATUS_FILE`, `OFSC_STATUS_FILE`, or the default profile folder) without starting the scraper, prints one line saying why, and exits 0 when healthy or 1 when unhealthy. Reports unhealthy when a running daemon's heartbeat is older than `--max-quiet` (default 60 minutes), when an idle daemon's `next_pass_at` passed more than `--max-quiet` ago, or when the last pass recorded a failed login. Reports healthy when there is no status file or the last run was a one-off.
+`ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health`). Offline tool using argparse. Reads `status.json` (from `STATUS_FILE`, `OFSC_STATUS_FILE`, or else the newer of the config folder's, which the `--profiles` daemon writes, and the main profile's) without starting the scraper, prints one line saying why, and exits 0 when healthy or 1 when unhealthy. Reports unhealthy when a running daemon's heartbeat is older than `--max-quiet` (default 60 minutes, above 0), as is an idle daemon's with no next pass scheduled, when an idle daemon's `next_pass_at` passed more than `--max-quiet` ago, or when the last pass recorded a failed login that no later login check cleared. Reports healthy when there is no status file or the last run was a one-off.
 
 Run `ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health [STATUS_FILE] [--max-quiet MINUTES]`).
 
-- `STATUS_FILE`: Path to the status JSON file (default: OFSC_STATUS_FILE, or ~/.config/ofscraper/main_profile/status.json).
-- `--max-quiet`: Minutes before a quiet running daemon or overdue idle daemon counts as unhealthy (default: 60).
+- `STATUS_FILE`: Path to the status JSON file (default: OFSC_STATUS_FILE, or the newer of status.json in the config folder and in the main profile's folder).
+- `--max-quiet`: Minutes, above 0, before a quiet running daemon or overdue idle daemon counts as unhealthy (default: 60).
 
 ### `move_creator_files` (separate entry point)
 

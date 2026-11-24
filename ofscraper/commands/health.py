@@ -33,18 +33,20 @@ def _parse_iso(value):
     return dt.astimezone(timezone.utc)
 
 
-def _main_profile(config_home):
+def _main_profile(config_home, paths):
     """The profile config.json names as main_profile, read without loading
     the app, as the profile folder's name."""
+    from ofscraper.utils.of_env.values.main import load_main_config
+
     name = None
     try:
-        data = json.loads((config_home / "config.json").read_text(encoding="utf-8-sig"))
+        data = json.loads((config_home / paths["configFile"]).read_text(encoding="utf-8-sig"))
         if isinstance(data.get("config"), dict):
             data = data["config"]
-        name = data.get(os.getenv("OFSC_MAIN_PROFILE_NAME") or "main_profile")
+        name = data.get(paths["mainProfile"])
     except Exception:
         pass
-    name = str(name or os.getenv("OFSC_PROFILE_DEFAULT") or "main_profile")
+    name = str(name or load_main_config()["PROFILE_DEFAULT"])
     return f"{re.sub('_profile', '', name)}_profile"
 
 
@@ -54,10 +56,14 @@ def default_status_path():
     override = (os.getenv("OFSC_STATUS_FILE") or "").strip()
     if override:
         return pathlib.Path(override)
-    config_home = pathlib.Path.home() / (os.getenv("OFSC_CONFIG_DIR") or ".config/ofscraper")
+    # the environment defaults only, so the app isn't loaded
+    from ofscraper.utils.of_env.values.path.files import load_file_paths_config
+
+    paths = load_file_paths_config()
+    config_home = pathlib.Path.home() / paths["configPath"]
     candidates = [
         config_home / "status.json",
-        config_home / _main_profile(config_home) / "status.json",
+        config_home / _main_profile(config_home, paths) / "status.json",
     ]
     found = [p for p in candidates if p.is_file()]
     if not found:
@@ -168,13 +174,13 @@ def build_parser():
         "status_file",
         nargs="?",
         default=None,
-        help="Path to the status JSON file (default: OFSC_STATUS_FILE, or ~/.config/ofscraper/main_profile/status.json).",
+        help="Path to the status JSON file (default: OFSC_STATUS_FILE, or the newer of status.json in the config folder and in the main profile's folder).",
     )
     parser.add_argument(
         "--max-quiet",
         type=_max_quiet,
         default=DEFAULT_MAX_QUIET_MINUTES,
-        help=f"Minutes before a quiet running daemon or overdue idle daemon counts as unhealthy (default: {DEFAULT_MAX_QUIET_MINUTES}).",
+        help=f"Minutes, above 0, before a quiet running daemon or overdue idle daemon counts as unhealthy (default: {DEFAULT_MAX_QUIET_MINUTES}).",
     )
     return parser
 
