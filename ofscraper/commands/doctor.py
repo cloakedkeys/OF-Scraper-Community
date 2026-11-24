@@ -20,6 +20,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -332,10 +333,16 @@ def _script_python(script):
     if uv:
         # a relative path is beside the trampoline, as uv-trampoline reads it
         return os.path.join(os.path.dirname(os.path.abspath(script)), uv.decode("utf-8", "replace"))
-    # pip's wrapper for long paths: #!/bin/sh, then '''exec' "/path/python" "$0" "$@"
-    wrapped = re.match(rb"#!/bin/sh\r?\n'''exec' \"?([^\"\r\n]+)\"? ", data)
+    # pip's wrapper for long paths: #!/bin/sh, then '''exec' "/path/python" "$0" "$@";
+    # the path can also be in single quotes, as shlex.quote writes it
+    wrapped = re.match(rb"#!/bin/sh\r?\n([^\r\n]*)", data)
     if wrapped:
-        return wrapped.group(1).decode("utf-8", "replace")
+        try:
+            words = shlex.split(wrapped.group(1).decode("utf-8", "replace"))
+        except ValueError:
+            words = []
+        if len(words) > 1 and words[0] == "exec":
+            return words[1]
     # a script's first line, or the last #! line of a Windows launcher
     # (distlib's: the launcher, then the #! line, then a zip of the script)
     if data.startswith(b"#!"):
