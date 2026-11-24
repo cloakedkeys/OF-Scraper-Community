@@ -152,6 +152,83 @@ def test_copy_includes_rows_still_in_the_write_ahead_log(library, monkeypatch):
         assert media_ids(copy) == [1, 3]
 
 
+
+def test_a_checkpoint_during_the_copy_loses_no_row(library, monkeypatch):
+    # Given a creator's database with a committed row still in the
+    # write-ahead log, held open by another run
+    real = library.profile / ".data" / "a creator" / "user_data.db"
+    with contextlib.closing(sqlite3.connect(real)) as other_run:
+        other_run.execute("PRAGMA journal_mode=WAL")
+        other_run.execute("PRAGMA wal_autocheckpoint=0")
+        other_run.execute(
+            "INSERT INTO medias (media_id, post_id, api_type, media_type,"
+            " created_at, posted_at, model_id) VALUES (3, 102, 'timeline',"
+            " 'Images', '2024-01-01', '2024-01-02', 5)"
+        )
+        other_run.commit()
+        # When that run checkpoints while the dry run is copying a file
+        real_copy2 = dry_run.shutil.copy2
+
+        def copy_then_checkpoint(*args, **kwargs):
+            out = real_copy2(*args, **kwargs)
+            other_run.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            return out
+
+        monkeypatch.setattr(dry_run.shutil, "copy2", copy_then_checkpoint)
+        monkeypatch.setitem(library.settings, "dry_run", True)
+        copy = placeholder.databasePlaceholder().databasePathHelper(5, "a creator")
+        # Then the copy still has the committed row
+        assert media_ids(copy) == [1, 3]
+
+
+def _sidecars(real):
+    return sorted(p.name for p in real.parent.iterdir() if p.name != real.name)
+
+
+def test_a_closed_wal_database_gets_no_new_files(library, monkeypatch):
+    # Given a database in WAL mode that no run has open (no -wal, no -shm)
+    real = library.profile / ".data" / "a creator" / "user_data.db"
+    with contextlib.closing(sqlite3.connect(real)) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+    assert _sidecars(real) == []
+    before = snapshot(library.root)
+    # When a dry run copies it
+    monkeypatch.setitem(library.settings, "dry_run", True)
+    copy = placeholder.databasePlaceholder().databasePathHelper(5, "a creator")
+    # Then the copy has its rows and no -wal or -shm appeared beside the real file
+    assert media_ids(copy) == [1]
+    assert _sidecars(real) == []
+    dry_run.cleanup()
+    assert snapshot(library.root) == before
+
+
+def test_a_leftover_write_ahead_log_is_copied_without_touching_it(library, monkeypatch):
+    # Given a run that stopped with committed rows still in the -wal, and no -shm
+    real = library.profile / ".data" / "a creator" / "user_data.db"
+    work = library.root / "work"
+    work.mkdir()
+    make_db(work / "user_data.db")
+    with contextlib.closing(sqlite3.connect(work / "user_data.db")) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA wal_autocheckpoint=0")
+        conn.execute(
+            "INSERT INTO medias (media_id, post_id, api_type, media_type,"
+            " created_at, posted_at, model_id) VALUES (3, 102, 'timeline',"
+            " 'Images', '2024-01-01', '2024-01-02', 5)"
+        )
+        conn.commit()
+        for name in ("user_data.db", "user_data.db-wal"):
+            (real.parent / name).write_bytes((work / name).read_bytes())
+    assert _sidecars(real) == ["user_data.db-wal"]
+    before = snapshot(library.profile)
+    # When a dry run copies it
+    monkeypatch.setitem(library.settings, "dry_run", True)
+    copy = placeholder.databasePlaceholder().databasePathHelper(5, "a creator")
+    # Then the copy has the rows from the log, and the real files are as they were
+    assert media_ids(copy) == [1, 3]
+    assert snapshot(library.profile) == before
+
+
 # --- the switch-off list ----------------------------------------------------
 
 

@@ -2,18 +2,20 @@
 
 The scan writes to the creator databases and the cache in many places, so a
 dry run doesn't try to stop each write. It points the scan at throwaway
-copies instead: each creator's database file is copied the first time it is
-used, and the profile's cache folder is copied when the cache is first
-opened. The copies are removed at the end of the run. The real files are
-never opened.
+copies instead: each creator's database is copied the first time it is
+used (through sqlite's backup while another run has it open), and the
+profile's cache folder is copied when the cache is first opened. The copies
+are removed at the end of the run. The real files are never written to.
 """
 
 import atexit
+import contextlib
 import hashlib
 import json
 import logging
 import pathlib
 import shutil
+import sqlite3
 import tempfile
 import threading
 
@@ -46,14 +48,54 @@ def _workdir():
     return _root
 
 
+def _state(paths):
+    """Size and modified time of each path, or None where it is missing."""
+    out = []
+    for path in paths:
+        try:
+            st = path.stat()
+            out.append((st.st_size, st.st_mtime_ns))
+        except FileNotFoundError:
+            out.append(None)
+    return out
+
+
+def _backup(src, dest):
+    """A consistent copy through sqlite, rows still in the write-ahead log
+    included. Read-only: nothing is written to src."""
+    uri = src.absolute().as_uri() + "?mode=ro"
+    with contextlib.closing(sqlite3.connect(uri, uri=True)) as source:
+        with contextlib.closing(sqlite3.connect(dest)) as target:
+            source.backup(target)
+
+
 def _copy_file(src, dest):
+    """Copy a database so the copy holds every committed row.
+
+    While a run has the database open in WAL mode (its -wal and -shm exist),
+    the file and the -wal are copied together by sqlite's backup, since a
+    checkpoint between two file copies would lose rows. Without a -shm no
+    connection is open, and opening one, even read-only, would create a -wal
+    and -shm beside the real file; then the file and any leftover -wal are
+    copied as they are, again if they changed meanwhile."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if src.exists():
+    if not src.exists():
+        return
+    wal = src.with_name(src.name + "-wal")
+    shm = src.with_name(src.name + "-shm")
+    dest_wal = dest.with_name(dest.name + "-wal")
+    for _ in range(3):
+        if shm.exists():
+            break
+        before = _state((src, wal, shm))
         shutil.copy2(src, dest)
-        # a write-ahead log holds committed rows not yet in the file
-        wal = src.with_name(src.name + "-wal")
         if wal.exists():
-            shutil.copy2(wal, dest.with_name(dest.name + "-wal"))
+            shutil.copy2(wal, dest_wal)
+        if _state((src, wal, shm)) == before:
+            return
+        for path in (dest, dest_wal):
+            path.unlink(missing_ok=True)
+    _backup(src, dest)
 
 
 def _copy_dir(src, dest):
