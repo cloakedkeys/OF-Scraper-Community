@@ -5,6 +5,7 @@ No package is installed: ``subprocess.run`` is replaced, and conftest sets
 """
 
 import pathlib
+import site
 import subprocess
 import sys
 import tomllib
@@ -157,3 +158,36 @@ def test_installs_at_the_same_time_run_pip_once(runs, monkeypatch):
         t.join()
     assert results == [True] * 8
     assert len(started) == 2  # one pip install, one Chromium download
+
+
+def test_a_user_install_can_be_imported_straight_away(runs, monkeypatch, tmp_path):
+    # pip installs with --user when site-packages isn't writable; on a first
+    # install the user site directory didn't exist at startup, so it isn't on
+    # sys.path yet
+    user_site = tmp_path / "user-site"
+    monkeypatch.setattr(site, "ENABLE_USER_SITE", True)
+    monkeypatch.setattr(site, "getusersitepackages", lambda: str(user_site))
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.delitem(sys.modules, "ofs_user_site_extra", raising=False)
+
+    def user_install(cmd, **kwargs):
+        user_site.mkdir()
+        (user_site / "ofs_user_site_extra.py").write_text("FOUND = True\n")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(extras.subprocess, "run", user_install)
+    assert extras.install("postgres") is True
+    import ofs_user_site_extra
+
+    assert ofs_user_site_extra.FOUND
+    monkeypatch.delitem(sys.modules, "ofs_user_site_extra")
+
+
+def test_a_disabled_user_site_is_not_added(runs, monkeypatch, tmp_path):
+    user_site = tmp_path / "user-site"
+    user_site.mkdir()
+    monkeypatch.setattr(site, "ENABLE_USER_SITE", False)
+    monkeypatch.setattr(site, "getusersitepackages", lambda: str(user_site))
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    assert extras.install("postgres") is True
+    assert str(user_site) not in sys.path

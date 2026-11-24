@@ -14,7 +14,9 @@ import functools
 import importlib
 import importlib.util
 import logging
+import os
 import shutil
+import site
 import subprocess
 import sys
 import threading
@@ -79,6 +81,17 @@ def _run(cmd, what) -> bool:
     return True
 
 
+def _add_user_site():
+    """Put the user site directory on sys.path. pip installs there (--user)
+    when site-packages isn't writable, and Python only adds it at startup
+    when it already exists."""
+    if not site.ENABLE_USER_SITE:
+        return
+    user_site = site.getusersitepackages()
+    if os.path.isdir(user_site) and user_site not in sys.path:
+        site.addsitedir(user_site)
+
+
 @_once
 def install(extra: str) -> bool:
     """Install the ``extra`` packages, once per run. True when they were installed.
@@ -95,6 +108,7 @@ def install(extra: str) -> bool:
     log.info(f"Installing the optional {extra!r} packages; this happens once")
     ok = _run(cmd, f"the optional {extra!r} packages")
     # let this run import what was just installed
+    _add_user_site()
     importlib.invalidate_caches()
     if ok:
         log.info(f"Installed the optional {extra!r} packages")
