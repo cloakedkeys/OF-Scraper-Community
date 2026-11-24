@@ -97,7 +97,9 @@ def build_child_command(profile, raw_argv=None, executable=None, frozen=None):
     exe = executable or sys.executable
     prefix = [exe] if is_frozen else [exe, "-m", "ofscraper"]
     argv = sys.argv[1:] if raw_argv is None else raw_argv
-    return [*prefix, *_strip_parent_flags(argv), "--profile", profile]
+    # right after the program, so a "--" or a subcommand in argv
+    # doesn't change how it's read
+    return [*prefix, "--profile", profile, *_strip_parent_flags(argv)]
 
 
 def _child_env(base_env=None):

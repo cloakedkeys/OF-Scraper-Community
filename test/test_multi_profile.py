@@ -34,13 +34,13 @@ def test_build_child_command_strips_daemon_and_profiles_and_adds_profile():
         "/usr/bin/python3",
         "-m",
         "ofscraper",
+        "--profile",
+        "alpha",
         "--action",
         "download",
         "-u",
         "ALL",
         "--no-rich",
-        "--profile",
-        "alpha",
     ]
 
     # Standalone frozen binary invokes itself directly without `-m ofscraper`
@@ -50,7 +50,21 @@ def test_build_child_command_strips_daemon_and_profiles_and_adds_profile():
         executable="/opt/ofscraper",
         frozen=True,
     )
-    assert frozen_cmd == ["/opt/ofscraper", "-a", "download", "--profile", "beta"]
+    assert frozen_cmd == ["/opt/ofscraper", "--profile", "beta", "-a", "download"]
+
+
+def test_child_profile_comes_before_a_double_dash():
+    # after "--" every argument is positional, so --profile appended at the
+    # end would no longer be read as an option
+    cmd = multi_profile.build_child_command(
+        "beta",
+        raw_argv=["-d", "15", "--profiles", "alpha,beta", "-a", "download", "--", "-x"],
+        executable="/opt/ofscraper",
+        frozen=True,
+    )
+    assert cmd == ["/opt/ofscraper", "--profile", "beta", "-a", "download", "--", "-x"]
+    ctx = main_cmd.program.make_context("ofscraper", cmd[1:-2])
+    assert ctx.params["profile"] == "beta_profile"
 
 
 def test_children_run_in_order_and_failure_does_not_stop_next(tmp_path, monkeypatch):
@@ -64,7 +78,7 @@ def test_children_run_in_order_and_failure_does_not_stop_next(tmp_path, monkeypa
         def __init__(self, cmd, env=None):
             self.cmd = cmd
             self.env = env
-            self.profile = cmd[-1]
+            self.profile = cmd[cmd.index("--profile") + 1]
             self.returncode = None
             launched.append((cmd, env))
 
@@ -80,7 +94,7 @@ def test_children_run_in_order_and_failure_does_not_stop_next(tmp_path, monkeypa
         ["first", "second", "third"], raw_argv=raw, popen=FakeProc
     )
 
-    assert [cmd[-1] for cmd, _ in launched] == ["first", "second", "third"]
+    assert [cmd[cmd.index("--profile") + 1] for cmd, _ in launched] == ["first", "second", "third"]
     for cmd, env in launched:
         assert "--daemon" not in cmd
         assert "--profiles" not in cmd
@@ -129,6 +143,9 @@ def test_stop_signal_reaches_running_child(tmp_path, monkeypatch):
             received.append(("terminate",))
             self._done = True
 
+    # a stop that didn't come from the terminal (under `pytest -s` in a
+    # terminal, the real check would say the child got it already)
+    monkeypatch.setattr(multi_profile, "_terminal_ctrl_c_reached_child", lambda: False)
     args = SimpleNamespace(daemon=10, daemon_jitter=0, profiles=["first", "second"], live_watch=False, profile=None)
     with pytest.raises(KeyboardInterrupt):
         multi_profile.run_multi_profile_daemon(
@@ -308,4 +325,4 @@ def test_attached_short_option_values_are_stripped():
         "beta", raw_argv=["-d30", "-rfoo", "-dc", "-rd", "-a", "download"],
         executable="/opt/ofscraper", frozen=True,
     )
-    assert cmd == ["/opt/ofscraper", "-dc", "-rd", "-a", "download", "--profile", "beta"]
+    assert cmd == ["/opt/ofscraper", "--profile", "beta", "-dc", "-rd", "-a", "download"]
