@@ -219,3 +219,48 @@ def test_a_text_file_named_by_its_caption_stays_in_its_folder(naming):
     # the default file_format: a text file's {filename} is its caption
     text, _ = naming("{filename}.{ext}", r"..\..\..\elsewhere")
     assert ntpath.dirname(ntpath.normpath(ntpath.join(FOLDER, text))) == FOLDER
+
+
+# A caption or name can't be "." or "..", or a name Windows keeps for a
+# device (CON, NUL, COM1, ...), as a whole folder or file name.
+import asyncio
+
+from naming_helpers import make_post
+
+
+@pytest.mark.parametrize("caption", [".", "..", "..."])
+def test_a_caption_of_dots_is_not_a_folder_name(naming, caption):
+    # "{text}/" makes the caption a folder: ".." would be the folder above
+    text, (media,) = naming("{text}/{filename}.{ext}", caption)
+    for name in (text, media):
+        assert not any(re.fullmatch(r"\.+", part) for part in re.split(r"[/\\]", name))
+        assert ntpath.dirname(ntpath.normpath(ntpath.join(FOLDER, name))).startswith(FOLDER + "\\")
+
+
+def test_a_caption_of_dots_does_not_name_another_save_folder(naming, monkeypatch, tmp_path):
+    monkeypatch.setattr(placeholder.data, "get_dirformat", lambda *a, **k: "{text}")
+    naming("{filename}.{ext}", "..", text=False)
+    post = make_post("..")
+    folder = asyncio.run(placeholder.Placeholders(post.all_media[0], "jpg").getmediadir(create=False))
+    assert folder.parent == tmp_path / "data"
+
+
+@pytest.mark.parametrize("caption", ["CON", "nul", "Aux", "PRN", "COM1", "lpt9", "con.backup"])
+@pytest.mark.parametrize("file_format", ["{text}.{ext}", "{filename}.{ext}", "{text}/{date}.{ext}"])
+def test_a_windows_device_name_is_not_a_file_name(naming, caption, file_format):
+    text, (media,) = naming(file_format, caption)
+    names = [text] if file_format == "{filename}.{ext}" else [text, media]
+    for name in names:
+        for part in re.split(r"[/\\]", name):
+            stem = part.split(".")[0].rstrip(" ")
+            assert stem.upper() not in WINDOWS_DEVICES, name
+
+
+def test_a_name_that_only_starts_like_a_device_is_unchanged(naming):
+    text, (media,) = naming("{text}.{ext}", "Contest")
+    assert (text, media) == ("Contest.txt", "Contest.jpg")
+
+
+WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL"} | {
+    f"{d}{n}" for d in ("COM", "LPT") for n in range(1, 10)
+}

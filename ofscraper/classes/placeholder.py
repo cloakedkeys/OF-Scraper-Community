@@ -243,6 +243,23 @@ class databasePlaceholder(basePlaceholder):
         self._metadata = input
 
 
+# names Windows keeps for devices, with or without an extension ("con.txt")
+_WINDOWS_DEVICE = re.compile(r"(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?=\s*(\.|$))")
+
+
+def _safe_parts(path):
+    """path with no folder or file name that is only dots ("." or ".." would
+    be this folder or the one above) or a Windows device name ("CON" gets
+    "CON_"): a caption or a name can be either."""
+    parts = re.split(r"([/\\])", str(path))
+    for i in range(0, len(parts), 2):
+        if re.fullmatch(r"\.+", parts[i]):
+            parts[i] = "_"
+        else:
+            parts[i] = _WINDOWS_DEVICE.sub(r"\1_", parts[i])
+    return "".join(parts)
+
+
 class Placeholders(basePlaceholder):
     def __init__(self, ele, ext) -> None:
         super().__init__()
@@ -354,7 +371,9 @@ class Placeholders(basePlaceholder):
         log.trace(
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
         )
-        downloadDir = pathlib.Path(data.get_dirformat().format(**self._variables))
+        downloadDir = pathlib.Path(
+            _safe_parts(data.get_dirformat().format(**self._variables))
+        )
         final_path = pathlib.Path(
             os.path.normpath(f"{str(root)}/{str(pathlib.Path(downloadDir))}")
         )
@@ -382,7 +401,7 @@ class Placeholders(basePlaceholder):
             out = f"{await ele.final_filename}.{ext}"
         else:
             out = data.get_fileformat().format(**self._variables)
-        out = self._addcount(ele, out)
+        out = self._addcount(ele, _safe_parts(out))
         log.debug(f"final filename path {out}")
         self._filename = out
         return out
@@ -563,7 +582,9 @@ class Textholders(basePlaceholder):
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
         )
 
-        downloadDir = pathlib.Path(data.get_dirformat().format(**self._variables))
+        downloadDir = pathlib.Path(
+            _safe_parts(data.get_dirformat().format(**self._variables))
+        )
         final_path = pathlib.Path(
             os.path.normpath(f"{str(root)}/{str(pathlib.Path(downloadDir))}")
         )
@@ -591,6 +612,7 @@ class Textholders(basePlaceholder):
             out = f"{text}.{ext}"
         else:
             out = data.get_fileformat().format(**self._variables)
+        out = _safe_parts(out)
         log.debug(f"final filename path {out}")
         self._filename = out
         return out
