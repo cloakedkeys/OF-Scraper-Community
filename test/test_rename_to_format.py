@@ -181,6 +181,37 @@ def test_undo_puts_back_the_names_and_the_rows(tmp_path):
     assert library.rows() == rows
 
 
+def test_an_undo_whose_row_update_fails_gives_the_files_their_new_names_back(tmp_path):
+    library = Library(tmp_path)
+    library.post(501)
+    library.add("abcdef.jpg", post_id=501)
+    library.add("other.jpg", post_id=501)
+    rows = library.rows()
+    library.formats("{model_username}/All/", "{media_id}.{ext}")
+    undo_file = library.run(apply=True)["undo_file"]
+    renamed = library.rows()
+    with closing(sqlite3.connect(library.db)) as conn, conn:
+        # the second file's row can't be given its old name back
+        conn.execute(
+            "CREATE TRIGGER refuse BEFORE UPDATE ON medias WHEN NEW.filename = 'other.jpg'"
+            " BEGIN SELECT RAISE(ABORT, 'refused'); END"
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        tool.undo(undo_file, apply=True)
+
+    # the first file's rename back is reversed with the rolled back rows
+    assert library.files() == ["alice/All/1.jpg", "alice/All/2.jpg"]
+    assert library.rows() == renamed
+
+    with closing(sqlite3.connect(library.db)) as conn, conn:
+        conn.execute("DROP TRIGGER refuse")
+    done = tool.undo(undo_file, apply=True)
+    assert (done["renamed_back"], done["rows_restored"]) == (2, 2)
+    assert library.files() == ["alice/Posts/Images/abcdef.jpg", "alice/Posts/Images/other.jpg"]
+    assert library.rows() == rows
+
+
 def test_names_match_what_the_download_code_builds(tmp_path):
     """The rows are written as a download writes them, from the scraper's
     own Post and Media, and the new names are those the same code gives

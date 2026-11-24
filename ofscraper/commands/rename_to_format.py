@@ -805,6 +805,8 @@ def undo(undo_file, apply=False):
               "rows_to_restore": 0, "renamed_back": 0, "rows_restored": 0, "left": []}
     condition = "rowid = ? AND directory = ? AND filename = ?"
     with closing(_connect(database, apply)) as conn:
+        # (new, old): what the rows' rollback would leave misnamed
+        moved = []
         try:
             for entry in record["files"]:
                 old, new = entry["from"], entry["to"]
@@ -818,6 +820,7 @@ def undo(undo_file, apply=False):
                         except OSError as error:
                             result["left"].append({"file": new, "why": f"it could not be renamed ({error.strerror or error})"})
                             continue
+                        moved.append((new, old))
                         result["renamed_back"] += 1
                 elif at_new or not at_old:
                     why = "at its old place and its new one" if at_new else NOT_FOUND
@@ -836,6 +839,14 @@ def undo(undo_file, apply=False):
                         result["rows_restored"] += 1
         except BaseException:
             conn.rollback()
+            # the rows keep the new names: so do the files
+            left = _move_back(moved)
+            if left:
+                print(
+                    "Files left at their old names while their rows keep the new ones: "
+                    + ", ".join(left),
+                    file=sys.stderr,
+                )
             raise
         conn.commit()
     return result
