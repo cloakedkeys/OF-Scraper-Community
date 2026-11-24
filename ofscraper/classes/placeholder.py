@@ -652,7 +652,8 @@ class Textholders(basePlaceholder):
             out = f"{text}.{ext}"
         else:
             file_format = data.get_fileformat()
-            if "text" in parse_safe(file_format):
+            fields = parse_safe(file_format)
+            if "text" in fields and any(k in fields for k in _CAPTION_NAMES):
                 # a text file's {filename} is its caption, as {text} is: with
                 # both in the name the caption would be there twice, so
                 # {filename} is left out

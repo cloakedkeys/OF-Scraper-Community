@@ -120,3 +120,12 @@ def test_the_captions_own_dots_stay(monkeypatch, text_settings, caption, file_fo
 ])
 def test_a_name_without_text_is_formatted_as_before(monkeypatch, text_settings, file_format, name):
     assert text_name(monkeypatch, file_format) == name
+
+
+@pytest.mark.parametrize("file_format, name", [
+    ("/{date} {text}.{ext}", "/2026-10-31 Look at this sunset.txt"),
+    ("{date}//{text}.{ext}", "2026-10-31//Look at this sunset.txt"),
+])
+def test_a_name_with_text_but_no_filename_is_formatted_as_before(monkeypatch, text_settings, file_format, name):
+    # nothing is left out, so the name is file_format filled in as it was
+    assert text_name(monkeypatch, file_format) == name
