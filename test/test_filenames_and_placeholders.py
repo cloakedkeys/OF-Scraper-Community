@@ -264,3 +264,23 @@ def test_a_name_that_only_starts_like_a_device_is_unchanged(naming):
 WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL"} | {
     f"{d}{n}" for d in ("COM", "LPT") for n in range(1, 10)
 }
+
+
+@pytest.mark.parametrize("cls", ["Placeholders", "Textholders"])
+@pytest.mark.parametrize("dir_format,folder", [(".", ""), ("./{text}/.", "a caption")])
+def test_a_dir_format_of_a_dot_still_saves_in_the_save_location(naming, monkeypatch, tmp_path, cls, dir_format, folder):
+    # dir_format "." is how a user saves straight into save_location
+    monkeypatch.setattr(placeholder.data, "get_dirformat", lambda *a, **k: dir_format)
+    naming("{filename}.{ext}", "a caption", text=False)
+    post = make_post("a caption")
+    ele = post.all_media[0] if cls == "Placeholders" else post
+    path = asyncio.run(getattr(placeholder, cls)(ele, "jpg").getmediadir(create=False))
+    assert path == tmp_path / "data" / folder
+
+
+@pytest.mark.parametrize("caption", [". ", ".. ", ". .", "..  "])
+def test_a_caption_of_dots_and_spaces_is_not_a_folder_name(naming, caption):
+    # Windows drops the trailing spaces, leaving "." or ".."
+    text, (media,) = naming("{text}/{filename}.{ext}", caption)
+    for name in (text, media):
+        assert not any(re.fullmatch(r"\.[.\s]*", part) for part in re.split(r"[/\\]", name))
