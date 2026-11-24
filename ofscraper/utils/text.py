@@ -31,7 +31,7 @@ def file_text(text):
     """What a post's text file holds: the caption as it reads on the site.
     An OnlyFans caption is HTML, so a <br> or the end of a paragraph, div,
     list item or heading is a line break, the other tags are removed and
-    entities are decoded, much as stash_sync.clean_text does. A Fansly
+    entities are decoded, as stash_sync.clean_text does. A Fansly
     caption is plain text already. Each of the caption's lines is wrapped on
     its own, so its line breaks stay."""
     if not sites.is_fansly():

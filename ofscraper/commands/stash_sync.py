@@ -111,8 +111,9 @@ def clean_text(text):
     """OnlyFans captions are HTML; return plain text with line breaks kept."""
     if not text:
         return ""
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
-    text = re.sub(r"</p\s*>", "\n", text, flags=re.I)
+    # a <br> or the end of a paragraph, div, list item or heading ends a
+    # line, as a post's --text file reads it (utils/text.py file_text)
+    text = re.sub(r"<br\s*/?>|</(?:p|div|li|h[1-6])\s*>", "\n", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
     text = html.unescape(text)
     lines = [line.strip() for line in text.splitlines()]
