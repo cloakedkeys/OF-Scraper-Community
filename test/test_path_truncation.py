@@ -68,3 +68,11 @@ def test_a_long_linux_name_fits_in_the_name_limit():
     size = paths.get_string_byte_size_unix
     # measured as the app measures it; as much as fits, one more letter would not
     assert size(out.name) <= 254 < size("a" + out.name)
+
+
+@pytest.mark.parametrize("ext", [".mp3", ".3gp", ".3g2", "_2.mp3"])
+def test_an_extension_with_digits_is_kept(ext):
+    out = cut(f"{FOLDER}\\2026-10-31 {CAPTION}{ext}")
+    assert out.name.endswith(ext) and windows_chars(out) <= 259
+    out = paths._linux_truncateHelper(f"/data/2026-10-31 {CAPTION * 3}{ext}")
+    assert out.name.endswith(ext)
