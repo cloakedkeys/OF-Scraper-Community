@@ -68,3 +68,15 @@ def test_a_long_linux_name_fits_in_the_name_limit():
     size = paths.get_string_byte_size_unix
     # measured as the app measures it; as much as fits, one more letter would not
     assert size(out.name) <= 254 < size("a" + out.name)
+
+
+@pytest.mark.parametrize("char", ["é", "я", "日", "’"])
+def test_a_non_ascii_name_is_cut_by_windows_own_count(char):
+    # one UTF-16 unit each, like a letter: as much fits as of "a"
+    out = cut(f"{FOLDER}\\{char * 300}.txt")
+    assert windows_chars(out) == 259
+
+
+def test_an_emoji_counts_as_two_windows_units():
+    out = cut(f"{FOLDER}\\{'💀' * 300}.txt")
+    assert 258 <= windows_chars(out) <= 259
