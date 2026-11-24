@@ -1294,3 +1294,27 @@ def test_a_migration_that_failed_still_shuts_down(monkeypatch, tmp_path):
         manager.mainManager().pick()
     assert exit_info.value.code == 2
     assert calls == ["shutdown"]
+
+
+@pytest.mark.parametrize(
+    "command", ["manual", "msg_check", "story_check", "paid_check", "post_check", "metadata"]
+)
+def test_the_option_is_not_on_the_subcommands(command):
+    """It migrates and exits, so after a subcommand it would skip what the
+    subcommand was asked to do: click refuses it there instead."""
+    import ofscraper.utils.args.parse.commands.manual as manual
+    import ofscraper.utils.args.parse.commands.message as message
+    import ofscraper.utils.args.parse.commands.metadata as metadata
+    import ofscraper.utils.args.parse.commands.paid as paid
+    import ofscraper.utils.args.parse.commands.post as post
+    import ofscraper.utils.args.parse.commands.story as story
+
+    commands = {
+        "manual": manual.manual,
+        "msg_check": message.message_check,
+        "story_check": story.story_check,
+        "paid_check": paid.paid_check,
+        "post_check": post.post_check,
+        "metadata": metadata.metadata,
+    }
+    assert "migrate_sqlite_to_postgres" not in {p.name for p in commands[command].params}

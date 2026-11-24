@@ -1,6 +1,6 @@
 import cloup as click
 
-from ofscraper.utils.args.parse.group_bundles.advanced_common import advanced_args
+from ofscraper.utils.args.parse.group_bundles.advanced_common import main_advanced_args
 from ofscraper.utils.args.parse.group_bundles.main import main_program_args
 import ofscraper.utils.args.parse.arguments.utils.retry as retry_helper
 
@@ -12,7 +12,7 @@ import ofscraper.utils.args.parse.arguments.utils.retry as retry_helper
     show_constraints=True,
 )
 @main_program_args
-@advanced_args
+@main_advanced_args
 @click.pass_context
 def program(ctx, *args, **kwargs):
     ctx = retry_helper.retry_modifiy(ctx)
