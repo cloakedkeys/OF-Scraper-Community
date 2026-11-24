@@ -20,8 +20,18 @@ def check_database():
         )
 
 
+def check_dry_run():
+    """Refuse a dry run that can't be one, before anything connects."""
+    import ofscraper.utils.dry_run as dry_run
+
+    if dry_run.active() and dry_run.refuse_reason():
+        logging.getLogger("shared").error(dry_run.refuse_reason())
+        raise SystemExit(2)
+
+
 def main():
     try:
+        check_dry_run()
         check_database()
         start_manager()
     except SystemExit as exc:

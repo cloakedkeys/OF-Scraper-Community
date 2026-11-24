@@ -422,3 +422,44 @@ def test_option_parses():
         "ofscraper", ["--dry-run", "--action", "download"], resilient_parsing=False
     )
     assert ctx.params["dry_run"] is True
+
+
+@pytest.mark.parametrize(
+    "subcommand", [["metadata", "--metadata", "check"], ["manual"], ["db"], ["post_check"]]
+)
+def test_dry_run_is_refused_with_a_subcommand(subcommand):
+    # a subcommand doesn't run the scraper, so it wouldn't be a dry run at all
+    import ofscraper.utils.args.parse.commands.db as db
+    import ofscraper.utils.args.parse.commands.manual as manual
+    import ofscraper.utils.args.parse.commands.metadata as metadata
+    import ofscraper.utils.args.parse.commands.post as post
+    from ofscraper.utils.args.parse.commands.main import program
+
+    # the subcommands as parse_args() registers them
+    for name, command in {
+        "metadata": metadata.metadata, "manual": manual.manual, "db": db.db,
+        "post_check": post.post_check,
+    }.items():
+        if name not in program.commands:
+            program.add_command(command, name)
+    with pytest.raises(UsageError, match=f"--dry-run can't be used with {subcommand[0]}"):
+        program(
+            standalone_mode=False, prog_name="OF-Scraper",
+            args=["--dry-run", "--action", "download", *subcommand],
+        )
+
+
+def test_postgresql_is_refused_before_connecting(monkeypatch):
+    # the refusal comes before the run connects to (and changes) the server
+    import ofscraper.db.postgres as postgres
+    import ofscraper.main.open.run as run
+
+    monkeypatch.setattr(postgres, "enabled", lambda: True)
+    monkeypatch.setattr(dry_run, "active", lambda: True)
+    touched = []
+    monkeypatch.setattr(postgres.POSTGRES, "check", lambda *a, **k: touched.append("check"))
+    monkeypatch.setattr(run, "start_manager", lambda: touched.append("start"))
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == 2
+    assert touched == []
