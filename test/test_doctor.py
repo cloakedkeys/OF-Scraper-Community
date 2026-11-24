@@ -406,3 +406,17 @@ def test_online_json_is_the_only_thing_on_stdout(home, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert json.loads(captured.out)["results"]
     assert "a config was made" in captured.err
+
+
+def test_key_mode_cdrm_with_a_server_of_your_own(home, monkeypatch):
+    """OFSC_CDRM_URL set to a server other than the retired one: keys are
+    asked from it, so the warning says that and not that cdrm can't work."""
+    import ofscraper.utils.of_env.of_env as of_env
+
+    url = f"http://user:{SECRET}@127.0.0.1:8080/api/decrypt"
+    real = of_env.getattr
+    monkeypatch.setattr(of_env, "getattr", lambda key, *a, **k: url if key == "CDRM" else real(key, *a, **k))
+    write_config(home, {"cdm_options": {"key-mode-default": "cdrm"}})
+    status, detail = result(doctor.run(), "key files")
+    assert status == "WARN" and "doesn't work" not in detail
+    assert "127.0.0.1" in detail and "cookies" in detail and SECRET not in detail

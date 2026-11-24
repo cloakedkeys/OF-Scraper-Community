@@ -21,6 +21,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import urllib.parse
 
 import ofscraper.utils.of_env.of_env as of_env
 
@@ -229,6 +230,16 @@ def check_keys(config, site, report):
             fix = "then set client-id and private-key to your key files"
         else:
             fix = "client-id and private-key are already set, so that switch is the whole fix"
+        url = str(of_env.getattr("CDRM") or "").strip()
+        if url and not keyhelpers.cdrm_retired(url):
+            # a server of the user's own (#677): only its host is shown, as
+            # the address can hold a login
+            host = urllib.parse.urlsplit(url).hostname or "an unreadable address"
+            report.add(WARN, "key files",
+                       f"key mode cdrm: keys are asked from the server in OFSC_CDRM_URL ({host}), which is sent"
+                       " your OnlyFans cookies, so use only a server you run (not contacted by this check)."
+                       f" The cdrm mode is deprecated: to stop using it, set key-mode-default to manual; {fix}")
+            return
         report.add(WARN, "key files",
                    "key mode cdrm: the cdrm service doesn't work, so protected videos will fail"
                    f" (not contacted by this check). Set key-mode-default to manual; {fix}")
