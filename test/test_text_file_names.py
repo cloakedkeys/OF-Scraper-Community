@@ -30,9 +30,9 @@ def text_settings(monkeypatch, names_env):  # noqa: F811
     return merged
 
 
-def text_name(monkeypatch, file_format):
+def text_name(monkeypatch, file_format, caption=CAPTION):
     monkeypatch.setattr(placeholder.data, "get_fileformat", lambda *a, **k: file_format)
-    raw = {"id": 8, "text": CAPTION, "price": 0, "isOpened": True,
+    raw = {"id": 8, "text": caption, "price": 0, "isOpened": True,
            "responseType": "post", "postedAt": "2026-10-31T12:00:00+00:00"}
     holder = placeholder.Textholders(posts_.Post(raw, 1, "u", "timeline"), "txt")
     return asyncio.run(holder.createfilename())
@@ -94,4 +94,29 @@ def test_text_alone_is_unchanged(monkeypatch, text_settings):
     ("{date}/{filename}/{text}.{ext}", "2026-10-31/Look at this sunset.txt"),
 ])
 def test_uncommon_separators_beside_filename_go_with_it(monkeypatch, text_settings, file_format, name):
+    assert text_name(monkeypatch, file_format) == name
+
+
+def test_a_file_named_by_filename_alone_keeps_the_caption(monkeypatch, text_settings):
+    # with {filename} left out the file would be named ".txt", a hidden file
+    # with no name: the caption stays there
+    out = text_name(monkeypatch, "{text}/{filename}.{ext}")
+    assert out == "Look at this sunset/Look at this sunset.txt"
+
+
+@pytest.mark.parametrize("caption, file_format, name", [
+    # dots or dashes that belong to the caption aren't taken as separators
+    ("Wait for it...", "{text} {filename}.{ext}", "Wait for it....txt"),
+    ("...and then", "{filename} {text}.{ext}", "...and then.txt"),
+    ("Wait for it...", "{text}.{filename}.{ext}", "Wait for it....txt"),
+])
+def test_the_captions_own_dots_stay(monkeypatch, text_settings, caption, file_format, name):
+    assert text_name(monkeypatch, file_format, caption) == name
+
+
+@pytest.mark.parametrize("file_format, name", [
+    ("/{date} {filename}.{ext}", "/2026-10-31 Look at this sunset.txt"),
+    ("{date}//{filename}.{ext}", "2026-10-31//Look at this sunset.txt"),
+])
+def test_a_name_without_text_is_formatted_as_before(monkeypatch, text_settings, file_format, name):
     assert text_name(monkeypatch, file_format) == name
