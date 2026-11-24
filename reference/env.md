@@ -539,13 +539,19 @@ Defined in `ofscraper/utils/of_env/values/system.py`.
 | <a id="ffmpeg_subprocess_level"></a>`OFSC_FFMPEG_SUBPROCESS_LEVEL`<br>Key: `FFMPEG_SUBPROCESS_LEVEL` | **Default:** `10`. Log level for the output of this subprocess (the user script, ffmpeg or ffprobe named in the key). 0 turns that output off. |
 | <a id="ffprobe_subprocess_level"></a>`OFSC_FFPROBE_SUBPROCESS_LEVEL`<br>Key: `FFPROBE_SUBPROCESS_LEVEL` | **Default:** `10`. Log level for the output of this subprocess (the user script, ffmpeg or ffprobe named in the key). 0 turns that output off. |
 | <a id="ofsc_database_url"></a>`OFSC_DATABASE_URL` | **Default:** `''`. A PostgreSQL connection URL, such as postgresql://user:password@host:5432/database. [Details](#ofsc_database_url-details). |
-| <a id="disk_space_check_path"></a>`OFSC_DISK_SPACE_CHECK_PATH`<br>Key: `DISK_SPACE_CHECK_PATH` | **Default:** `'/'`. The path whose disk free space is compared with `download_options.system_free_min` (`ofscraper/utils/system/free.py`). It is not the save location unless you set it to be. |
+| <a id="disk_space_check_path"></a>`OFSC_DISK_SPACE_CHECK_PATH`<br>Key: `DISK_SPACE_CHECK_PATH` | **Default:** `''`. The path whose disk free space is compared with `download_options.system_free_min` (`ofscraper/utils/system/free.py`). [Details](#disk_space_check_path-details). |
 
 ##### `OFSC_DATABASE_URL` details
 
 **Environment variable:** `OFSC_DATABASE_URL` · **Default:** `''`
 
 A PostgreSQL connection URL, such as postgresql://user:password@host:5432/database. Empty (the default) keeps one SQLite file per creator. With a URL, every creator's rows are kept in that PostgreSQL database instead; this needs the optional driver (the `postgres` extra, included in the Docker image).
+
+##### `DISK_SPACE_CHECK_PATH` details
+
+**Environment variable:** `OFSC_DISK_SPACE_CHECK_PATH` · **Default:** `''`
+
+The path whose disk free space is compared with `download_options.system_free_min` (`ofscraper/utils/system/free.py`). Empty (the default) measures the disk that holds `save_location`, or the nearest existing folder above it if it doesn't exist yet. Set it to check a different disk.
 
 ### Menu choices
 

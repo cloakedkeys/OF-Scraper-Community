@@ -51,6 +51,6 @@ def load_system_config():
     config["OFSC_DATABASE_URL"] = os.getenv("OFSC_DATABASE_URL", "")
 
     # Free Space
-    config["DISK_SPACE_CHECK_PATH"] = os.getenv("OFSC_DISK_SPACE_CHECK_PATH", "/")
+    config["DISK_SPACE_CHECK_PATH"] = os.getenv("OFSC_DISK_SPACE_CHECK_PATH", "")
 
     return config
