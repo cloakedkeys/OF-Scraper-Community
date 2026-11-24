@@ -193,6 +193,7 @@ def test_a_current_name_hidden_by_an_older_one_is_named(config_path, logged):
 def test_notes_from_before_the_log_is_set_up_are_written_once_it_is(config_path, monkeypatch):
     config = defaults()
     config["file_size_mx"] = "1GB"
+    config["advanced_options"]["database_url"] = "postgresql://u:s3cr3t@h/db"
     shared = logging.getLogger("shared")
     monkeypatch.setattr(shared, "handlers", [])
 
@@ -206,4 +207,8 @@ def test_notes_from_before_the_log_is_set_up_are_written_once_it_is(config_path,
     load.setLogger()
     load.setLogger()
 
-    assert len(notes(handler.lines)) == 1 and '"file_size_mx"' in notes(handler.lines)[0]
+    said = notes(handler.lines)
+    assert len(said) == 2
+    assert "database_url in config.json is not read" in said[0]
+    assert '"file_size_mx"' in said[1]
+    assert "s3cr3t" not in " ".join(handler.lines)

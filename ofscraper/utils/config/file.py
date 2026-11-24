@@ -114,7 +114,7 @@ def auto_update_config(config: dict) -> dict:
     log.info("Auto updating config...")
     if _database_url_written(config):
         # said without the value: it may hold a password
-        log.warning(
+        _notes.append(
             "advanced_options.database_url in config.json is not read, and"
             " what was written there has been replaced by a note. To use"
             " PostgreSQL, set the OFSC_DATABASE_URL environment variable"
