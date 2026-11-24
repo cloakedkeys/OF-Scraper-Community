@@ -38,9 +38,9 @@ def main():
         console.get_shared_console().print("handling force closing of script")
         try:
             # the ordinary shutdown closes the logs, so Discord gets what is
-            # queued (the "stopped" summary); a second Ctrl+C skips that
-            with exit_context.DelayedKeyboardInterrupt():
-                exit_manager.shutdown()
+            # queued (the "stopped" summary); a second Ctrl+C skips that, so
+            # it isn't held back here
+            exit_manager.shutdown()
         except KeyboardInterrupt:
             with exit_context.DelayedKeyboardInterrupt():
                 exit_manager.forcedShutDown()
