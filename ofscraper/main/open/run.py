@@ -51,10 +51,10 @@ def main():
         try:
             with exit_context.DelayedKeyboardInterrupt():
                 exit_manager.shutdown()
-        except KeyboardInterrupt as E:
+        except KeyboardInterrupt:
             with exit_context.DelayedKeyboardInterrupt():
                 exit_manager.forcedShutDown()
-                raise E
+            raise SystemExit(exit_status.INTERRUPTED)
         # The run failed; don't report success to scripts and schedulers
         import ofscraper.db.postgres as postgres
 
