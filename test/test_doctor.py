@@ -459,6 +459,8 @@ def test_online_skips_the_count_when_the_login_fails(home, monkeypatch):
     monkeypatch.setattr(me, "parse_subscriber_count", lambda: pytest.fail("asked for the count"))
     report = doctor.run(online=True)
     assert [r for r in report.results if r["check"] == "subscriptions"] == []
+
+
 # --- review follow-up ---
 
 def test_online_postgres_check_parses_no_command_line(home, monkeypatch, capsys):
@@ -763,3 +765,23 @@ def test_the_users_scripts_folder_of_the_preferred_scheme(home, tmp_path, monkey
     monkeypatch.setattr(sysconfig, "get_preferred_scheme", lambda key: "osx_framework_user" if key == "user" else "posix_prefix")
     monkeypatch.setattr(sysconfig, "get_path", lambda name, scheme=None, *a, **k: str(script.parent) if scheme == "osx_framework_user" else real(name, *a, **k) if scheme is None else real(name, scheme, *a, **k))
     assert result(doctor.run(), "ofscraper on PATH")[0] == "PASS"
+
+
+def test_a_count_that_cant_be_read_says_why(home, monkeypatch):
+    import httpx
+
+    import ofscraper.data.api.init as init
+    import ofscraper.data.api.me as me
+
+    def unreachable():
+        raise httpx.ConnectError("[Errno 111] Connection refused", request=httpx.Request("GET", "https://onlyfans.com/api2/v2/subscriptions/count/all"))
+
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home)
+    monkeypatch.setattr(doctor, "start", lambda *a: None)
+    monkeypatch.setattr(init, "auth_status", lambda: ("UP", None))
+    monkeypatch.setattr(me, "parse_subscriber_count", unreachable)
+    status, detail = result(doctor.run(online=True), "subscriptions")
+    assert status == "WARN" and "Couldn't reach onlyfans.com (connection failed)" in detail
+    monkeypatch.setattr(me, "parse_subscriber_count", lambda: (_ for _ in ()).throw(KeyError("subscriptions")))
+    assert result(doctor.run(online=True), "subscriptions") == ("WARN", "the count couldn't be read: KeyError")

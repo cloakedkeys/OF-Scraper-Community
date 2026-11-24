@@ -713,12 +713,15 @@ def creator_filters(config):
 
 def check_subscriptions(report, config):
     """--online: the subscription count, as a run asks for it."""
+    import ofscraper.data.api.init as init
     import ofscraper.data.api.me as me
 
     try:
         active, expired = me.parse_subscriber_count()
     except Exception as error:
-        report.add(WARN, "subscriptions", f"the count couldn't be read: {type(error).__name__}")
+        # a network or server failure in the words the start uses; anything
+        # else by its kind only, as its text could quote the reply
+        report.add(WARN, "subscriptions", init.unavailable_message(error) or f"the count couldn't be read: {type(error).__name__}")
         return
     counts = f"{active} active, {expired} expired"
     if not active:
