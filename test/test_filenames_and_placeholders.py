@@ -287,6 +287,24 @@ def test_the_same_caption_twice_is_one_text_file(naming, monkeypatch, tmp_path):
     assert text_files(tmp_path) == {"Good morning.txt": "Good morning"}
 
 
+def test_a_fallback_name_that_is_another_posts_text_is_not_used(
+    naming, monkeypatch, tmp_path
+):
+    # post 9's caption gives it the name post 10 falls back to
+    captions = ["Good morning everyone", "Good morning_10 starts now", CAPTIONS[1]]
+    files = {
+        "Good morning.txt": captions[0],
+        "Good morning_10.txt": captions[1],
+        "Good morning_10_2.txt": captions[2],
+    }
+    _write_texts(naming, monkeypatch, captions)
+    assert text_files(tmp_path) == files
+    # a second run finds post 10's file, and --force-all rewrites only it
+    for options in ((), ("--force-all",)):
+        _write_texts(naming, monkeypatch, captions, *options)
+        assert text_files(tmp_path) == files
+
+
 def test_overwrite_mode_keeps_the_first_text_file(naming, monkeypatch, tmp_path):
     _write_texts(naming, monkeypatch, CAPTIONS, collision="overwrite")
     assert list(text_files(tmp_path)) == ["Good morning.txt"]
