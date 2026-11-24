@@ -612,10 +612,9 @@ class Textholders(basePlaceholder):
             out = f"{text}.{ext}"
         else:
             out = data.get_fileformat().format(**self._variables)
-        out = _safe_parts(out)
         log.debug(f"final filename path {out}")
-        self._filename = out
-        return out
+        self._filename = _safe_parts(out)
+        return self._filename
 
     @property
     def filepath(self):
