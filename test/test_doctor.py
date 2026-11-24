@@ -426,6 +426,20 @@ def test_key_mode_cdrm_with_a_server_of_your_own(home, monkeypatch):
     assert "127.0.0.1" in detail and "cookies" in detail and SECRET not in detail
 
 
+def test_key_mode_cdrm_with_a_malformed_server_address(home, monkeypatch):
+    """An OFSC_CDRM_URL that urlsplit can't parse (an unclosed IPv6
+    bracket) still gets the warning, without naming a host or crashing."""
+    import ofscraper.utils.of_env.of_env as of_env
+
+    url = f"http://user:{SECRET}@[::1/api/decrypt"
+    real = of_env.getattr
+    monkeypatch.setattr(of_env, "getattr", lambda key, *a, **k: url if key == "CDRM" else real(key, *a, **k))
+    write_config(home, {"cdm_options": {"key-mode-default": "cdrm"}})
+    status, detail = result(doctor.run(), "key files")
+    assert status == "WARN" and "an unreadable address" in detail and "cookies" in detail
+    assert SECRET not in detail and "::1" not in detail
+
+
 # --- second review round ---
 
 @pytest.mark.parametrize("reply", ["{}", "[]", '{"data": {"version": "x"}}', '{"errors": ["x"]}'])
