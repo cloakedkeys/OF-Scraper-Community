@@ -5,6 +5,8 @@ runs check_same_findings against a real server in CI. The files are real
 ones, under pytest's tmp_path.
 """
 
+from pathlib import Path
+
 import pytest
 
 import ofscraper.commands.verify as verify
@@ -118,7 +120,7 @@ def test_an_undo_file_from_another_database_restores_nothing(library, server, tm
     _, lib = library
     undo_file = apply_for_undo(tmp_path)
     after_apply = medias(URL)
-    record = json.loads(open(undo_file, encoding="utf-8").read())
+    record = json.loads(Path(undo_file).read_text(encoding="utf-8"))
     assert record["database"] == "db.example:5433/library"
     # as an undo file made on another database would be: its rows aren't these
     record["database"] = "other.example:5432/library"
@@ -148,10 +150,12 @@ def test_an_undo_that_fails_partway_puts_the_renames_back(library, server, tmp_p
             raise OSError("in use")
         return real(src, dst)
 
-    monkeypatch.setattr(verify.os, "rename", second_fails)
-    with pytest.raises(OSError, match="in use"):
-        verify.undo_postgres(URL, "5", undo_file, apply=True)
-    monkeypatch.undo()
+    # a context of its own, so that leaving it doesn't also undo the server
+    # fixture's stand-ins for postgres.Reader and Writer
+    with monkeypatch.context() as patch:
+        patch.setattr(verify.os, "rename", second_fails)
+        with pytest.raises(OSError, match="in use"):
+            verify.undo_postgres(URL, "5", undo_file, apply=True)
     assert medias(URL) == after_apply
     assert sorted(p.name for p in lib.glob("*.bad")) == ["edited.jpg.bad", "empty.jpg.bad"]
     assert verify.undo_postgres(URL, "5", undo_file, apply=True)["files_to_rename_back"] == 2
