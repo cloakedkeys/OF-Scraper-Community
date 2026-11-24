@@ -192,7 +192,69 @@ def check_ffprobe(ffmpeg_path, report):
         report.add(WARN, "ffprobe", "not found beside ffmpeg or in PATH: media lengths come from ffmpeg instead")
 
 
-def check_keys(config, report):
+KEY_FILE_NAMES = {
+    "client-id": ["device_client_id_blob", "client_id.bin", "client_id"],
+    "private-key": ["device_private_key", "private_key.pem", "private_key"],
+}
+
+
+def _key_file_hint(name, value):
+    """Why a key file named in the config isn't there, when it can tell."""
+    value = str(value or "").strip()
+    if not value or pathlib.Path(value).is_file():
+        return None
+    if value.startswith("~"):
+        return f"{name} starts with ~, which isn't expanded: use the full path"
+    path = pathlib.Path(value)
+    try:
+        beside = sorted(
+            f.name for f in path.parent.iterdir()
+            if f.is_file() and f.name != path.name
+            and (f.name in KEY_FILE_NAMES[name] or path.stem in (f.stem, f.name) or f.stem == path.name)
+        )
+    except OSError:
+        return None
+    if beside:
+        return f"{name}: no file at that name, but {', '.join(beside)} {'is' if len(beside) == 1 else 'are'} in that folder"
+    return None
+
+
+def _key_content_hint(name, value):
+    """What a key file that can't be loaded looks like instead, if it's clear."""
+    try:
+        with open(str(value).strip(), "rb") as file:
+            start = file.read(64).lstrip()
+    except OSError:
+        return None
+    if start.startswith(b"{"):
+        return f"{name} looks like a JSON file, not a key file"
+    if name == "client-id" and start.startswith(b"-----BEGIN"):
+        return "client-id looks like a private key: the two may be swapped"
+    if name == "private-key" and start[:1] == b"\x08":
+        return "private-key looks like a client id: the two may be swapped"
+    return None
+
+
+def _keys_in_auth_file(folder):
+    """The key settings put in auth.json instead of config.json; names only."""
+    if folder is None:
+        return []
+    try:
+        auth = json.loads((folder / of_env.getattr("authFile")).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(auth, dict):
+        return []
+    keys = set(auth) | set(auth.get("auth") if isinstance(auth.get("auth"), dict) else {})
+    return [name for name in KEY_FILE_NAMES if name in keys or name.replace("-", "_") in keys]
+
+
+def _with_hints(problem, hints):
+    hints = [h for h in hints if h]
+    return f"{problem} ({'; '.join(hints)})" if hints else problem
+
+
+def check_keys(config, report, folder=None):
     import ofscraper.utils.config.data as data
     from ofscraper.commands.scraper.actions.download.utils import keyhelpers
 
@@ -213,12 +275,17 @@ def check_keys(config, report):
         return
     problem = keyhelpers.cdm_key_problems(mode, client_id, private_key)
     if problem:
-        report.add(FAIL, "key files", problem)
+        hints = [_key_file_hint("client-id", client_id), _key_file_hint("private-key", private_key)]
+        misplaced = _keys_in_auth_file(folder)
+        if misplaced:
+            hints.append(f"{' and '.join(misplaced)} " + ("is in auth.json: it belongs" if len(misplaced) == 1 else "are in auth.json: they belong") + " in config.json")
+        report.add(FAIL, "key files", _with_hints(problem, hints))
         return
     try:
         keyhelpers.load_device(private_key, client_id)
     except Exception as error:
-        report.add(FAIL, "key files", f"the key files can't be loaded: {type(error).__name__}")
+        hints = [_key_content_hint("client-id", client_id), _key_content_hint("private-key", private_key)]
+        report.add(FAIL, "key files", _with_hints(f"the key files can't be loaded: {type(error).__name__}", hints))
         return
     report.add(PASS, "key files", f"client-id {client_id}, private-key {private_key}")
 
@@ -406,7 +473,7 @@ def run(config=None, profile=None, site=None, online=False):
     check_auth(settings, folder, site, report)
     ffmpeg_path = check_ffmpeg(settings, report)
     check_ffprobe(ffmpeg_path, report)
-    check_keys(settings, report)
+    check_keys(settings, report, folder)
     check_folders(settings, report)
     check_database(report)
     if online:
