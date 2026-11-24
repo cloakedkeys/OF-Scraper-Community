@@ -252,6 +252,34 @@ def test_a_number_that_only_contains_the_post_id_is_not_its_own(
     }
 
 
+@pytest.mark.parametrize("file_format, post_id, other", [
+    # the post id is a number in the caption, or in the date
+    ("{text}.{ext}", 8, "Top 8"),
+    ("{date} {text}.{ext}", 31, "2026-10-31 Top 8"),
+])
+def test_a_number_in_the_name_that_is_not_from_post_id_is_not_its_own(
+    naming, monkeypatch, tmp_path, file_format, post_id, other
+):
+    options = ("-tt", "word", "-tl", "2")
+    _write_post_text(naming, monkeypatch, file_format, "Top 8 looks", 18, *options)
+    _write_post_text(naming, monkeypatch, file_format, "Top 8 picks", post_id, *options)
+    assert text_files(tmp_path) == {
+        f"{other}.txt": "Top 8 looks",
+        f"{other}_{post_id}.txt": "Top 8 picks",
+    }
+
+
+def test_a_hand_edited_text_file_is_kept_at_either_name(naming, monkeypatch, tmp_path):
+    _write_texts(naming, monkeypatch, CAPTIONS)
+    folder = next((tmp_path / "data").rglob("Good morning.txt")).parent
+    for name in ("Good morning.txt", "Good morning_9.txt"):
+        (folder / name).write_text("edited by hand", encoding="utf-8")
+    # a plain run writes over neither file
+    _write_texts(naming, monkeypatch, CAPTIONS)
+    edited = {name: text_files(tmp_path)[name] for name in ("Good morning.txt", "Good morning_9.txt")}
+    assert edited == {"Good morning.txt": "edited by hand", "Good morning_9.txt": "edited by hand"}
+
+
 def test_the_same_caption_twice_is_one_text_file(naming, monkeypatch, tmp_path):
     _write_texts(naming, monkeypatch, ["Good morning", "Good morning"])
     assert text_files(tmp_path) == {"Good morning.txt": "Good morning"}

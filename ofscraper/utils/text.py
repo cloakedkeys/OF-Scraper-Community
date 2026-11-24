@@ -16,6 +16,7 @@ import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.paths.paths as paths
 import ofscraper.utils.settings as settings
 from ofscraper.scripts.after_download_script import after_download_script
+from ofscraper.utils.string import parse_safe
 
 
 async def get_text(username, values):
@@ -67,22 +68,24 @@ def _own_path(path, ele, *contents):
     name, e.g. captions that start with the same textlength words. A file
     with other content at path is another post's, so this post's text goes
     to name_<post_id>, as media go to name_<media_id>. filename_collision
-    "overwrite" keeps the old behaviour: the name is used as it is. A name
-    that already holds the post's id as a whole number, e.g. from {post_id},
-    is the post's own file."""
+    "overwrite" keeps the old behaviour: the name is used as it is. When
+    file_format or dir_format has {post_id}, the name is the post's own: a
+    number in the caption or the date that only looks like the post id
+    doesn't count."""
     path = pathlib.Path(path)
     if (
         str(config_data.get_filename_collision()).lower() == "overwrite"
         or not path.exists()
-        or re.search(rf"(?<!\d){re.escape(str(ele.id))}(?!\d)", path.stem)
+        or "post_id" in parse_safe(config_data.get_fileformat())
+        or "post_id" in parse_safe(config_data.get_dirformat())
         or _holds(path, *contents)
     ):
-        return path, False
+        return path
     own = path.with_name(f"{path.stem}_{ele.id}{path.suffix}")
     # shortened as the name itself is, unless truncation is turned off
     if settings.get_settings().trunicate:
         own = pathlib.Path(paths.truncate(own))
-    return own, True
+    return own
 
 
 async def get_text_process(username, ele, lock=None):
@@ -111,22 +114,17 @@ async def _write_text(ele):
         placeholderObj = await placeholder.Textholders(new_ele, "txt").init()
 
         older = _older_file_text(new_ele.text)
-        filepath, own_name = _own_path(
-            placeholderObj.filepath, new_ele, content, older
-        )
+        filepath = _own_path(placeholderObj.filepath, new_ele, content, older)
 
-        # Check for existing file BEFORE marking the attempt. It's skipped
-        # when it holds this text already, or holds another post's text
-        # (filename_collision "overwrite"). It's written again when it holds
-        # what an older version wrote for this caption, or is at the post's
-        # own name_<post_id> with an older caption of this post.
+        # Check for existing file BEFORE marking the attempt. A file at the
+        # post's own name_<post_id> is kept as it is, as one at the name
+        # itself is, even with other content (an older or hand-edited
+        # caption): --force-all rewrites it. The exception is a file holding
+        # what an older version wrote for this caption, which is rewritten.
         if (
             filepath.exists()
             and not dupe
-            and (
-                _holds(filepath, content)
-                or not (own_name or _holds(filepath, older))
-            )
+            and (_holds(filepath, content) or not _holds(filepath, older))
         ):
             # Returning without marking attempt will accurately log it as "skipped" in stats
             return
