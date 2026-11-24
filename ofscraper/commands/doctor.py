@@ -16,6 +16,7 @@ something that would make the start ask a question.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import pathlib
@@ -24,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import urllib.parse
 
 import ofscraper.utils.of_env.of_env as of_env
 
@@ -70,12 +72,13 @@ def config_path(given=None):
 def read_config(path, report):
     """The settings in config.json, or None for the built-in defaults."""
     import ofscraper.utils.config.file as config_file
+    import ofscraper.utils.encoding as encoding
 
     if not path.exists():
         report.add(WARN, "config file", f"{path} isn't there: a run makes one with the defaults")
         return None
     try:
-        text = path.read_text(encoding="utf-8-sig")
+        text = encoding.read_text_file(path)
     except (OSError, UnicodeDecodeError) as error:
         report.add(FAIL, "config file", f"{path} can't be read: {error}")
         return None
@@ -93,9 +96,16 @@ def read_config(path, report):
     return config
 
 
+def _config(config):
+    """What a config getter is given: the settings, or False for the
+    defaults. An empty {} is the defaults too: the getters would open
+    config.json through the settings for it."""
+    return config or False
+
+
 def _get(getter, config):
     """A config getter's value for this config, or the default."""
-    return getter(config=config if config is not None else False)
+    return getter(config=_config(config))
 
 
 def profile_folder(config, profile, path):
@@ -126,8 +136,10 @@ def _auth_value_findings(auth):
         found = []
         if any(c in value for c in "\"'"):
             found.append("quotes")
-        # a user agent has ; and = of its own
+        # a user agent has ;, = and spaces of its own
         if key != "user_agent":
+            if " " in value:
+                found.append("spaces")
             found += [c for c in ";=" if c in value]
         if any(not (" " <= c <= "~") for c in value):
             found.append("characters outside printable ASCII")
@@ -148,21 +160,32 @@ def check_config_auth(config, report):
 
 def check_onlyfans_auth(folder, report):
     import ofscraper.utils.auth.utils.dict as auth_dict
+    import ofscraper.utils.encoding as encoding
 
     path = folder / of_env.getattr("authFile")
     if not path.exists():
         report.add(FAIL, "OnlyFans auth", f"{path} isn't there")
         return
     try:
-        auth = auth_dict.get_auth_dict(path.read_text(encoding="utf-8-sig"))
+        text = encoding.read_text_file(path)
+        # get_auth_dict reads the profile's file through the settings for ""
+        if not text.strip():
+            report.add(FAIL, "OnlyFans auth", f"{path} is empty")
+            return
+        auth = auth_dict.get_auth_dict(text)
     except (OSError, ValueError, AttributeError) as error:
         report.add(FAIL, "OnlyFans auth", f"{path} can't be read: {type(error).__name__}")
         return
     if not isinstance(auth, dict):
         report.add(FAIL, "OnlyFans auth", f"{path} doesn't hold the auth fields")
         return
-    blank = [k for k in OF_AUTH_KEYS if auth.get(k) in (None, "")]
-    if blank:
+    # a run strips each value (auth/data.py fix_val), which fails on a
+    # number or true/false, and asks for one that is only spaces
+    not_text = [k for k in OF_AUTH_KEYS if auth.get(k) is not None and not isinstance(auth.get(k), str)]
+    blank = [k for k in OF_AUTH_KEYS if k not in not_text and not (auth.get(k) or "").strip()]
+    if not_text:
+        report.add(FAIL, "OnlyFans auth", f"not text in {path} (put the value in quotes): {', '.join(not_text)}")
+    elif blank:
         report.add(FAIL, "OnlyFans auth", f"blank in {path}: {', '.join(blank)}")
     else:
         report.add(PASS, "OnlyFans auth", f"{path} (every field set; the login itself is checked with --online)")
@@ -208,6 +231,90 @@ def _norm(path):
     return os.path.normcase(os.path.abspath(path))
 
 
+def _pe_resource(data, name):
+    """An RT_RCDATA resource of a Windows program, by name, or None: where
+    uv's trampolines keep the Python they start (UV_PYTHON_PATH)."""
+
+    def word(at, size):
+        if at < 0 or at + size > len(data):
+            raise ValueError("outside the file")
+        return int.from_bytes(data[at:at + size], "little")
+
+    try:
+        if data[:2] != b"MZ":
+            return None
+        pe = word(0x3C, 4)
+        if data[pe:pe + 4] != b"PE\0\0":
+            return None
+        sections, optional_size = word(pe + 6, 2), word(pe + 20, 2)
+        optional = pe + 24
+        # the data directories follow the optional header's fields: 96
+        # bytes of them in PE32, 112 in PE32+; the resources are the third
+        directories = optional + (96 if word(optional, 2) == 0x10B else 112)
+        table = [
+            (word(at + 12, 4), max(word(at + 8, 4), word(at + 16, 4)), word(at + 20, 4))
+            for at in range(optional + optional_size, optional + optional_size + 40 * sections, 40)
+        ]
+
+        def offset(rva):
+            for address, size, raw in table:
+                if address <= rva < address + size:
+                    return rva - address + raw
+            raise ValueError("not in a section")
+
+        base = offset(word(directories + 16, 4))
+
+        def entries(directory):
+            count = word(directory + 12, 2) + word(directory + 14, 2)
+            for at in range(directory + 16, directory + 16 + 8 * min(count, 4096), 8):
+                yield word(at, 4), word(at + 4, 4)
+
+        def below(pointer):
+            return base + (pointer & 0x7FFFFFFF)
+
+        def named(key):
+            if not key & 0x80000000:
+                return None
+            at = below(key)
+            return data[at + 2:at + 2 + 2 * word(at, 2)].decode("utf-16-le", "replace")
+
+        # the tree: type (RT_RCDATA is 10), then name, then language
+        rcdata = next((below(p) for key, p in entries(base) if key == 10 and p & 0x80000000), None)
+        if rcdata is None:
+            return None
+        found = next((below(p) for key, p in entries(rcdata) if (named(key) or "").upper() == name and p & 0x80000000), None)
+        if found is None:
+            return None
+        languages = [p for _key, p in entries(found)]
+        if not languages or languages[0] & 0x80000000:
+            return None
+        entry = below(languages[0])
+        start, size = offset(word(entry, 4)), word(entry + 4, 4)
+        if start + size > len(data):
+            return None
+        return data[start:start + size]
+    except ValueError:
+        return None
+
+
+PYTHON_NAME = re.compile(r"pythonw?[\d.]*(?:\.exe)?", re.IGNORECASE)
+
+
+def _shebang_python(line):
+    """The Python a #! line starts, or None: its program (quoted or not; the
+    flags after it aren't part of it) when that is a python, or the python
+    /usr/bin/env would find on PATH."""
+    words = [quoted or bare for quoted, bare in re.findall(r'"([^"]*)"|(\S+)', line)]
+    if words and re.split(r"[\\/]", words[0])[-1].lower() in ("env", "env.exe"):
+        words = [w for w in words[1:] if not w.startswith("-") and "=" not in w][:1]
+        if words and PYTHON_NAME.fullmatch(words[0]):
+            return shutil.which(words[0]) or words[0]
+        return None
+    if words and PYTHON_NAME.fullmatch(re.split(r"[\\/]", words[0])[-1]):
+        return words[0]
+    return None
+
+
 def _script_python(script):
     """The Python an ofscraper command on PATH starts, from its shebang (or
     the one in a Windows launcher, or uv's trampoline), or None."""
@@ -216,24 +323,37 @@ def _script_python(script):
             data = file.read(4 * 2**20)
     except OSError:
         return None
-    if data[-4:] in (b"UVSC", b"UVPY") and len(data) > 8:
+    uv = _pe_resource(data, "UV_PYTHON_PATH")
+    if uv is None and data[-4:] in (b"UVSC", b"UVPY") and len(data) > 8:
+        # uv's trampolines before the path moved into a resource
         size = int.from_bytes(data[-8:-4], "little")
         if 0 < size < len(data) - 8:
-            return data[-8 - size:-8].decode("utf-8", "replace")
+            uv = data[-8 - size:-8]
+    if uv:
+        # a relative path is beside the trampoline, as uv-trampoline reads it
+        return os.path.join(os.path.dirname(os.path.abspath(script)), uv.decode("utf-8", "replace"))
     # pip's wrapper for long paths: #!/bin/sh, then '''exec' "/path/python" "$0" "$@"
     wrapped = re.match(rb"#!/bin/sh\r?\n'''exec' \"?([^\"\r\n]+)\"? ", data)
     if wrapped:
         return wrapped.group(1).decode("utf-8", "replace")
-    head = data.split(b"\n", 1)[0] + b"\n" if data.startswith(b"#!") else data
-    found = re.findall(rb'#!"?([^\r\n"]*?pythonw?[\d.]*(?:\.exe)?)"?\r?\n', head)
-    return found[-1].decode("utf-8", "replace") if found else None
+    # a script's first line, or the last #! line of a Windows launcher
+    # (distlib's: the launcher, then the #! line, then a zip of the script)
+    if data.startswith(b"#!"):
+        line = data.split(b"\n", 1)[0]
+    else:
+        found = re.findall(rb"#!([^\r\n]*)\r?\n", data)
+        line = found[-1] if found else None
+    if line is None:
+        return None
+    return _shebang_python(line.removeprefix(b"#!").decode("utf-8", "replace").strip())
 
 
 def _scripts_dirs():
     """Where this Python's installs put their commands."""
     dirs = {os.path.dirname(sys.executable), sysconfig.get_path("scripts")}
     try:
-        dirs.add(sysconfig.get_path("scripts", f"{os.name}_user"))
+        # posix_user, nt_user, or osx_framework_user for a macOS framework build
+        dirs.add(sysconfig.get_path("scripts", sysconfig.get_preferred_scheme("user")))
     except KeyError:
         pass
     return {_norm(os.path.realpath(d)) for d in dirs if d}
@@ -261,7 +381,7 @@ def check_install(report):
             # python and python3 in one folder can be the same install;
             # two virtual environments' pythons can be links to one file
             same = _norm(python) == _norm(sys.executable) or (
-                _norm(os.path.dirname(python)) == _norm(os.path.dirname(sys.executable))
+                _norm(os.path.realpath(os.path.dirname(python))) == _norm(os.path.realpath(os.path.dirname(sys.executable)))
                 and _norm(os.path.realpath(python)) == _norm(os.path.realpath(sys.executable))
             )
         else:
@@ -325,11 +445,20 @@ def _key_file_hint(name, value):
     if value.startswith("~"):
         return f"{name} starts with ~, which isn't expanded: use the full path"
     path = pathlib.Path(value)
+    if path.is_dir():
+        try:
+            inside = sorted(f.name for f in path.iterdir() if f.is_file() and f.name.lower() in KEY_FILE_NAMES[name])
+        except OSError:
+            inside = []
+        found = f": {', '.join(inside)} {'is' if len(inside) == 1 else 'are'} in it" if inside else ""
+        return f"{name} is a folder, not a file{found}"
+    # in any case: on Linux and in Docker, Client_ID.bin isn't client_id.bin
+    stem, whole = path.stem.lower(), path.name.lower()
     try:
         beside = sorted(
             f.name for f in path.parent.iterdir()
             if f.is_file() and f.name != path.name
-            and (f.name in KEY_FILE_NAMES[name] or path.stem in (f.stem, f.name) or f.stem == path.name)
+            and (f.name.lower() in KEY_FILE_NAMES[name] or stem in (f.stem.lower(), f.name.lower()) or f.stem.lower() == whole)
         )
     except OSError:
         return None
@@ -342,9 +471,11 @@ def _key_content_hint(name, value):
     """What a key file that can't be loaded looks like instead, if it's clear."""
     try:
         with open(str(value).strip(), "rb") as file:
-            start = file.read(64).lstrip()
+            start = file.read(64)
     except OSError:
         return None
+    # a JSON file saved by Notepad starts with a byte order mark
+    start = start.removeprefix(b"\xef\xbb\xbf").lstrip()
     if start.startswith(b"{"):
         return f"{name} looks like a JSON file, not a key file"
     if name == "client-id" and start.startswith(b"-----BEGIN"):
@@ -356,10 +487,12 @@ def _key_content_hint(name, value):
 
 def _keys_in_auth_file(folder):
     """The key settings put in auth.json instead of config.json; names only."""
+    import ofscraper.utils.encoding as encoding
+
     if folder is None:
         return []
     try:
-        auth = json.loads((folder / of_env.getattr("authFile")).read_text(encoding="utf-8-sig"))
+        auth = json.loads(encoding.read_text_file(folder / of_env.getattr("authFile")))
     except (OSError, ValueError):
         return []
     if not isinstance(auth, dict):
@@ -373,18 +506,33 @@ def _with_hints(problem, hints):
     return f"{problem} ({'; '.join(hints)})" if hints else problem
 
 
-def check_keys(config, report, folder=None):
+def check_keys(config, site, report, folder=None):
+    import ofscraper.sites as sites
     import ofscraper.utils.config.data as data
     from ofscraper.commands.scraper.actions.download.utils import keyhelpers
 
+    if site == sites.FANSLY:
+        # as at a run's start (system/network.py): Fansly video has no DRM
+        report.add(SKIP, "key files", "not used: Fansly videos aren't protected")
+        return
     mode = _get(data.get_key_mode, config)
-    client_id = _get(data.get_client_id, config) if config is not None else None
-    private_key = _get(data.get_private_key, config) if config is not None else None
+    client_id = _get(data.get_client_id, config) if config else None
+    private_key = _get(data.get_private_key, config) if config else None
     if mode == "cdrm":
         if keyhelpers.cdm_key_problems("manual", client_id, private_key):
             fix = "then set client-id and private-key to your key files"
         else:
             fix = "client-id and private-key are already set, so that switch is the whole fix"
+        url = str(of_env.getattr("CDRM") or "").strip()
+        if url and not keyhelpers.cdrm_retired(url):
+            # a server of the user's own (#677): only its host is shown, as
+            # the address can hold a login
+            host = urllib.parse.urlsplit(url).hostname or "an unreadable address"
+            report.add(WARN, "key files",
+                       f"key mode cdrm: keys are asked from the server in OFSC_CDRM_URL ({host}), which is sent"
+                       " your OnlyFans cookies, so use only a server you run (not contacted by this check)."
+                       f" The cdrm mode is deprecated: to stop using it, set key-mode-default to manual; {fix}")
+            return
         report.add(WARN, "key files",
                    "key mode cdrm: the cdrm service doesn't work, so protected videos will fail"
                    f" (not contacted by this check). Set key-mode-default to manual; {fix}")
@@ -421,11 +569,24 @@ def _device(path):
         return None
 
 
+def _check_path(save):
+    """The folder the free-space limit is measured at: OFSC_DISK_SPACE_CHECK_PATH,
+    or when that is empty the disk that holds the save folder, measured at
+    its nearest folder that is there (free.get_check_path's rule)."""
+    measured = of_env.getattr("DISK_SPACE_CHECK_PATH")
+    if measured:
+        return measured
+    path = save.absolute()
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return path
+
+
 def check_folders(config, report):
     import ofscraper.utils.config.data as data
     import ofscraper.utils.paths.common as common_paths
 
-    save = pathlib.Path(os.path.expanduser(common_paths.get_save_location(config if config is not None else False)))
+    save = pathlib.Path(os.path.expanduser(common_paths.get_save_location(_config(config))))
     if save.is_dir():
         report.add(PASS, "save folder", f"{save}, {_free(save)}")
     else:
@@ -444,7 +605,7 @@ def check_folders(config, report):
     if not limit:
         report.add(PASS, "free-space limit", "off")
         return
-    measured = of_env.getattr("DISK_SPACE_CHECK_PATH")
+    measured = _check_path(save)
     if _device(measured) is None:
         report.add(FAIL, "free-space limit", f"measures {measured}, which isn't there (set OFSC_DISK_SPACE_CHECK_PATH)")
     elif save.is_dir() and _device(measured) != _device(save):
@@ -476,7 +637,7 @@ def _status(report, check):
     return found[0]["status"] if found else None
 
 
-def check_postgres(report):
+def check_postgres(report, site):
     import ofscraper.db.postgres as postgres
 
     if not postgres.url():
@@ -485,7 +646,9 @@ def check_postgres(report):
         report.add(SKIP, "PostgreSQL", "the database setting failed above")
         return
     try:
-        version = postgres.POSTGRES.check()
+        # the site is given: the settings would parse doctor's own
+        # command line, as the start hasn't set it yet
+        version = postgres.POSTGRES.check(site)
     except Exception as error:
         report.add(FAIL, "PostgreSQL", str(error))
         return
@@ -584,13 +747,13 @@ def check_signing_rules(report):
 
 
 def check_stash(report):
-    url = os.environ.get("STASH_URL", "").strip()
+    from ofscraper.commands.stash_sync import API_KEY_ENV, URL_ENV, StashClient, StashError
+
+    url = os.environ.get(URL_ENV, "").strip()
     if not url:
         return
-    from ofscraper.commands.stash_sync import StashClient, StashError
-
     try:
-        data = StashClient(url, os.environ.get("STASH_API_KEY"), timeout=15).call(
+        data = StashClient(url, os.environ.get(API_KEY_ENV), timeout=15).call(
             "query { version { version } }", retries=0
         )
     except (StashError, OSError, ValueError) as error:
@@ -605,7 +768,7 @@ def run_online(report, config=None, profile=None, site=None, settings=None):
     an offline check found what it needs broken."""
     import ofscraper.sites as sites
 
-    check_postgres(report)
+    check_postgres(report, site)
     site_name = sites.SITE_NAMES[site]
     auth_check = "OnlyFans auth" if site == sites.ONLYFANS else "Fansly auth"
     login = f"{site_name} login"
@@ -640,7 +803,7 @@ def run(config=None, profile=None, site=None, online=False):
     check_auth(settings, folder, site, report)
     ffmpeg_path = check_ffmpeg(settings, report)
     check_ffprobe(ffmpeg_path, report)
-    check_keys(settings, report, folder)
+    check_keys(settings, site, report, folder)
     check_folders(settings, report)
     check_database(report)
     if online:
@@ -660,8 +823,12 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="Print the results as JSON")
     parser.add_argument("--online", action="store_true", help="Also connect: PostgreSQL, the login, the subscription count, the signing rules and Stash. Not read-only: it starts the scraper as a run does")
     args = parser.parse_args(argv)
+    # with --json, what the start prints (a config made, log lines) goes to
+    # stderr, so stdout is only the JSON
+    quiet = contextlib.redirect_stdout(sys.stderr) if args.json else contextlib.nullcontext()
     try:
-        report = run(args.config, args.profile, args.site, online=args.online)
+        with quiet:
+            report = run(args.config, args.profile, args.site, online=args.online)
     except KeyboardInterrupt:
         parser.exit(130, "Stopped\n")
     if args.json:

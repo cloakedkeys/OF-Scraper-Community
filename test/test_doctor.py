@@ -459,3 +459,307 @@ def test_online_skips_the_count_when_the_login_fails(home, monkeypatch):
     monkeypatch.setattr(me, "parse_subscriber_count", lambda: pytest.fail("asked for the count"))
     report = doctor.run(online=True)
     assert [r for r in report.results if r["check"] == "subscriptions"] == []
+# --- review follow-up ---
+
+def test_online_postgres_check_parses_no_command_line(home, monkeypatch, capsys):
+    """The PostgreSQL check runs before the start sets sys.argv: reading the
+    settings there would parse `doctor --online` as a run's options."""
+    import types
+
+    import ofscraper.data.api.init as init
+    import ofscraper.utils.args.globals as global_args
+    import ofscraper.utils.settings as settings
+
+    monkeypatch.setenv(postgres.URL_KEY, f"postgresql://scraper:{SECRET}@db.example:5432/library")
+    monkeypatch.setitem(sys.modules, "psycopg", sys.modules.get("psycopg") or object())
+    monkeypatch.setitem(sys.modules, "psycopg_pool", sys.modules.get("psycopg_pool") or object())
+    monkeypatch.setattr(sys, "argv", ["ofscraper", "doctor", "--online", "--json"])
+    monkeypatch.setattr(settings, "settings", {})
+    monkeypatch.setattr(global_args, "args", None)
+    schemas = []
+    conn = types.SimpleNamespace(info=types.SimpleNamespace(server_version=160002))
+    monkeypatch.setattr(postgres.POSTGRES, "connect", lambda where, ro, timeout: schemas.append(where) or conn)
+    monkeypatch.setattr(postgres.POSTGRES, "close", lambda c: None)
+    monkeypatch.setattr(doctor, "start", lambda *a: None)
+    monkeypatch.setattr(init, "auth_status", lambda: ("UP", None))
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home)
+    entrypoint.main(["doctor", "--online", "--json"])
+    results = {r["check"]: r for r in json.loads(capsys.readouterr().out)["results"]}
+    assert results["PostgreSQL"]["status"] == "PASS" and "16.2" in results["PostgreSQL"]["detail"]
+    assert schemas == ["onlyfans"]
+    assert settings.settings == {} and global_args.args is None
+
+
+def test_an_empty_auth_file_is_a_finding(home, monkeypatch):
+    import ofscraper.utils.settings as settings
+
+    write_config(home, {"main_profile": "main_profile"})
+    path = write_auth(home)
+    path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(settings, "get_settings", lambda: pytest.fail("read the settings"))
+    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked a question"))
+    assert result(doctor.run(), "OnlyFans auth") == ("FAIL", f"{path} is empty")
+
+
+def test_an_empty_config_object_is_the_defaults(home, monkeypatch):
+    import ofscraper.utils.config.file as config_file
+    import ofscraper.utils.settings as settings
+
+    write_config(home, {})
+    monkeypatch.setattr(config_file, "open_config", lambda: pytest.fail("opened the config"))
+    monkeypatch.setattr(settings, "get_args", lambda *a, **k: pytest.fail("read the arguments"))
+    report = doctor.run()
+    assert result(report, "config file")[0] == "PASS"
+    assert result(report, "save folder")[0] in ("PASS", "FAIL")
+
+
+def test_an_unset_check_path_measures_the_save_folders_disk(home, tmp_path, monkeypatch):
+    """OFSC_DISK_SPACE_CHECK_PATH empty means the disk that holds
+    save_location, as the free-space check measures it."""
+    save = tmp_path / "library"
+    save.mkdir()
+    write_config(home, {"file_options": {"save_location": str(save / "not" / "made")},
+                        "download_options": {"system_free_min": 1000}})
+    real = doctor.of_env.getattr
+    # an empty value is what the default becomes with #795
+    monkeypatch.setattr(doctor.of_env, "getattr",
+                        lambda key, *a, **k: "" if key == "DISK_SPACE_CHECK_PATH" else real(key, *a, **k))
+    status, detail = result(doctor.run(), "free-space limit")
+    assert status == "PASS" and detail.startswith(f"1000 bytes, measured at {save}")
+
+
+def test_a_fansly_profile_needs_no_key_files(home):
+    write_config(home, {"cdm_options": {"key-mode-default": "manual"}})
+    folder = config_dir(home) / "main_profile"
+    folder.mkdir(parents=True)
+    (folder / "site.json").write_text('{"site": "fansly"}', encoding="utf-8")
+    assert result(doctor.run(), "key files")[0] == "SKIP"
+
+
+@pytest.mark.parametrize("fields, named", [
+    ({"sess": "   "}, "blank in"),
+    ({"auth_id": 12345}, "not text in"),
+    ({"x-bc": None}, "blank in"),
+])
+def test_auth_values_a_run_cant_use_fail_offline(home, fields, named):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, **fields)
+    status, detail = result(doctor.run(), "OnlyFans auth")
+    assert status == "FAIL" and named in detail and detail.endswith(next(iter(fields)))
+
+
+def test_an_ansi_config_and_auth_file_are_read(home, tmp_path, monkeypatch):
+    import locale
+
+    save = tmp_path / "Bibliothèque"
+    save.mkdir()
+    monkeypatch.setattr(locale, "getencoding", lambda: "cp1252")
+    path = write_config(home, "")
+    path.write_bytes(json.dumps({"file_options": {"save_location": str(save)}}, ensure_ascii=False).encode("cp1252"))
+    auth = write_auth(home)
+    auth.write_bytes(auth.read_bytes().replace(b"a test agent", "agent é".encode("cp1252")))
+    report = doctor.run()
+    assert result(report, "config file")[0] == "PASS"
+    assert result(report, "save folder")[0] == "PASS"
+    assert result(report, "OnlyFans auth")[0] == "PASS"
+
+
+def test_a_working_configured_ffmpeg_doesnt_ask_pyffmpeg(monkeypatch):
+    class Pyffmpeg:
+        def FFmpeg(self):
+            pytest.fail("asked pyffmpeg")
+
+    monkeypatch.setitem(sys.modules, "pyffmpeg", Pyffmpeg())
+    monkeypatch.setattr(ffmpeg, "_is_valid_ffmpeg", lambda p: p == "/opt/ffmpeg")
+    monkeypatch.setattr(ffmpeg, "ffmpeg_version", lambda p: (True, "7.1", 7))
+    assert ffmpeg.find_ffmpeg("/opt/ffmpeg") == ("/opt/ffmpeg", "config", "7.1")
+
+
+def test_online_json_is_the_only_thing_on_stdout(home, monkeypatch, capsys):
+    import ofscraper.data.api.init as init
+
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home)
+    monkeypatch.setattr(doctor, "start", lambda *a: print("a config was made"))
+    monkeypatch.setattr(init, "auth_status", lambda: ("UP", None))
+    doctor.main(["--online", "--json"])
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["results"]
+    assert "a config was made" in captured.err
+
+
+def test_key_mode_cdrm_with_a_server_of_your_own(home, monkeypatch):
+    """OFSC_CDRM_URL set to a server other than the retired one: keys are
+    asked from it, so the warning says that and not that cdrm can't work."""
+    import ofscraper.utils.of_env.of_env as of_env
+
+    url = f"http://user:{SECRET}@127.0.0.1:8080/api/decrypt"
+    real = of_env.getattr
+    monkeypatch.setattr(of_env, "getattr", lambda key, *a, **k: url if key == "CDRM" else real(key, *a, **k))
+    write_config(home, {"cdm_options": {"key-mode-default": "cdrm"}})
+    status, detail = result(doctor.run(), "key files")
+    assert status == "WARN" and "doesn't work" not in detail
+    assert "127.0.0.1" in detail and "cookies" in detail and SECRET not in detail
+
+
+def test_key_files_that_name_a_folder(home, tmp_path):
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    (keys / "client_id.bin").write_bytes(b"c")
+    (keys / "private_key.pem").write_bytes(b"k")
+    status, detail = manual_keys(home, keys, keys / "private_key.pem")
+    assert status == "FAIL"
+    assert "client-id is a folder, not a file: client_id.bin is in it" in detail
+
+
+def test_key_files_named_in_another_case(home, tmp_path):
+    (tmp_path / "Client_ID.bin").write_bytes(b"c")
+    (tmp_path / "DEVICE_PRIVATE_KEY").write_bytes(b"k")
+    status, detail = manual_keys(home, tmp_path / "client_id.bin", tmp_path / "private_key.pem")
+    assert status == "FAIL"
+    assert "client-id: no file at that name, but Client_ID.bin is in that folder" in detail
+    assert "private-key: no file at that name, but DEVICE_PRIVATE_KEY is in that folder" in detail
+
+
+def test_a_json_key_file_with_a_bom(home, tmp_path):
+    client, key = tmp_path / "client_id.bin", tmp_path / "private_key.pem"
+    client.write_bytes(b"\xef\xbb\xbf  {\"client_id\": \"abc\"}")
+    key.write_bytes(b"not a key")
+    status, detail = manual_keys(home, client, key)
+    assert status == "FAIL" and "client-id looks like a JSON file, not a key file" in detail
+
+
+def test_spaces_inside_a_token_are_named(home):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, sess=SECRET[:10] + " " + SECRET[10:], auth_id="123 45")
+    report = doctor.run()
+    status, detail = result(report, "OnlyFans auth values")
+    assert status == "WARN" and "sess has spaces" in detail and "auth_id has spaces" in detail
+    assert SECRET[10:] not in json.dumps(report.results)
+
+
+@pytest.mark.parametrize("value", [12345, True, ["x"]])
+def test_an_auth_value_that_isnt_text_fails_and_isnt_cleaned(home, value):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, auth_id=value)
+    report = doctor.run()
+    assert result(report, "OnlyFans auth")[0] == "FAIL"
+    assert "not text" in result(report, "OnlyFans auth")[1]
+    assert not [r for r in report.results if r["check"] == "OnlyFans auth values"]
+
+
+# --- which Python a command on PATH starts ---
+
+def pe_with_rcdata(resources, tail=b""):
+    """A minimal PE32+ file with RT_RCDATA resources named as uv's
+    trampolines name theirs (uv-trampoline-builder: UV_PYTHON_PATH, ...)."""
+    import struct
+
+    names, entries, blobs = b"", [], b""
+    # the resource tree: root -> RT_RCDATA (id 10) -> one dir per name -> language 0 -> data
+    count = len(resources)
+    root = 16 + 8
+    rcdata = root
+    rcdata_size = 16 + 8 * count
+    name_dirs = rcdata + rcdata_size
+    data_entries = name_dirs + count * (16 + 8)
+    name_strings = data_entries + count * 16
+    strings = b""
+    string_at = []
+    for name, _ in resources:
+        string_at.append(name_strings + len(strings))
+        strings += struct.pack("<H", len(name)) + name.encode("utf-16-le")
+    blobs_at = name_strings + len(strings)
+    blobs_at += -blobs_at % 4
+    section_va = 0x1000
+    tree = struct.pack("<IIHHHH", 0, 0, 0, 0, 0, 1) + struct.pack("<II", 10, 0x80000000 | rcdata)
+    tree += struct.pack("<IIHHHH", 0, 0, 0, 0, count, 0)
+    for i in range(count):
+        tree += struct.pack("<II", 0x80000000 | string_at[i], 0x80000000 | (name_dirs + i * 24))
+    data = b""
+    for i, (_, value) in enumerate(resources):
+        tree += struct.pack("<IIHHHH", 0, 0, 0, 0, 0, 1) + struct.pack("<II", 0, data_entries + i * 16)
+    for i, (_, value) in enumerate(resources):
+        tree += struct.pack("<IIII", section_va + blobs_at + len(data), len(value), 0, 0)
+        data += value + b"\0" * (-len(value) % 4)
+    tree += strings
+    tree += b"\0" * (blobs_at - len(tree)) + data
+    raw_at = 0x400
+    pe_at = 0x80
+    opt = struct.pack("<H", 0x20B) + b"\0" * 106 + struct.pack("<I", 16)
+    directories = [(0, 0)] * 16
+    directories[2] = (section_va, len(tree))
+    opt += b"".join(struct.pack("<II", *d) for d in directories)
+    coff = struct.pack("<HHIIIHH", 0x8664, 1, 0, 0, 0, len(opt), 0x22)
+    section = b".rsrc\0\0\0" + struct.pack("<IIIIIIHHI", len(tree), section_va, len(tree), raw_at, 0, 0, 0, 0, 0x40000040)
+    head = b"MZ" + b"\0" * 58 + struct.pack("<I", pe_at)
+    head += b"\0" * (pe_at - len(head)) + b"PE\0\0" + coff + opt + section
+    return head + b"\0" * (raw_at - len(head)) + tree + tail
+
+
+def test_a_uv_trampoline_names_its_python_in_a_resource(tmp_path):
+    script = tmp_path / "ofscraper.exe"
+    # absolute in this system's form: a Windows path on Windows
+    python = str(tmp_path / "uv" / "tools" / "ofscraper" / "Scripts" / "python.exe")
+    script.write_bytes(pe_with_rcdata([("UV_TRAMPOLINE_KIND", b"\x01"), ("UV_PYTHON_PATH", python.encode()),
+                                       ("UV_SCRIPT_DATA", b"PK\x05\x06" + b"\0" * 18)]))
+    assert doctor._script_python(str(script)) == python
+
+
+def test_a_uv_trampolines_relative_python_is_beside_the_command(tmp_path, monkeypatch):
+    folder = tmp_path / "Scripts"
+    folder.mkdir()
+    script = folder / "ofscraper.exe"
+    script.write_bytes(pe_with_rcdata([("UV_TRAMPOLINE_KIND", b"\x01"), ("UV_PYTHON_PATH", b"python.exe")]))
+    monkeypatch.chdir(tmp_path)
+    assert doctor._script_python(str(script)) == str(folder / "python.exe")
+    # the older form, with the path at the end of the file
+    path = b"python.exe"
+    script.write_bytes(b"MZ launcher" + path + len(path).to_bytes(4, "little") + b"UVPY")
+    assert doctor._script_python(str(script)) == str(folder / "python.exe")
+
+
+@pytest.mark.parametrize("line, python", [
+    (b'#!"C:\\Program Files\\Python312\\Python.EXE"\r\n', "C:\\Program Files\\Python312\\Python.EXE"),
+    (b"#!/opt/py/bin/python3.12 -s\n", "/opt/py/bin/python3.12"),
+    (b"#!/opt/py/bin/PYTHON3 -E -s\n", "/opt/py/bin/PYTHON3"),
+    (b"#!/bin/bash\n", None),
+])
+def test_shebang_forms(tmp_path, line, python):
+    script = tmp_path / "ofscraper"
+    script.write_bytes(line + b"import ofscraper\n")
+    assert doctor._script_python(str(script)) == python
+
+
+def test_a_pip_windows_launcher_with_an_upper_case_python(tmp_path):
+    script = tmp_path / "ofscraper.exe"
+    script.write_bytes(b"MZ launcher code" + b'#!"C:\\Python312\\PYTHON.EXE"\r\n' + b"PK\x03\x04zip")
+    assert doctor._script_python(str(script)) == "C:\\Python312\\PYTHON.EXE"
+
+
+def test_env_shebang_finds_the_python_on_path(home, tmp_path, monkeypatch):
+    script = command_on_path(tmp_path, monkeypatch, f"#!/usr/bin/env -S {os.path.basename(sys.executable)} -s\nimport ofscraper\n".encode())
+    monkeypatch.setenv("PATH", os.pathsep.join([str(script.parent), os.path.dirname(sys.executable)]))
+    assert result(doctor.run(), "ofscraper on PATH") == ("PASS", f"{script}, this install")
+
+
+def test_a_shebang_through_a_linked_folder_is_this_install(home, tmp_path, monkeypatch):
+    """macOS's /var is /private/var: the same folder by another path."""
+    link = tmp_path / "linked"
+    link.symlink_to(os.path.dirname(sys.executable), target_is_directory=True)
+    python = link / os.path.basename(sys.executable)
+    script = command_on_path(tmp_path, monkeypatch, f"#!{python}\nimport ofscraper\n".encode())
+    assert result(doctor.run(), "ofscraper on PATH")[0] == "PASS"
+
+
+def test_the_users_scripts_folder_of_the_preferred_scheme(home, tmp_path, monkeypatch):
+    """A framework build on macOS installs --user commands under
+    osx_framework_user, not posix_user."""
+    import sysconfig
+
+    script = command_on_path(tmp_path, monkeypatch, b"\x7fELF not a script")
+    real = sysconfig.get_path
+    monkeypatch.setattr(sysconfig, "get_preferred_scheme", lambda key: "osx_framework_user" if key == "user" else "posix_prefix")
+    monkeypatch.setattr(sysconfig, "get_path", lambda name, scheme=None, *a, **k: str(script.parent) if scheme == "osx_framework_user" else real(name, *a, **k) if scheme is None else real(name, scheme, *a, **k))
+    assert result(doctor.run(), "ofscraper on PATH")[0] == "PASS"
