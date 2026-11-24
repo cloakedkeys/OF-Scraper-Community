@@ -121,3 +121,42 @@ def test_a_save_location_linked_to_a_missing_folder_is_measured_on_the_target(
 
     assert free.check_free_size()
     assert measured.calls == [target_disk.resolve()]
+
+
+def test_a_lookup_that_another_thread_replaces_mid_call_still_answers(
+    measured, tmp_path
+):
+    # another thread finds config.json edited and reads it again just before
+    # this lookup returns: this one still answers with what it read
+    import inspect
+    import sys
+
+    first, second = tmp_path / "first", tmp_path / "second"
+    measured.write_config(first, mtime=1_700_000_000)
+    assert free._get_save_location() == str(first)
+
+    lines, start = inspect.getsourcelines(free._get_save_location)
+    returns = {
+        start + i
+        for i, line in enumerate(lines)
+        if line.strip().startswith("return")
+    }
+    switched = []
+
+    def other_thread(frame, event, arg):
+        if frame.f_code is not free._get_save_location.__code__:
+            return None
+        if event == "line" and frame.f_lineno in returns and not switched:
+            switched.append(1)
+            measured.write_config(second, mtime=1_700_000_100)
+            assert free._get_save_location() == str(second)
+        return other_thread
+
+    measured.write_config(first, mtime=1_700_000_050)
+    previous = sys.gettrace()
+    sys.settrace(other_thread)
+    try:
+        got = free._get_save_location()
+    finally:
+        sys.settrace(previous)
+    assert switched and got == str(first)

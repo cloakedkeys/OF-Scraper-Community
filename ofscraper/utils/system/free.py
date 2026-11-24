@@ -7,20 +7,24 @@ import ofscraper.utils.paths.common as common_paths
 
 
 # config.json's save_location, keyed on the file and its modification time:
-# the check runs often, and the file is read again only once it changes
-_save_location = {}
+# the check runs often, and the file is read again only once it changes.
+# One (key, value) tuple, replaced whole, so a thread reading it never finds
+# the value of another key or none at all
+_save_location = (None, None)
 
 
 def _get_save_location():
+    global _save_location
     config = pathlib.Path(common_paths.get_config_path())
     try:
         key = (str(config), config.stat().st_mtime_ns)
     except OSError:
         key = (str(config), None)
-    if key not in _save_location:
-        _save_location.clear()
-        _save_location[key] = common_paths.get_save_location()
-    return _save_location[key]
+    cached = _save_location
+    if cached[0] != key:
+        cached = (key, common_paths.get_save_location())
+        _save_location = cached
+    return cached[1]
 
 
 def get_check_path():
