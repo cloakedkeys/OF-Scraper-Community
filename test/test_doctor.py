@@ -2,6 +2,7 @@
 
 import json
 import os
+import pathlib
 import sys
 
 import pytest
@@ -52,6 +53,47 @@ def result(report, check):
 
 def files_under(path):
     return sorted(str(p) for p in path.rglob("*"))
+
+
+def command_on_path(tmp_path, monkeypatch, content):
+    folder = tmp_path / "bin"
+    folder.mkdir()
+    script = folder / ("ofscraper.exe" if os.name == "nt" else "ofscraper")
+    script.write_bytes(content)
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(folder))
+    return script
+
+
+def test_the_first_line_names_the_running_install(home):
+    from ofscraper.__version__ import __version__
+
+    first = doctor.run().results[0]
+    assert first["check"] == "install" and first["status"] == "PASS"
+    assert __version__ in first["detail"] and sys.executable in first["detail"]
+    assert str(pathlib.Path(doctor.__file__).resolve().parents[1]) in first["detail"]
+
+
+def test_ofscraper_on_path_from_this_install_passes(home, tmp_path, monkeypatch):
+    script = command_on_path(tmp_path, monkeypatch, f"#!{sys.executable}\nimport ofscraper\n".encode())
+    assert result(doctor.run(), "ofscraper on PATH") == ("PASS", f"{script}, this install")
+
+
+def test_ofscraper_on_path_from_another_install_warns(home, tmp_path, monkeypatch):
+    other = str(tmp_path / "pipx" / "venvs" / "ofscraper" / "bin" / "python")
+    script = command_on_path(tmp_path, monkeypatch, f"#!{other}\nimport ofscraper\n".encode())
+    status, detail = result(doctor.run(), "ofscraper on PATH")
+    assert status == "WARN" and str(script) in detail and sys.executable in detail
+    # pip's form for a long path
+    script.write_bytes(f"#!/bin/sh\n'''exec' \"{other}\" \"$0\" \"$@\"\n' '''\n".encode())
+    assert result(doctor.run(), "ofscraper on PATH")[0] == "WARN"
+    script.write_bytes(f"#!/bin/sh\n'''exec' \"{sys.executable}\" \"$0\" \"$@\"\n' '''\n".encode())
+    assert result(doctor.run(), "ofscraper on PATH")[0] == "PASS"
+
+
+def test_no_ofscraper_on_path(home, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert result(doctor.run(), "ofscraper on PATH")[0] == "SKIP"
 
 
 def test_an_empty_home_gets_findings_and_nothing_is_created(home):

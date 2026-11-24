@@ -1,5 +1,6 @@
-"""Check the setup without running a scrape: config, logins on file, ffmpeg,
-key files, folders, free space and the database setting.
+"""Check the setup without running a scrape: which install is running,
+config, logins on file, ffmpeg, key files, folders, free space and the
+database setting.
 
 It reads config.json as it is, changes nothing, makes no connection and
 never asks a question. Each line is PASS, WARN, FAIL or SKIP; the exit status
@@ -17,9 +18,11 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 
 import ofscraper.utils.of_env.of_env as of_env
 
@@ -198,6 +201,76 @@ def check_auth(config, folder, site, report):
                 check_config_auth(config, report)
         else:
             report.add(SKIP, label, f"not used: the profile is for {sites.SITE_NAMES[site]}")
+
+
+def _norm(path):
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _script_python(script):
+    """The Python an ofscraper command on PATH starts, from its shebang (or
+    the one in a Windows launcher, or uv's trampoline), or None."""
+    try:
+        with open(script, "rb") as file:
+            data = file.read(4 * 2**20)
+    except OSError:
+        return None
+    if data[-4:] in (b"UVSC", b"UVPY") and len(data) > 8:
+        size = int.from_bytes(data[-8:-4], "little")
+        if 0 < size < len(data) - 8:
+            return data[-8 - size:-8].decode("utf-8", "replace")
+    # pip's wrapper for long paths: #!/bin/sh, then '''exec' "/path/python" "$0" "$@"
+    wrapped = re.match(rb"#!/bin/sh\r?\n'''exec' \"?([^\"\r\n]+)\"? ", data)
+    if wrapped:
+        return wrapped.group(1).decode("utf-8", "replace")
+    head = data.split(b"\n", 1)[0] + b"\n" if data.startswith(b"#!") else data
+    found = re.findall(rb'#!"?([^\r\n"]*?pythonw?[\d.]*(?:\.exe)?)"?\r?\n', head)
+    return found[-1].decode("utf-8", "replace") if found else None
+
+
+def _scripts_dirs():
+    """Where this Python's installs put their commands."""
+    dirs = {os.path.dirname(sys.executable), sysconfig.get_path("scripts")}
+    try:
+        dirs.add(sysconfig.get_path("scripts", f"{os.name}_user"))
+    except KeyError:
+        pass
+    return {_norm(os.path.realpath(d)) for d in dirs if d}
+
+
+def check_install(report):
+    """Which install is running, and whether ofscraper on PATH is another."""
+    from ofscraper.__version__ import __dist_name__, __version__
+
+    frozen = getattr(sys, "frozen", False)
+    if frozen:
+        report.add(PASS, "install", f"{__dist_name__} {__version__}, binary {sys.executable}")
+    else:
+        package = pathlib.Path(__file__).resolve().parents[1]
+        report.add(PASS, "install", f"{__dist_name__} {__version__}, Python {sys.executable}, package {package}")
+    script = shutil.which("ofscraper")
+    if not script:
+        report.add(SKIP, "ofscraper on PATH", "no ofscraper command on PATH")
+        return
+    if frozen:
+        same = _norm(os.path.realpath(script)) == _norm(os.path.realpath(sys.executable))
+    else:
+        python = _script_python(script)
+        if python:
+            # python and python3 in one folder can be the same install;
+            # two virtual environments' pythons can be links to one file
+            same = _norm(python) == _norm(sys.executable) or (
+                _norm(os.path.dirname(python)) == _norm(os.path.dirname(sys.executable))
+                and _norm(os.path.realpath(python)) == _norm(os.path.realpath(sys.executable))
+            )
+        else:
+            same = _norm(os.path.dirname(os.path.realpath(script))) in _scripts_dirs()
+    if same:
+        report.add(PASS, "ofscraper on PATH", f"{script}, this install")
+    else:
+        report.add(WARN, "ofscraper on PATH",
+                   f"{script} is a different install from the one running doctor ({sys.executable}):"
+                   " the ofscraper command doesn't run this one")
 
 
 def check_ffmpeg(config, report):
@@ -510,6 +583,7 @@ def run(config=None, profile=None, site=None, online=False):
     import ofscraper.sites as sites
 
     report = Report()
+    check_install(report)
     path = config_path(config)
     settings = read_config(path, report)
     folder = profile_folder(settings, profile, path)
