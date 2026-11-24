@@ -188,3 +188,74 @@ def test_wrapped_caption_keeps_line_breaks(monkeypatch, tmp_path):
     written = path.read_text(encoding="utf-8")
     assert written.replace("\n", " ") == caption
     assert "wordword" not in written
+
+# ----------------------------------------------------------------------
+# File names built from a post: real settings from command-line options,
+# a real post, and the real placeholder classes.
+# ----------------------------------------------------------------------
+
+import ntpath
+import re
+
+import ofscraper.classes.of.posts as posts_
+import ofscraper.utils.settings as settings
+from ofscraper.utils.args.main import AutoDotDict
+from ofscraper.utils.args.parse.commands.main import program
+from test_undated_posts import names_env  # noqa: F401  (fixture)
+
+
+@pytest.fixture
+def naming(monkeypatch, names_env):  # noqa: F811
+    """Returns names(file_format, caption, *options, media=1): the text file's
+    name and each media file's name for one post with that caption."""
+
+    def names(file_format, caption, *options, media=1):
+        params, _ = program.main(
+            args=list(options), standalone_mode=False, prog_name="OF-Scraper"
+        )
+        args = AutoDotDict(params)
+        args.command = "OF-Scraper"
+        monkeypatch.setattr(settings.read_args, "retriveArgs", lambda *a, **k: args)
+        merged = settings.merged_settings()
+        monkeypatch.setattr(settings, "get_settings", lambda *a, **k: merged)
+        monkeypatch.setattr(
+            placeholder.data, "get_fileformat", lambda *a, **k: file_format
+        )
+        raw = {"id": 8, "text": caption, "price": 0, "isOpened": True,
+               "responseType": "post", "postedAt": "2026-10-31T12:00:00+00:00",
+               "media": [{"id": 70 + n, "type": "photo", "canView": True,
+                          "files": {"full": {"url": f"https://example.invalid/pic{n}.jpg"}}}
+                         for n in range(media)]}
+        post = posts_.Post(raw, 1, "u", "timeline")
+        text = asyncio.run(placeholder.Textholders(post, "txt").createfilename())
+        return text, [
+            asyncio.run(placeholder.Placeholders(item, "jpg").createfilename())
+            for item in post.all_media
+        ]
+
+    return names
+
+
+# A caption can't change the folder a file is saved in (#739). A backslash is
+# a folder separator on Windows, and a tab or a carriage return can't be in a
+# Windows file name.
+
+FOLDER = r"C:\data\a_creator\Posts"
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [r"me \ you", r"up\..\..\..\and out", "a tab\there", "a return\r\nhere"],
+)
+def test_a_caption_cannot_name_another_folder(naming, caption):
+    text, (media,) = naming("{date} {filename} {text}.{ext}", caption)
+    for name in (text, media):
+        assert not re.search(r"[\\\x00-\x1f]", name)
+        # as Windows reads it: still a file in the folder it was meant for
+        assert ntpath.dirname(ntpath.normpath(ntpath.join(FOLDER, name))) == FOLDER
+
+
+def test_a_text_file_named_by_its_caption_stays_in_its_folder(naming):
+    # the default file_format: a text file's {filename} is its caption
+    text, _ = naming("{filename}.{ext}", r"..\..\..\elsewhere")
+    assert ntpath.dirname(ntpath.normpath(ntpath.join(FOLDER, text))) == FOLDER
