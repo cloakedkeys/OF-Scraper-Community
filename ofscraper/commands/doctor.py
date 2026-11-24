@@ -132,8 +132,10 @@ def _auth_value_findings(auth):
         found = []
         if any(c in value for c in "\"'"):
             found.append("quotes")
-        # a user agent has ; and = of its own
+        # a user agent has ;, = and spaces of its own
         if key != "user_agent":
+            if " " in value:
+                found.append("spaces")
             found += [c for c in ";=" if c in value]
         if any(not (" " <= c <= "~") for c in value):
             found.append("characters outside printable ASCII")

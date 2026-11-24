@@ -522,3 +522,22 @@ def test_a_json_key_file_with_a_bom(home, tmp_path):
     key.write_bytes(b"not a key")
     status, detail = manual_keys(home, client, key)
     assert status == "FAIL" and "client-id looks like a JSON file, not a key file" in detail
+
+
+def test_spaces_inside_a_token_are_named(home):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, sess=SECRET[:10] + " " + SECRET[10:], auth_id="123 45")
+    report = doctor.run()
+    status, detail = result(report, "OnlyFans auth values")
+    assert status == "WARN" and "sess has spaces" in detail and "auth_id has spaces" in detail
+    assert SECRET[10:] not in json.dumps(report.results)
+
+
+@pytest.mark.parametrize("value", [12345, True, ["x"]])
+def test_an_auth_value_that_isnt_text_fails_and_isnt_cleaned(home, value):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, auth_id=value)
+    report = doctor.run()
+    assert result(report, "OnlyFans auth")[0] == "FAIL"
+    assert "not text" in result(report, "OnlyFans auth")[1]
+    assert not [r for r in report.results if r["check"] == "OnlyFans auth values"]
