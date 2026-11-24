@@ -78,7 +78,9 @@ def read_config(path, report):
         report.add(FAIL, "config file", f"{path} can't be read: {error}")
         return None
     try:
-        config = config_file.unwrap(config_file.json_loads(text))
+        # the run's own check (config_context), which doesn't repair
+        # unescaped backslashes the way json_loads does
+        config = config_file.checked(text)
     except json.JSONDecodeError as error:
         report.add(FAIL, "config file",
                    f"{path} isn't valid JSON: {error.msg} at line {error.lineno}, column {error.colno}."
