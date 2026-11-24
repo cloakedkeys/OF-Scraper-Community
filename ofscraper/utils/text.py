@@ -64,11 +64,14 @@ def _own_path(path, ele, *contents):
     name, e.g. captions that start with the same textlength words. A file
     with other content at path is another post's, so this post's text goes
     to name_<post_id>, as media go to name_<media_id>. filename_collision
-    "overwrite" keeps the old behaviour: the name is used as it is."""
+    "overwrite" keeps the old behaviour: the name is used as it is. A name
+    that already holds the post's id as a whole number, e.g. from {post_id},
+    is the post's own file."""
     path = pathlib.Path(path)
     if (
         str(config_data.get_filename_collision()).lower() == "overwrite"
         or not path.exists()
+        or re.search(rf"(?<!\d){re.escape(str(ele.id))}(?!\d)", path.stem)
         or _holds(path, *contents)
     ):
         return path, False
