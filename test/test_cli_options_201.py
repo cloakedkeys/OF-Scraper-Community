@@ -109,6 +109,10 @@ def test_block_ads_keeps_ordinary_posts(monkeypatch, text):
 @pytest.mark.parametrize("text", [
     "#ad go follow her", "#ads", "#AD", "check this out #sponsored", "#promotion!",
     "huge giveaway this week", "shoutout to my friend", "paid endorsement",
+    # any case: an upper-case letter in the pattern made the whole filter
+    # case-sensitive, so these got through
+    "#Ad go follow her", "#Sponsored", "Giveaway time", "SHOUTOUT",
+    "user promo for a friend", "@someuser promo",
 ])
 def test_block_ads_still_blocks_ads(monkeypatch, text):
     assert _kept_by_block_ads(monkeypatch, [text]) == []
