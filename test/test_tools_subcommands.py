@@ -56,6 +56,7 @@ def test_non_tool_first_arg_reaches_load_main(monkeypatch, argv):
     assert called == [True]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("tool_name", sorted(tools.TOOLS))
 def test_tool_help_in_empty_home_creates_nothing(tmp_path, tool_name):
     empty_home = tmp_path / "home"
