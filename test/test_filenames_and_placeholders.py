@@ -188,3 +188,34 @@ def test_wrapped_caption_keeps_line_breaks(monkeypatch, tmp_path):
     written = path.read_text(encoding="utf-8")
     assert written.replace("\n", " ") == caption
     assert "wordword" not in written
+
+# ----------------------------------------------------------------------
+# A caption can't change the folder a file is saved in (#739). A backslash
+# is a folder separator on Windows, and a tab or a carriage return can't be
+# in a Windows file name.
+# ----------------------------------------------------------------------
+
+import ntpath
+import re
+
+from naming_helpers import naming  # noqa: F401  (fixture)
+
+FOLDER = r"C:\data\a_creator\Posts"
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [r"me \ you", r"up\..\..\..\and out", "a tab\there", "a return\r\nhere"],
+)
+def test_a_caption_cannot_name_another_folder(naming, caption):
+    text, (media,) = naming("{date} {filename} {text}.{ext}", caption)
+    for name in (text, media):
+        assert not re.search(r"[\\\x00-\x1f]", name)
+        # as Windows reads it: still a file in the folder it was meant for
+        assert ntpath.dirname(ntpath.normpath(ntpath.join(FOLDER, name))) == FOLDER
+
+
+def test_a_text_file_named_by_its_caption_stays_in_its_folder(naming):
+    # the default file_format: a text file's {filename} is its caption
+    text, _ = naming("{filename}.{ext}", r"..\..\..\elsewhere")
+    assert ntpath.dirname(ntpath.normpath(ntpath.join(FOLDER, text))) == FOLDER
