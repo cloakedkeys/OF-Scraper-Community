@@ -197,14 +197,20 @@ def check_keys(config, report):
     from ofscraper.commands.scraper.actions.download.utils import keyhelpers
 
     mode = _get(data.get_key_mode, config)
+    client_id = _get(data.get_client_id, config) if config is not None else None
+    private_key = _get(data.get_private_key, config) if config is not None else None
     if mode == "cdrm":
-        report.add(PASS, "key files", "key mode cdrm: no key files needed; its server isn't contacted by this check")
+        if keyhelpers.cdm_key_problems("manual", client_id, private_key):
+            fix = "then set client-id and private-key to your key files"
+        else:
+            fix = "client-id and private-key are already set, so that switch is the whole fix"
+        report.add(WARN, "key files",
+                   "key mode cdrm: the cdrm service doesn't work, so protected videos will fail"
+                   f" (not contacted by this check). Set key-mode-default to manual; {fix}")
         return
     if mode != "manual":
         report.add(PASS, "key files", f"key mode {mode}: no key files needed")
         return
-    client_id = _get(data.get_client_id, config) if config is not None else None
-    private_key = _get(data.get_private_key, config) if config is not None else None
     problem = keyhelpers.cdm_key_problems(mode, client_id, private_key)
     if problem:
         report.add(FAIL, "key files", problem)

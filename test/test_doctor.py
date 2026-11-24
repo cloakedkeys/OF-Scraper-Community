@@ -139,8 +139,23 @@ def test_key_files(home, tmp_path):
     key.write_bytes(b"not a key")
     status, detail = result(doctor.run(), "key files")
     assert status == "FAIL" and detail.startswith("the key files can't be loaded")
+
+
+def test_key_mode_cdrm_warns_without_contacting_it(home, tmp_path, monkeypatch):
+    from ofscraper.commands.scraper.actions.download.utils import keyhelpers
+
+    monkeypatch.setattr(keyhelpers, "load_device", lambda *a: pytest.fail("loaded the keys"))
     write_config(home, {"cdm_options": {"key-mode-default": "cdrm"}})
-    assert "isn't contacted" in result(doctor.run(), "key files")[1]
+    report = doctor.run()
+    status, detail = result(report, "key files")
+    assert status == "WARN" and "doesn't work" in detail and "key-mode-default to manual" in detail
+    assert "then set client-id and private-key" in detail
+    client, key = tmp_path / "client_id.bin", tmp_path / "private_key.pem"
+    client.write_bytes(b"c")
+    key.write_bytes(b"k")
+    write_config(home, {"cdm_options": {"key-mode-default": "cdrm", "client-id": str(client), "private-key": str(key)}})
+    status, detail = result(doctor.run(), "key files")
+    assert status == "WARN" and "already set, so that switch is the whole fix" in detail
 
 
 def test_folders_and_the_free_space_limit(home, tmp_path, monkeypatch):
