@@ -268,14 +268,24 @@ class Placeholders(basePlaceholder):
         """A name too long for the path, with {text} made just short enough
         to fit, so the end of the name ({filename}, {media_id} and the rest
         after the caption) isn't cut instead (#741). The name unchanged when
-        it fits, or when it doesn't fit even with no caption."""
+        it fits, or when it doesn't fit even with no caption. Left alone, as
+        the rest of the path is, when --original or truncation_default: false
+        turns shortening off."""
 
         def fits(name):
-            return paths.truncate(pathlib.Path(dir, name)).name == name
+            if not paths._split_ext(name)[0].strip():
+                # nothing before the extension: a nameless ".jpg" is no fit
+                return False
+            try:
+                return paths.truncate(pathlib.Path(dir, name)).name == name
+            except ValueError:
+                # not even the start of the name fits
+                return False
 
         text = self._variables.get("text")
         if (
-            not text
+            not getattr(settings.get_settings(), "trunicate", True)
+            or not text
             or self._ele.responsetype.capitalize() == "Profile"
             or fits(file)
             or not fits(self._name_with_text(""))

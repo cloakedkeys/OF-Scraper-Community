@@ -142,6 +142,41 @@ def test_a_short_caption_is_left_alone(name_env):
     assert [p.name for p in out] == [f"2024-05-01 short photo{i}.jpg" for i in range(3)]
 
 
+def test_a_caption_whose_first_character_does_not_fit_is_dropped(name_env, monkeypatch):
+    # room for 3 bytes of UTF-8 beside ".jpg": not one emoji (4), so no part
+    # of the caption fits, but the name without it does
+    monkeypatch.setenv("UTF", "utf-8")
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "7")
+    out = name_env("{text} {media_id}.{ext}", "💀" * 100)
+    assert [p.name for p in out] == [f" {70 + i}.jpg" for i in range(3)]
+
+
+def test_a_caption_is_not_cut_to_a_name_with_nothing_before_the_extension(
+    name_env, monkeypatch
+):
+    # with {text} alone, an empty caption would leave a nameless ".jpg";
+    # the name is left to the cut, which says there's no room instead
+    monkeypatch.setenv("UTF", "utf-8")
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "7")
+    with pytest.raises(ValueError, match="no room"):
+        name_env("{text}.{ext}", "💀" * 100)
+
+
+def test_the_caption_is_left_whole_when_truncation_is_off(name_env, monkeypatch):
+    # --original or truncation_default: false: the caption isn't shortened
+    # (#756 then keeps the whole path)
+    import ofscraper.classes.placeholder as placeholder
+
+    # the settings object is a dict read by attribute
+    monkeypatch.setitem(placeholder.settings.get_settings(), "trunicate", False)
+
+    def shortened(*a, **k):
+        raise AssertionError("the caption was shortened")
+
+    monkeypatch.setattr(placeholder.Placeholders, "_name_with_text", shortened)
+    name_env("{date} {text} {filename}.{ext}", "a long caption " * 40)
+
+
 @pytest.mark.parametrize("name", ["💀" * 200 + ".txt", "💀" * 200])
 def test_a_folder_that_leaves_no_room_for_a_character_says_so(name):
     # room for 2 bytes after the folder: not one emoji (4), so nothing of the
