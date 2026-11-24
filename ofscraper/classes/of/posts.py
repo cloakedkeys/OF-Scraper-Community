@@ -20,7 +20,10 @@ MEDIA_FILTERS = (
     ("--neg-filter or block_ads", helpers.post_neg_text_filter),
     ("--protected-only or --normal-only", helpers.download_type_filter),
     ("--mass-only or --mass-skip", helpers.mass_msg_filter),
-    ("--length-min or --length-max", helpers.media_length_filter),
+    (
+        "--length-min, --length-max, length_min or length_max",
+        helpers.media_length_filter,
+    ),
     ("--media-id", helpers.media_id_filter),
     ("--post-id", helpers.post_id_filter),
 )
