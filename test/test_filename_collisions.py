@@ -17,8 +17,9 @@ def _media(media_id):
 @pytest.fixture(autouse=True)
 def collision_mode(monkeypatch):
     mode = {"value": "media_id"}
+    # the real getter takes config= when settings build the default config
     monkeypatch.setattr(
-        action_paths.config_data, "get_filename_collision", lambda: mode["value"]
+        action_paths.config_data, "get_filename_collision", lambda *a, **k: mode["value"]
     )
     return mode
 
