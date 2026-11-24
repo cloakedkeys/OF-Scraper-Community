@@ -210,6 +210,48 @@ def test_a_taken_text_file_name_gets_the_post_id(naming, monkeypatch, tmp_path):
     assert text_files(tmp_path) == both
 
 
+def _write_post_text(naming, monkeypatch, file_format, caption, post_id, *options):
+    async def no_script(path):
+        pass
+
+    naming(file_format, "x", *options)
+    monkeypatch.setattr(text, "after_download_script", no_script)
+    monkeypatch.setattr(
+        text.config_data, "get_filename_collision", lambda *a, **k: "media_id"
+    )
+    asyncio.run(text.get_text("u", [make_post(caption, 0, post_id=post_id)]))
+
+
+@pytest.mark.parametrize("file_format", ["{post_id}.{ext}", "{date}_{post_id}.{ext}"])
+def test_a_name_with_the_post_id_is_that_posts_own_file(
+    naming, monkeypatch, tmp_path, file_format
+):
+    _write_post_text(naming, monkeypatch, file_format, "old caption", 8)
+    (name,) = text_files(tmp_path)
+    # the creator edits the caption: a plain run keeps the file as it is,
+    # and --force-all rewrites it in place, not as name_8
+    _write_post_text(naming, monkeypatch, file_format, "new caption", 8)
+    assert text_files(tmp_path) == {name: "old caption"}
+    _write_post_text(
+        naming, monkeypatch, file_format, "new caption", 8, "--force-all"
+    )
+    assert text_files(tmp_path) == {name: "new caption"}
+
+
+@pytest.mark.parametrize("prefix", ["18", "2026-08", "80"])
+def test_a_number_that_only_contains_the_post_id_is_not_its_own(
+    naming, monkeypatch, tmp_path, prefix
+):
+    # another post's file holds the name post 8's text resolves to
+    file_format = prefix + " {text}.{ext}"
+    _write_post_text(naming, monkeypatch, file_format, "same", 18)
+    _write_post_text(naming, monkeypatch, file_format, "same here", 8, "-tt", "word", "-tl", "1")
+    assert text_files(tmp_path) == {
+        f"{prefix} same.txt": "same",
+        f"{prefix} same_8.txt": "same here",
+    }
+
+
 def test_the_same_caption_twice_is_one_text_file(naming, monkeypatch, tmp_path):
     _write_texts(naming, monkeypatch, ["Good morning", "Good morning"])
     assert text_files(tmp_path) == {"Good morning.txt": "Good morning"}
