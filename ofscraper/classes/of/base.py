@@ -4,6 +4,7 @@ import re
 
 from bs4 import BeautifulSoup
 
+import ofscraper.sites as sites
 import ofscraper.utils.settings as settings
 
 html_parser = "lxml" if importlib.util.find_spec("lxml") else "html.parser"
@@ -51,8 +52,11 @@ class base:
         text = re.sub("<[^>]*>", "", text)
         # OnlyFans sends text HTML-escaped ("Tom &amp; Jerry"), as it does
         # label names (labels.decode_label_name). Decoded after the tags are
-        # gone, so a decoded "<" isn't read as one.
-        text = html.unescape(text).replace("\xa0", " ")
+        # gone, so a decoded "<" isn't read as one. Fansly text is plain, so
+        # an "&amp;" there is what was written.
+        if not sites.is_fansly():
+            text = html.unescape(text)
+        text = text.replace("\xa0", " ")
         # Fansly text is plain already (normalize._item_dict); removing the
         # codes again would drop an escaped "\[s:lg\]", shown as "[s:lg]"
         text = re.sub(r'[\n<>:"/\|?*:;]+', "", text)

@@ -109,3 +109,12 @@ def test_onlyfans_text_is_unchanged(site):
     post = posts_.Post({"id": 3, "text": raw}, 1, "a creator", "timeline")
     assert post.text == raw
     assert post.file_sanitized_text == r"\[cblue\] \hi\ ~~y~~"
+
+
+def test_file_name_keeps_a_fansly_entity_as_written(site):
+    # Fansly captions are plain text, not HTML: "&amp;" is what was typed.
+    # Only what a file name can't hold (";") comes off.
+    site("fansly")
+    post = fansly_post("Tom &amp; Jerry &lt;3 &#039;")
+    assert post.file_sanitized_text == "Tom &amp Jerry &lt3 &#039"
+    assert text_placeholder(post) == "Tom &amp Jerry &lt3 &#039"
