@@ -115,3 +115,55 @@ def test_a_long_name_is_shortened_by_default(naming):
     media, text = _long_paths(naming)
     assert len(media.name) < len(LONG_CAPTION) and media.suffix == ".jpg"
     assert len(text.name) < len(LONG_CAPTION) and text.suffix == ".txt"
+
+
+# A folder longer than Windows' MAX_PATH: shortening it can't work (#737), so
+# with --original nothing may try to.
+LONG_FOLDER = "{date}/" + "/".join(["d" * 60] * 5)
+
+
+@pytest.fixture
+def on_windows(monkeypatch):
+    monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Windows")
+
+
+def test_original_leaves_the_folder_of_a_long_path_whole(naming, monkeypatch, on_windows):
+    naming("{text}.{ext}", "short", "--original")
+    monkeypatch.setattr(placeholder.data, "get_dirformat", lambda *a, **k: LONG_FOLDER)
+    post = make_post("short")
+    media = asyncio.run(placeholder.Placeholders(post.all_media[0], "jpg").init(create=False))
+    text = asyncio.run(placeholder.Textholders(post, "txt").init(create=False))
+    assert media.trunicated_filedir == media.filepath.parent
+    assert text.filedir == text.filepath.parent
+    assert len(str(media.filepath)) > 300
+
+
+def test_original_leaves_a_temp_file_in_a_long_folder_whole(naming, monkeypatch, on_windows):
+    naming("{text}.{ext}", "short", "--original")
+    monkeypatch.setattr(placeholder.data, "get_dirformat", lambda *a, **k: LONG_FOLDER)
+    post = make_post("short")
+    temp = asyncio.run(
+        placeholder.tempFilePlaceholder(post.all_media[0], "pic0.part").init()
+    )
+    assert temp.tempfilepath.name == "pic0.part"
+    assert temp.tempfilepath.parent.is_dir() and len(str(temp.tempfilepath)) > 300
+
+
+@pytest.mark.parametrize("options", [(), ("--original",)])
+def test_a_clashing_name_gets_its_media_id_whole_only_with_original(
+    naming, tmp_path, on_windows, options
+):
+    import ofscraper.commands.scraper.actions.utils.paths as action_paths
+
+    naming("{text}.{ext}", "short", *options)
+    # over Windows' limit with "_71" added, so that gets shortened, unless --original
+    target = tmp_path / "a.jpg"
+    target = target.with_name("a" * (280 - len(str(target))) + ".jpg")
+    target.write_bytes(b"another file")
+    temp = tmp_path / "dl.part"
+    temp.write_bytes(b"this download")
+    media = SimpleNamespace(id=71, post_id=8, model_id=1, username="u")
+    got = action_paths.moveHelper(temp, target, media)
+    whole = target.with_name(f"{target.stem}_71.jpg")
+    assert (got == whole) == bool(options)
+    assert got.suffix == ".jpg" and got.read_bytes() == b"this download"

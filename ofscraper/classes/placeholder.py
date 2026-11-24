@@ -170,11 +170,7 @@ class tempFilePlaceholder(basePlaceholder):
         # if env.getattr("ALLOW_DUPE_MEDIA"):
         #     file=f"{''.join(random.choice(string.ascii_letters + string.digits) for _ in range(6))}{file}"
         script_name = await naming_script(dir, file, self._ele)
-        if not script_name:
-            self._tempfilepath = paths.truncate(pathlib.Path(dir, file))
-        else:
-            self._tempfilepath = paths.truncate(pathlib.Path(script_name))
-
+        self._tempfilepath = final_path(script_name or pathlib.Path(dir, file))
         return self
 
     @basePlaceholder.async_wrapper
@@ -452,7 +448,7 @@ class Placeholders(basePlaceholder):
 
     @property
     def trunicated_filedir(self):
-        return pathlib.Path(paths.truncate(self._filepath)).parent
+        return pathlib.Path(self.trunicated_filepath).parent
 
     @property
     def size(self):
@@ -617,4 +613,4 @@ class Textholders(basePlaceholder):
 
     @property
     def filedir(self):
-        return pathlib.Path(paths.truncate(self._filepath)).parent
+        return pathlib.Path(self.trunicated_filepath).parent
