@@ -15,12 +15,20 @@ from ofscraper.classes.of.models import Model
 from ofscraper.sites.fansly import normalize, pipeline
 
 CREATOR_ID, CREATOR = 123, "a_creator"
+# skip_unavailable_content (on by default) skips the wall: only messages and
+# purchases are scanned
 OF_LINE = (
-    f"[{CREATOR}] subscription not active: only free posts and purchases can be downloaded"
+    f"[{CREATOR}] subscription not active: only messages and purchases are scanned"
+    " (skip_unavailable_content)"
+)
+# with it off the wall is scanned too, and its free posts can be downloaded
+OF_WALL_LINE = (
+    f"[{CREATOR}] subscription not active: only free posts, messages and purchases"
+    " can be downloaded"
 )
 FANSLY_LINE = (
-    f"[{CREATOR}] subscription not active: only public posts, follower posts and"
-    " purchases can be downloaded"
+    f"[{CREATOR}] subscription not active: only public posts, follower posts,"
+    " messages and purchases can be downloaded"
 )
 
 
@@ -79,7 +87,12 @@ def scan(ele, caplog):
 
 
 def test_expired_onlyfans_subscription_is_named(site, caplog):
+    site.skip_unavailable_content = True
     assert scan(onlyfans_model(days_left=-30), caplog) == [OF_LINE]
+
+
+def test_expired_onlyfans_subscription_with_the_wall_scanned(site, caplog):
+    assert scan(onlyfans_model(days_left=-30), caplog) == [OF_WALL_LINE]
 
 
 def test_active_onlyfans_subscription_says_nothing(site, caplog):

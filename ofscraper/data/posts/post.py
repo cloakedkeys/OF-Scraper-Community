@@ -562,10 +562,13 @@ def log_inactive_subscription(ele, username):
     if ele.active:
         return
     if sites.is_fansly():
-        visible = "public posts, follower posts and purchases"
+        found = "public posts, follower posts, messages and purchases can be downloaded"
+    elif skip_wall(ele):
+        # process_tasks skips the wall: messages and purchases are left
+        found = "messages and purchases are scanned (skip_unavailable_content)"
     else:
-        visible = "free posts and purchases"
-    log.info(f"[{username}] subscription not active: only {visible} can be downloaded")
+        found = "free posts, messages and purchases can be downloaded"
+    log.info(f"[{username}] subscription not active: only {found}")
 
 
 def log_skipped_wall(username):
