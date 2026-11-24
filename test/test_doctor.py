@@ -206,13 +206,17 @@ def test_folders_and_the_free_space_limit(home, tmp_path, monkeypatch):
     report = doctor.run()
     assert result(report, "save folder") == ("FAIL", f"{save} isn't there")
     save.mkdir()
-    monkeypatch.setenv("OFSC_DISK_SPACE_CHECK_PATH", str(save))
+    # of_env reads OFSC_DISK_SPACE_CHECK_PATH once, so the value is given here
+    check_path = {"value": str(save)}
+    real_getattr = doctor.of_env.getattr
+    monkeypatch.setattr(doctor.of_env, "getattr",
+                        lambda key, *a, **k: check_path["value"] if key == "DISK_SPACE_CHECK_PATH" else real_getattr(key, *a, **k))
     report = doctor.run()
     assert result(report, "save folder")[0] == "PASS"
-    assert result(report, "free-space limit")[1].startswith("1000 bytes")
+    assert result(report, "free-space limit")[1].startswith(f"1000 bytes, measured at {save}")
     real = doctor._device
     monkeypatch.setattr(doctor, "_device", lambda p: 1 if str(p) == str(save) else real(p) and 2)
-    monkeypatch.setenv("OFSC_DISK_SPACE_CHECK_PATH", str(tmp_path))
+    check_path["value"] = str(tmp_path)
     status, detail = result(doctor.run(), "free-space limit")
     assert status == "WARN" and "OFSC_DISK_SPACE_CHECK_PATH" in detail
 
