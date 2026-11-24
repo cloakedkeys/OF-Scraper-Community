@@ -117,3 +117,17 @@ def test_a_bare_trailing_dot_is_not_an_extension(end):
     assert paths._split_ext(name) == (name, "")
     assert not cut(f"{FOLDER}\\{name}").name.endswith(".")
     assert not paths._linux_truncateHelper(f"/data/{name}").name.endswith(".")
+
+
+@pytest.mark.parametrize("root", ["C:\\", "\\\\server\\share\\"])
+def test_a_name_in_a_drive_or_share_root_gets_all_of_max_path(root):
+    # the root already ends with its backslash: it isn't counted twice
+    out = cut(f"{root}{'a' * 300}.txt")
+    assert windows_chars(out) == 259 and str(out.parent) == root
+
+
+def test_a_linux_extension_over_the_name_limit_says_so(monkeypatch):
+    # nothing of the name to keep, and the extension alone is too long
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "3")
+    with pytest.raises(ValueError, match="no room"):
+        paths._linux_truncateHelper("/data/.txt")
