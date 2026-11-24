@@ -219,7 +219,8 @@ def _guard(found):
 def _to_reset(found, options):
     """The media --apply resets, and the files it moves aside as
     [path, new name]."""
-    resetting, moving = [], []
+    # a file several media record is moved aside once
+    resetting, moving = [], set()
     wanted = {MISSING, EMPTY}
     if options["reset_size_differs"]:
         wanted.add(SIZE_DIFFERS)
@@ -231,7 +232,7 @@ def _to_reset(found, options):
         resetting.append(media_id)
         for path, (finding, _) in entry["paths"].items():
             if finding in wanted - {MISSING}:
-                moving.append(path)
+                moving.add(path)
     return resetting, [[path, _bad_name(path)] for path in sorted(moving)]
 
 
@@ -552,9 +553,14 @@ def _read_undo(undo_file):
 
 def _renames_to_undo(renames):
     """The renames still to be put back: the undo file lists each before
-    it's done, so one that wasn't done, or was put back, is passed over."""
-    return [[path, target] for path, target in renames
-            if os.path.lexists(target) and not os.path.lexists(path)]
+    it's done, so one that wasn't done, or was put back, is passed over, as
+    is one listed twice."""
+    to_undo, seen = [], set()
+    for path, target in renames:
+        if (path, target) not in seen and os.path.lexists(target) and not os.path.lexists(path):
+            seen.add((path, target))
+            to_undo.append([path, target])
+    return to_undo
 
 
 def _rename_back(renames):

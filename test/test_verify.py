@@ -217,6 +217,46 @@ def test_a_media_in_several_posts_has_every_row_reset_and_restored(tmp_path):
     assert downloaded(db) == before
 
 
+def one_empty_file_for_two_media(tmp_path):
+    return make_library(tmp_path, [
+        (1, 100, "shared.jpg", 3, b"", "Timeline", {}),
+        (2, 101, "shared.jpg", 3, b"", "Timeline", {}),
+        (3, 102, "ok.jpg", 3, b"abc", "Timeline", {}),
+    ])
+
+
+def test_two_media_with_one_empty_file_move_it_aside_once(tmp_path):
+    db, lib = one_empty_file_for_two_media(tmp_path)
+    before = downloaded(db)
+    (creator,) = verify.verify([db], apply=True)["creators"]
+    assert creator["media_reset"] == 2 and creator["files_moved_aside"] == 1
+    assert by_media_id(db) == {1: 0, 2: 0, 3: 1}
+    assert sorted(p.name for p in lib.iterdir()) == ["ok.jpg", "shared.jpg.bad"]
+    undo_file = creator["undo_file"]
+    with open(undo_file, encoding="utf-8") as undo:
+        assert json.load(undo)["renames"] == [[str(lib / "shared.jpg"), str(lib / "shared.jpg.bad")]]
+
+    done = verify.undo(undo_file, apply=True)
+    assert (done["rows_to_restore"], done["files_to_rename_back"]) == (2, 1)
+    assert downloaded(db) == before
+    assert sorted(p.name for p in lib.iterdir()) == ["ok.jpg", "shared.jpg"]
+
+
+def test_an_undo_file_naming_one_rename_twice_puts_the_file_back_once(tmp_path):
+    db, lib = one_empty_file_for_two_media(tmp_path)
+    before = downloaded(db)
+    undo_file = verify.verify([db], apply=True)["creators"][0]["undo_file"]
+    with open(undo_file, encoding="utf-8") as undo:
+        record = json.load(undo)
+    record["renames"] *= 2
+    with open(undo_file, "w", encoding="utf-8") as undo:
+        json.dump(record, undo)
+
+    assert verify.undo(undo_file, apply=True)["files_to_rename_back"] == 1
+    assert downloaded(db) == before
+    assert sorted(p.name for p in lib.iterdir()) == ["ok.jpg", "shared.jpg"]
+
+
 def test_undo_puts_files_back(library):
     db, lib = library
     before = downloaded(db)

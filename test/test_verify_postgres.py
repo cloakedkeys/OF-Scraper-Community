@@ -161,6 +161,23 @@ def test_an_undo_that_fails_partway_puts_the_renames_back(library, server, tmp_p
     assert verify.undo_postgres(URL, "5", undo_file, apply=True)["files_to_rename_back"] == 2
 
 
+def test_two_media_with_one_empty_file_move_it_aside_once(server, tmp_path):
+    from test.test_verify import one_empty_file_for_two_media
+
+    _, lib = one_empty_file_for_two_media(tmp_path)
+    server.bring_in(tmp_path / ".data", tmp_path / "staging")
+    before = medias(URL)
+    undo_dir = tmp_path / "undo"
+    undo_dir.mkdir()
+    (creator,) = verify.verify_postgres(URL, "5", apply=True, undo_dir=undo_dir)["creators"]
+    assert creator["media_reset"] == 2 and creator["files_moved_aside"] == 1
+    assert sorted(p.name for p in lib.iterdir()) == ["ok.jpg", "shared.jpg.bad"]
+    done = verify.undo_postgres(URL, "5", creator["undo_file"], apply=True)
+    assert (done["rows_to_restore"], done["files_to_rename_back"]) == (2, 1)
+    assert medias(URL) == before
+    assert sorted(p.name for p in lib.iterdir()) == ["ok.jpg", "shared.jpg"]
+
+
 def test_apply_skips_a_creator_without_a_medias_table(library, server, tmp_path, monkeypatch):  # noqa: F811
     import ofscraper.db.creator_rows as creator_rows
 
