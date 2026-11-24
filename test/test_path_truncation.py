@@ -18,6 +18,12 @@ def windows_sizes(monkeypatch):
     monkeypatch.delenv("UTF", raising=False)
 
 
+def cut(path):
+    """The Windows helper's result, read as Windows reads it: CI runs on
+    Linux, where a backslash isn't a folder separator."""
+    return pathlib.PureWindowsPath(str(paths._windows_truncateHelper(path)))
+
+
 def windows_chars(path):
     """MAX_PATH counts UTF-16 code units: an emoji takes two."""
     return len(str(path).encode("utf-16-le")) // 2
@@ -25,20 +31,20 @@ def windows_chars(path):
 
 @pytest.mark.parametrize("ext", [".mp4", ".txt", "_1.jpg"])
 def test_a_long_windows_path_fits_in_max_path(ext):
-    out = paths._windows_truncateHelper(f"{FOLDER}\\2026-10-31 {CAPTION}{ext}")
+    out = cut(f"{FOLDER}\\2026-10-31 {CAPTION}{ext}")
     assert windows_chars(out) <= 259
     assert out.name.endswith(ext) and str(out.parent) == FOLDER
 
 
 def test_the_cut_keeps_as_much_of_the_name_as_fits():
-    out = paths._windows_truncateHelper(f"{FOLDER}\\{'a' * 300}.txt")
+    out = cut(f"{FOLDER}\\{'a' * 300}.txt")
     # 259 characters exactly: one more letter would not fit
     assert windows_chars(out) == 259
 
 
 def test_a_path_that_fits_is_left_alone():
     path = f"{FOLDER}\\2026-10-31 short.mp4"
-    assert str(paths._windows_truncateHelper(path)) == path
+    assert str(cut(path)) == path
 
 
 @pytest.mark.parametrize("name, kept", [
@@ -48,13 +54,13 @@ def test_a_path_that_fits_is_left_alone():
     ("wordytxt " + "b" * 300 + ".txt", "wordytxt "),
 ])
 def test_only_the_real_extension_is_removed(name, kept):
-    out = paths._windows_truncateHelper(f"{FOLDER}\\{name}")
+    out = cut(f"{FOLDER}\\{name}")
     assert out.name.startswith(kept)
 
 
 def test_a_folder_too_long_for_any_name_says_so():
     with pytest.raises(ValueError, match="folder"):
-        paths._windows_truncateHelper(f"C:\\{'d' * 300}\\name.txt")
+        cut(f"C:\\{'d' * 300}\\name.txt")
 
 
 def test_a_long_linux_name_fits_in_the_name_limit():

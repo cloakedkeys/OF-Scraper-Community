@@ -1,4 +1,5 @@
 import logging
+import ntpath
 import os
 import pathlib
 import platform
@@ -96,27 +97,29 @@ def _longest_fitting(text, size, max_size):
 
 
 def _windows_truncateHelper(path):
-    path = pathlib.Path(os.path.normpath(path))
+    # read by Windows' rules whatever system this runs on (the same thing on
+    # Windows), so the tests check it on Linux too
+    path = pathlib.PureWindowsPath(ntpath.normpath(path))
     limit = of_env.getattr("WINDOWS_MAX_PATH_BYTES")
     if get_string_byte_size_windows(path) <= limit:
-        return path
+        return pathlib.Path(str(path))
     dir = path.parent
     file, ext = _split_ext(path.name)
     # the whole path counts: the folder, the separator after it, the extension
     max_bytes = (
         limit
         - get_string_byte_size_windows(dir)
-        - get_string_byte_size_windows(os.sep)
+        - get_string_byte_size_windows(ntpath.sep)
         - get_string_byte_size_windows(ext)
     )
     if max_bytes <= 0:
         raise ValueError(f"the folder is too long for any file name to fit: {path}")
     newFile = f"{_longest_fitting(file, get_string_byte_size_windows, max_bytes)}{ext}"
-    final_path = pathlib.Path(dir, newFile)
+    final_path = pathlib.PureWindowsPath(dir, newFile)
     log.debug(
         f"path: {path} filepath bytesize: {get_string_byte_size_windows(final_path)}"
     )
-    return final_path
+    return pathlib.Path(str(final_path))
 
 
 def _mac_truncateHelper(path):
