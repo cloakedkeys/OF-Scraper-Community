@@ -170,7 +170,10 @@ class PostCollection:
         hint = ""
         if downloaded:
             reasons.insert(0, f"{downloaded} already downloaded")
-            hint = " (--force-all downloads them again, or manual --url for one post)"
+            if settings.get_settings().command == "metadata":
+                hint = " (--force-all updates their metadata too)"
+            else:
+                hint = " (--force-all downloads them again, or manual --url for one post)"
         total = downloaded + sum(totals.values())
         log.info(
             f"[{self.username}] {total} media left out: {', '.join(reasons)}{hint}"

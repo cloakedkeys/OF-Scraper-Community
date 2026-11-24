@@ -141,3 +141,20 @@ def test_force_all_leaves_nothing_out_as_downloaded(run_with, monkeypatch, caplo
     with caplog.at_level(logging.INFO):
         assert len(collect([item(1, "a")]).get_media_to_download()) == 1
     assert skip_lines(caplog) == []
+
+
+def test_metadata_run_hint_says_force_all_checks_them_again(run_with, monkeypatch, caplog):
+    merged = run_with()
+    merged.command = "metadata"  # the metadata command downloads nothing
+    monkeypatch.setattr(filters, "downloaded_media_ids", lambda **k: {10})
+    collection = PostCollection(model_id=MODEL_ID, username=USERNAME)
+    collection.add_posts(
+        [posts_.Post(i, MODEL_ID, USERNAME, "Timeline") for i in [item(1, "a"), item(2, "b")]],
+        actions=["metadata"],
+    )
+    with caplog.at_level(logging.INFO):
+        assert [m.id for m in collection.get_media_for_processing()] == [20]
+    assert skip_lines(caplog) == [
+        "[a_creator] 1 media left out: 1 already downloaded"
+        " (--force-all updates their metadata too)"
+    ]
