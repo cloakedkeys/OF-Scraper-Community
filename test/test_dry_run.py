@@ -80,7 +80,10 @@ def library(monkeypatch, tmp_path):
     cache.set("scan_mark", "real", auto_close=True)
     cache.cache.close()
     cache.cache = None
+    dry_run.reset()
     yield SimpleNamespace(root=tmp_path, profile=profile, settings=s)
+    # runs even when the test failed, so counts never leak into the next test
+    dry_run.reset()
     dry_run.cleanup()
     if cache.cache is not None:
         cache.cache.close()
@@ -185,7 +188,6 @@ def test_download_is_counted_not_run(monkeypatch, library, event_loop_for_app):
     monkeypatch.setitem(library.settings, "dry_run", False)
     download.download_process("a creator", 5, [object()], [])
     assert called and called[-1] == "dupes"
-    dry_run.reset()
 
 
 def test_report_says_size_limits_are_not_applied(monkeypatch, library):
