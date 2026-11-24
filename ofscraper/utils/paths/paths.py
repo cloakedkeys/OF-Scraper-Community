@@ -105,11 +105,13 @@ def _windows_truncateHelper(path):
         return pathlib.Path(str(path))
     dir = path.parent
     file, ext = _split_ext(path.name)
-    # the whole path counts: the folder, the separator after it, the extension
+    # the whole path counts: the folder, the separator after it (a drive or
+    # share root such as C:\ already ends with one), the extension
+    sep = "" if str(dir).endswith(ntpath.sep) else ntpath.sep
     max_bytes = (
         limit
         - get_string_byte_size_windows(dir)
-        - get_string_byte_size_windows(ntpath.sep)
+        - get_string_byte_size_windows(sep)
         - get_string_byte_size_windows(ext)
     )
     name = _longest_fitting(file, get_string_byte_size_windows, max_bytes)
@@ -148,7 +150,7 @@ def _linux_truncateHelper(path):
         ext
     )
     name = _longest_fitting(file, get_string_byte_size_unix, max_bytes)
-    if file and not name:
+    if (file and not name) or max_bytes < 0:
         raise ValueError(f"the name limit leaves no room for any of the name: {path}")
     newFile = f"{name}{ext}"
     log.debug(f"path: {path} filename bytesize: {get_string_byte_size_unix(newFile)}")
