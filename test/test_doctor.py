@@ -462,3 +462,30 @@ def test_key_mode_cdrm_with_a_server_of_your_own(home, monkeypatch):
     status, detail = result(doctor.run(), "key files")
     assert status == "WARN" and "doesn't work" not in detail
     assert "127.0.0.1" in detail and "cookies" in detail and SECRET not in detail
+
+
+def test_key_files_that_name_a_folder(home, tmp_path):
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    (keys / "client_id.bin").write_bytes(b"c")
+    (keys / "private_key.pem").write_bytes(b"k")
+    status, detail = manual_keys(home, keys, keys / "private_key.pem")
+    assert status == "FAIL"
+    assert "client-id is a folder, not a file: client_id.bin is in it" in detail
+
+
+def test_key_files_named_in_another_case(home, tmp_path):
+    (tmp_path / "Client_ID.bin").write_bytes(b"c")
+    (tmp_path / "DEVICE_PRIVATE_KEY").write_bytes(b"k")
+    status, detail = manual_keys(home, tmp_path / "client_id.bin", tmp_path / "private_key.pem")
+    assert status == "FAIL"
+    assert "client-id: no file at that name, but Client_ID.bin is in that folder" in detail
+    assert "private-key: no file at that name, but DEVICE_PRIVATE_KEY is in that folder" in detail
+
+
+def test_a_json_key_file_with_a_bom(home, tmp_path):
+    client, key = tmp_path / "client_id.bin", tmp_path / "private_key.pem"
+    client.write_bytes(b"\xef\xbb\xbf  {\"client_id\": \"abc\"}")
+    key.write_bytes(b"not a key")
+    status, detail = manual_keys(home, client, key)
+    assert status == "FAIL" and "client-id looks like a JSON file, not a key file" in detail

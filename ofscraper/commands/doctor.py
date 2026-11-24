@@ -227,11 +227,20 @@ def _key_file_hint(name, value):
     if value.startswith("~"):
         return f"{name} starts with ~, which isn't expanded: use the full path"
     path = pathlib.Path(value)
+    if path.is_dir():
+        try:
+            inside = sorted(f.name for f in path.iterdir() if f.is_file() and f.name.lower() in KEY_FILE_NAMES[name])
+        except OSError:
+            inside = []
+        found = f": {', '.join(inside)} {'is' if len(inside) == 1 else 'are'} in it" if inside else ""
+        return f"{name} is a folder, not a file{found}"
+    # in any case: on Linux and in Docker, Client_ID.bin isn't client_id.bin
+    stem, whole = path.stem.lower(), path.name.lower()
     try:
         beside = sorted(
             f.name for f in path.parent.iterdir()
             if f.is_file() and f.name != path.name
-            and (f.name in KEY_FILE_NAMES[name] or path.stem in (f.stem, f.name) or f.stem == path.name)
+            and (f.name.lower() in KEY_FILE_NAMES[name] or stem in (f.stem.lower(), f.name.lower()) or f.stem.lower() == whole)
         )
     except OSError:
         return None
@@ -244,9 +253,11 @@ def _key_content_hint(name, value):
     """What a key file that can't be loaded looks like instead, if it's clear."""
     try:
         with open(str(value).strip(), "rb") as file:
-            start = file.read(64).lstrip()
+            start = file.read(64)
     except OSError:
         return None
+    # a JSON file saved by Notepad starts with a byte order mark
+    start = start.removeprefix(b"\xef\xbb\xbf").lstrip()
     if start.startswith(b"{"):
         return f"{name} looks like a JSON file, not a key file"
     if name == "client-id" and start.startswith(b"-----BEGIN"):
@@ -258,10 +269,12 @@ def _key_content_hint(name, value):
 
 def _keys_in_auth_file(folder):
     """The key settings put in auth.json instead of config.json; names only."""
+    import ofscraper.utils.encoding as encoding
+
     if folder is None:
         return []
     try:
-        auth = json.loads((folder / of_env.getattr("authFile")).read_text(encoding="utf-8-sig"))
+        auth = json.loads(encoding.read_text_file(folder / of_env.getattr("authFile")))
     except (OSError, ValueError):
         return []
     if not isinstance(auth, dict):
