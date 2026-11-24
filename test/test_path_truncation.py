@@ -107,3 +107,13 @@ def test_a_linux_name_with_no_room_for_a_character_says_so(monkeypatch):
     monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "10")
     with pytest.raises(ValueError, match="no room"):
         paths._linux_truncateHelper(f"/data/{'💀' * 100}.txt")
+
+
+@pytest.mark.parametrize("end", [" fine.", " fine_1."])
+def test_a_bare_trailing_dot_is_not_an_extension(end):
+    # a caption ending in "." has no extension: the dot is cut with the rest
+    # rather than kept on the end, where Windows would drop it anyway
+    name = f"2026-10-31 {CAPTION * 3}{end}"
+    assert paths._split_ext(name) == (name, "")
+    assert not cut(f"{FOLDER}\\{name}").name.endswith(".")
+    assert not paths._linux_truncateHelper(f"/data/{name}").name.endswith(".")
