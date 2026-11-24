@@ -73,8 +73,8 @@ def library(monkeypatch, tmp_path):
     profile = tmp_path / "cfg" / "main_profile"
     monkeypatch.setattr(common_paths, "get_profile_path", lambda *a, **k: profile)
     s = settings.get_settings()
-    monkeypatch.setattr(s, "cached_disabled", False, raising=False)
-    monkeypatch.setattr(s, "dry_run", False, raising=False)
+    monkeypatch.setitem(s, "cached_disabled", False)
+    monkeypatch.setitem(s, "dry_run", False)
     monkeypatch.setattr(cache, "cache", None)
     make_db(profile / ".data" / "a creator" / "user_data.db")
     cache.set("scan_mark", "real", auto_close=True)
@@ -90,7 +90,7 @@ def library(monkeypatch, tmp_path):
 def test_dry_run_changes_nothing(library, monkeypatch):
     # Given a library with a creator's database and a cache
     before = snapshot(library.root)
-    monkeypatch.setattr(library.settings, "dry_run", True)
+    monkeypatch.setitem(library.settings, "dry_run", True)
 
     # When a dry run's scan writes to the database and the cache, as a scan does
     real = library.profile / ".data" / "a creator" / "user_data.db"
@@ -114,14 +114,14 @@ def test_dry_run_changes_nothing(library, monkeypatch):
     assert not copy.exists()
 
     # and a normal run afterwards uses the real files, as they were
-    monkeypatch.setattr(library.settings, "dry_run", False)
+    monkeypatch.setitem(library.settings, "dry_run", False)
     assert placeholder.databasePlaceholder().databasePathHelper(5, "a creator") == real
     assert media_ids(real) == [1]
     assert cache.get("scan_mark") == "real"
 
 
 def test_copies_are_removed_after_an_error(library, monkeypatch):
-    monkeypatch.setattr(library.settings, "dry_run", True)
+    monkeypatch.setitem(library.settings, "dry_run", True)
     copy = placeholder.databasePlaceholder().databasePathHelper(5, "a creator")
     root = dry_run._root
     assert copy.exists() and root.exists()
@@ -144,7 +144,7 @@ def test_copy_includes_rows_still_in_the_write_ahead_log(library, monkeypatch):
         )
         keep_open.commit()
         assert (real.parent / "user_data.db-wal").stat().st_size > 0
-        monkeypatch.setattr(library.settings, "dry_run", True)
+        monkeypatch.setitem(library.settings, "dry_run", True)
         copy = placeholder.databasePlaceholder().databasePathHelper(5, "a creator")
         assert media_ids(copy) == [1, 3]
 
@@ -171,25 +171,25 @@ def test_download_is_counted_not_run(monkeypatch, library, event_loop_for_app):
 
     monkeypatch.setattr(download, "process_dicts", process_dicts)
     monkeypatch.setattr(download, "remove_downloads_with_hashes", lambda *a: called.append("dupes"))
-    monkeypatch.setattr(library.settings, "text_only", False, raising=False)
-    monkeypatch.setattr(library.settings, "size_max", None, raising=False)
-    monkeypatch.setattr(library.settings, "size_min", None, raising=False)
-    monkeypatch.setattr(library.settings, "skip_download_script", None, raising=False)
+    monkeypatch.setitem(library.settings, "text_only", False)
+    monkeypatch.setitem(library.settings, "size_max", None)
+    monkeypatch.setitem(library.settings, "size_min", None)
+    monkeypatch.setitem(library.settings, "skip_download_script", None)
     dry_run.reset()
 
-    monkeypatch.setattr(library.settings, "dry_run", True)
+    monkeypatch.setitem(library.settings, "dry_run", True)
     assert download.download_process("a creator", 5, [object(), object()], []) == (0, 0, 0, 0, 0)
     assert called == []
     assert dry_run.data()["to_download"] == 2
 
-    monkeypatch.setattr(library.settings, "dry_run", False)
+    monkeypatch.setitem(library.settings, "dry_run", False)
     download.download_process("a creator", 5, [object()], [])
     assert called and called[-1] == "dupes"
     dry_run.reset()
 
 
 def test_report_says_size_limits_are_not_applied(monkeypatch, library):
-    monkeypatch.setattr(library.settings, "size_max", 1000, raising=False)
+    monkeypatch.setitem(library.settings, "size_max", 1000)
     dry_run.reset()
     assert "aren't applied" in dry_run.report()
     assert dry_run.data()["limits_not_applied"] == ["size_max"]
@@ -223,7 +223,7 @@ def report_env(monkeypatch, library):
 
     monkeypatch.setattr(placeholder_module, "Placeholders", FakePlaceholders)
     for name in ("size_max", "size_min", "skip_download_script"):
-        monkeypatch.setattr(library.settings, name, None, raising=False)
+        monkeypatch.setitem(library.settings, name, None)
     dry_run.reset()
     yield built
     dry_run.reset()
@@ -291,8 +291,8 @@ def test_naming_script_runs_only_outside_a_dry_run(monkeypatch, library, tmp_pat
 
     script = tmp_path / "name.py"
     script.write_text("", encoding="utf-8")
-    monkeypatch.setattr(library.settings, "naming_script", str(script), raising=False)
-    monkeypatch.setattr(library.settings, "dry_run", dry)
+    monkeypatch.setitem(library.settings, "naming_script", str(script))
+    monkeypatch.setitem(library.settings, "dry_run", dry)
     ran = []
 
     async def async_run(*a, **k):
@@ -325,10 +325,10 @@ def test_naming_script_runs_only_outside_a_dry_run(monkeypatch, library, tmp_pat
 def test_scripts_run_only_outside_a_dry_run(monkeypatch, library, tmp_path, run_script, dry):
     script = tmp_path / "script.py"
     script.write_text("", encoding="utf-8")
-    monkeypatch.setattr(library.settings, "after_action_script", str(script), raising=False)
-    monkeypatch.setattr(library.settings, "post_script", str(script), raising=False)
-    monkeypatch.setattr(library.settings, "command", "scraper", raising=False)
-    monkeypatch.setattr(library.settings, "dry_run", dry)
+    monkeypatch.setitem(library.settings, "after_action_script", str(script))
+    monkeypatch.setitem(library.settings, "post_script", str(script))
+    monkeypatch.setitem(library.settings, "command", "scraper")
+    monkeypatch.setitem(library.settings, "dry_run", dry)
     models = SimpleNamespace(
         get_processed=lambda a: set(),
         get_unprocessed=lambda a: [],
@@ -350,8 +350,8 @@ def test_leftover_part_files_are_kept_in_a_dry_run(monkeypatch, library, tmp_pat
     part.parent.mkdir()
     part.write_bytes(b"x")
     monkeypatch.setattr(paths.data, "get_TempDir", lambda *a, **k: str(part.parent))
-    monkeypatch.setattr(library.settings, "auto_resume", False, raising=False)
-    monkeypatch.setattr(library.settings, "dry_run", dry)
+    monkeypatch.setitem(library.settings, "auto_resume", False)
+    monkeypatch.setitem(library.settings, "dry_run", dry)
     real_getattr = paths.of_env.getattr
     monkeypatch.setattr(
         paths.of_env, "getattr",
@@ -366,10 +366,10 @@ def test_fansly_scans_everything_first_in_a_dry_run(monkeypatch, library):
     for name, value in {
         "command": "scraper", "actions": ["download"], "users_first": False, "text_only": False,
     }.items():
-        monkeypatch.setattr(library.settings, name, value, raising=False)
-    monkeypatch.setattr(library.settings, "dry_run", False)
+        monkeypatch.setitem(library.settings, name, value)
+    monkeypatch.setitem(library.settings, "dry_run", False)
     assert pipeline.applies()
-    monkeypatch.setattr(library.settings, "dry_run", True)
+    monkeypatch.setitem(library.settings, "dry_run", True)
     assert not pipeline.applies()
 
 
