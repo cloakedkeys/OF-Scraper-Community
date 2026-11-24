@@ -222,7 +222,9 @@ def _write_post_text(naming, monkeypatch, file_format, caption, post_id, *option
     asyncio.run(text.get_text("u", [make_post(caption, 0, post_id=post_id)]))
 
 
-@pytest.mark.parametrize("file_format", ["{post_id}.{ext}", "{date}_{post_id}.{ext}"])
+@pytest.mark.parametrize(
+    "file_format", ["{post_id}.{ext}", "{date}_{post_id}.{ext}", "{postid}.{ext}"]
+)
 def test_a_name_with_the_post_id_is_that_posts_own_file(
     naming, monkeypatch, tmp_path, file_format
 ):
