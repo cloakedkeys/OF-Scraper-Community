@@ -27,7 +27,7 @@ The JSON report includes:
 | `to_rename`, `unchanged`, `already_there` | How many files get a new name, already have it, or were renamed by an earlier run that stopped |
 | `renames` | The first 20 renames, old and new path (`--sample N` for more, `--sample 0` for all) |
 | `left` | Every file that keeps its name, with the reason |
-| `undo_file` | With `--apply`, the undo file written beside the database |
+| `undo_file` | With `--apply`, the undo file written beside the database (none when nothing was changed) |
 
 ## How the new names are made
 
@@ -49,13 +49,15 @@ Each file is handled on its own:
 | Where the file is | What happens |
 |---|---|
 | At the old place, and the new place is free | Renamed, and its database rows updated |
-| Already at the new place (renamed by a run that stopped) | Only the rows are updated, if the size matches the recorded size |
+| Already at the new place (renamed by a run that stopped) | Only the rows are updated, if it is a file of the recorded size |
 | At the old place, and something is at the new place | Left and listed; nothing is replaced |
 | The new place is another file's new name too, or another row records it | Left and listed |
 | At neither place | Listed |
 
 - **No file is replaced or deleted.** A rename is never made onto an existing file. The command touches only the files the database records for that creator: `.txt` post text, unfinished `.part` files and anything else in the folders stay where they are.
 - **Empty folders:** old folders the renames leave empty are removed, up to the save location.
+- **Rows of other media:** a row with `downloaded = 0` that records the same file for another media (see `recover_collisions`) keeps its name.
+- **Names that differ only in case:** on a disk that doesn't tell case apart (Windows, macOS), a new name that differs only in case is still made, and the rows that spell one file in different cases are handled as that one file.
 - **Moves between disks:** a new name on another disk (after changing `save_location`) can't be made with a rename. Such files are listed.
 - **Swaps:** if one file's new name is another file's old one, run the command again after the first run. A pair that swap names stay as they are.
 - **Stash and other tools** that index files by path need a rescan afterwards.

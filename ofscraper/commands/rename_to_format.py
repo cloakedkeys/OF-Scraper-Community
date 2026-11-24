@@ -39,6 +39,7 @@ import logging
 import os
 import re
 import sqlite3
+import stat
 import sys
 import uuid
 from collections import Counter, defaultdict
@@ -69,6 +70,7 @@ RECORDED = "another row records the new place"
 SAME_TARGET = "another file would get the same new name"
 NOT_FOUND = "not at the old place, and not at the new one"
 OTHER_SIZE = "not at the old place; the file at the new place doesn't have the size the row records"
+NOT_A_FILE = "not at the old place; what is at the new place isn't a file"
 MEDIA = ["rowid", "media_id", "post_id", "link", "directory", "filename", "size",
          "api_type", "media_type", "created_at", "posted_at", "downloaded", "model_id"]
 # the tables a media's post can be in, by the area it came from
@@ -261,6 +263,8 @@ def scraper_settings(config=None, profile=None, site=sites.DEFAULT_SITE):
         settings.settings = {}
         path = Path(common_paths.get_config_path())
         try:
+            # checked as the scraper's config_context checks it (json.loads): a
+            # run refuses the same files, and asks to fix them
             config_file.unwrap(json.loads(encoding.read_text_file(path)))
         except FileNotFoundError:
             raise ValueError(f"There is no config.json at {path}: the formats are read from it. Give --config") from None
@@ -425,14 +429,18 @@ def plan(conn, settings, username=None, path_root=None):
         "left": [], "renames": [], "renamed": 0, "rows_changed": 0, "folders_removed": [],
         "undo_file": None,
     }
-    # each recorded file once, with every row that records it
+    # each recorded file once, with every row that records it, however
+    # they spell it on a disk that tells some spellings apart only
+    key = _path_key()
     files = defaultdict(list)
     for row in recorded:
         old = mover._full(Path(row["directory"], row["filename"]), path_root)
-        files[old].append(row)
-    taken_by_rows = {os.path.normcase(old) for old in files}
+        files[key(old)].append((old, row))
+    taken_by_rows = set(files)
     planned = []
-    for old, rows in sorted(files.items()):
+    for found in sorted(files.values(), key=lambda found: min(old for old, _row in found)):
+        old = min(old for old, _row in found)
+        rows = [row for _old, row in found]
         if not any(row["downloaded"] for row in rows):
             continue
         result["files"] += 1
@@ -450,27 +458,33 @@ def plan(conn, settings, username=None, path_root=None):
         if new == old:
             result["unchanged"] += 1
             continue
+        # a row of another media that records this file (downloaded = 0: a
+        # collision gave its place to this one) keeps its name
+        downloaded = {row["media_id"] for row in rows if row["downloaded"]}
         changes = [(row["rowid"], row["directory"], row["filename"], str(recorded_new.parent),
-                    recorded_new.name, row["size"]) for row in rows]
+                    recorded_new.name, row["size"]) for row in rows if row["media_id"] in downloaded]
         planned.append((old, new, changes))
 
     # a new place two files would get, or that another row records
-    targets = Counter(os.path.normcase(new) for _old, new, _rows in planned)
+    targets = Counter(key(new) for _old, new, _rows in planned)
     to_do = []
     for old, new, changes in planned:
-        if targets[os.path.normcase(new)] > 1:
+        at_old, at_new = _where(old, new)
+        if targets[key(new)] > 1:
             result["left"].append({"file": old, "why": SAME_TARGET, "new_place": new})
-        elif os.path.normcase(new) in taken_by_rows and os.path.normcase(new) != os.path.normcase(old):
+        elif key(new) in taken_by_rows and key(new) != key(old):
             result["left"].append({"file": old, "why": RECORDED, "new_place": new})
-        elif os.path.lexists(old):
-            if os.path.lexists(new) and not _same_file(old, new):
+        elif at_old:
+            if at_new and not _same_file(old, new):
                 result["left"].append({"file": old, "why": TAKEN, "new_place": new})
                 continue
             result["to_rename"] += 1
             to_do.append(("rename", old, new, changes))
-        elif not os.path.lexists(new):
+        elif not at_new:
             result["left"].append({"file": old, "why": NOT_FOUND})
-        elif {size for *_row, size in changes if size is not None} - {os.lstat(new).st_size}:
+        elif not _is_file(new):
+            result["left"].append({"file": old, "why": NOT_A_FILE, "new_place": new})
+        elif {size for *_row, size in changes if size is not None} - {os.stat(new).st_size}:
             result["left"].append({"file": old, "why": OTHER_SIZE, "new_place": new})
         else:
             result["already_there"] += 1
@@ -502,16 +516,78 @@ def _same_file(old, new):
         return False
 
 
+def _is_file(path):
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _two_names(old, new):
+    """`old` and `new`, one file, are two names of it (a hard link), not
+    one name spelt two ways on a disk that doesn't tell case apart."""
+    old_folder, new_folder = os.path.dirname(old), os.path.dirname(new)
+    if not _same_file(old_folder, new_folder):
+        return True
+    if os.path.basename(old) == os.path.basename(new):
+        return False
+    try:
+        names = os.listdir(old_folder)
+    except OSError:
+        return False
+    return os.path.basename(old) in names and os.path.basename(new) in names
+
+
+def _where(old, new):
+    """Whether the file is at its old place and at its new one. On a disk
+    that doesn't tell case apart, a name that differs only in case finds the
+    file under either spelling: it is where the spelling of its name says."""
+    at_old, at_new = os.path.lexists(old), os.path.lexists(new)
+    if at_old and at_new and _same_file(old, new) and not _two_names(old, new):
+        try:
+            spelt_new = os.path.basename(new) in os.listdir(os.path.dirname(new))
+        except OSError:
+            spelt_new = False
+        at_new = spelt_new and os.path.basename(new) != os.path.basename(old)
+        at_old = not at_new
+    return at_old, at_new
+
+
+def _path_key():
+    """A path as the disk tells paths apart: os.path.normcase, and lower
+    case on a disk that doesn't tell case apart (macOS's, whose normcase
+    keeps case). That is tried on the nearest folder that is there."""
+    folds = {}
+
+    def folds_case(folder):
+        if folder not in folds:
+            name, parent = os.path.basename(folder), os.path.dirname(folder)
+            if parent == folder:
+                folds[folder] = False
+            elif name.swapcase() != name and os.path.lexists(folder):
+                folds[folder] = _same_file(folder, os.path.join(parent, name.swapcase()))
+            else:
+                folds[folder] = folds_case(parent)
+        return folds[folder]
+
+    def key(path):
+        path = os.path.normcase(path)
+        return path.lower() if folds_case(os.path.dirname(path)) else path
+
+    return key
+
+
 def rename_file(old, new):
     """Rename `old` to `new`, which must be free: nothing is replaced."""
     os.makedirs(os.path.dirname(new), exist_ok=True)
     if _same_file(old, new):
-        if os.path.normcase(old).lower() == os.path.normcase(new).lower():
+        if _two_names(old, new):
+            # the link a stopped run made: the file is at its new place too
+            # (a rename of one name onto another of the same file does nothing)
+            os.unlink(old)
+        else:
             # only the case changes: the same file under its new name
             os.rename(old, new)
-        else:
-            # the link a stopped run made: the file is at its new place too
-            os.unlink(old)
         return
     if os.name == "nt" or os.path.islink(old):
         if os.path.lexists(new):
@@ -531,7 +607,14 @@ def rename_file(old, new):
             raise FileExistsError(_is_there(new)) from None
         os.rename(old, new)
         return
-    os.unlink(old)
+    try:
+        os.unlink(old)
+    except OSError:
+        # the file is left with its old name only
+        if os.path.lexists(old):
+            with contextlib.suppress(OSError):
+                os.unlink(new)
+        raise
 
 
 def _is_there(path):
@@ -543,7 +626,7 @@ def _remove_emptied(moved, root):
     removed = []
     for old in sorted({os.path.dirname(old) for old in moved}, key=len, reverse=True):
         folder = old
-        while os.path.commonpath([folder, root]) == root and folder != root:
+        while _inside(folder, root):
             try:
                 os.rmdir(folder)
             except OSError:
@@ -551,6 +634,17 @@ def _remove_emptied(moved, root):
             removed.append(folder)
             folder = os.path.dirname(folder)
     return removed
+
+
+def _inside(folder, root):
+    """`folder` is in `root`, at any depth: on another drive it isn't, and
+    a disk that doesn't tell case apart finds `root` however it is spelt."""
+    parent = os.path.dirname(folder)
+    while parent != folder:
+        if os.path.normcase(parent) == os.path.normcase(root) or _same_file(parent, root):
+            return True
+        folder, parent = parent, os.path.dirname(parent)
+    return False
 
 
 def _write_undo(undo_file, record):
@@ -633,6 +727,11 @@ def rename(database, apply=False, username=None, path_root=None, config=None, pr
                 saved_to="the database file",
             ) from error
     result["undo_file"] = str(undo_file)
+    if not result["rows_changed"]:
+        # nothing was renamed: there is nothing to undo
+        with contextlib.suppress(OSError):
+            undo_file.unlink()
+            result["undo_file"] = None
     result["folders_removed"] = _remove_emptied([old for old, _new in moved], root)
     return result
 
@@ -679,8 +778,9 @@ def undo(undo_file, apply=False):
         try:
             for entry in record["files"]:
                 old, new = entry["from"], entry["to"]
-                at_old, at_new = os.path.lexists(old), os.path.lexists(new)
-                if at_new and not at_old:
+                at_old, at_new = _where(old, new)
+                # at both as one file: an undo that stopped after its link
+                if at_new and (not at_old or _same_file(old, new)):
                     result["files_to_rename_back"] += 1
                     if apply:
                         try:

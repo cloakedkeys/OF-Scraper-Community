@@ -576,3 +576,282 @@ def test_text_saved_sanitized_is_not_used(tmp_path):
     result = library.run()
 
     assert result["left"] == [{"file": str(path), "why": tool.NEEDS.format("{text}")}]
+
+
+class CaseFoldingOS:
+    """The os module as the tool sees it on a disk that doesn't tell the
+    case of letters apart (macOS's default; Windows's too, whose
+    os.path.normcase also lowers a path: give normcase=str.lower). Every
+    path is looked up on the real disk with each part matched without
+    regard to case, and a file keeps the spelling it was given."""
+
+    def __init__(self, normcase=None, fail_unlink=None):
+        self.path = _FoldingPath(self, normcase)
+        self.fail_unlink = fail_unlink
+
+    def __getattr__(self, name):
+        return getattr(os, name)
+
+    @staticmethod
+    def real(path):
+        path = os.path.abspath(path)
+        found = os.sep
+        for part in Path(path).parts[1:]:
+            here = os.path.join(found, part)
+            if not os.path.lexists(here) and os.path.isdir(found):
+                here = next((os.path.join(found, name) for name in os.listdir(found)
+                             if name.lower() == part.lower()), here)
+            found = here
+        return found
+
+    def _spelt(self, path):
+        """The real folder of `path`, with its own name spelt as given."""
+        return os.path.join(self.real(os.path.dirname(os.path.abspath(path))), os.path.basename(path))
+
+    def lstat(self, path):
+        return os.lstat(self.real(path))
+
+    def stat(self, path):
+        return os.stat(self.real(path))
+
+    def listdir(self, path):
+        return os.listdir(self.real(path))
+
+    def makedirs(self, path, exist_ok=False):
+        if not os.path.isdir(self.real(path)):
+            os.makedirs(self._spelt(path), exist_ok=exist_ok)
+
+    def rmdir(self, path):
+        os.rmdir(self.real(path))
+
+    def unlink(self, path):
+        if self.fail_unlink and self.fail_unlink(path):
+            raise PermissionError(13, "Permission denied")
+        os.unlink(self.real(path))
+
+    def link(self, old, new):
+        if os.path.lexists(self.real(new)):
+            raise FileExistsError(17, "File exists")
+        os.link(self.real(old), self._spelt(new))
+
+    def rename(self, old, new):
+        source, there = self.real(old), self.real(new)
+        if os.path.lexists(there) and not os.path.samefile(source, there):
+            os.unlink(there)
+        os.rename(source, self._spelt(new))
+
+
+class _FoldingPath:
+    def __init__(self, fs, normcase):
+        self._fs = fs
+        if normcase:
+            self.normcase = normcase
+
+    def __getattr__(self, name):
+        return getattr(os.path, name)
+
+    def lexists(self, path):
+        return os.path.lexists(self._fs.real(path))
+
+    def exists(self, path):
+        return os.path.exists(self._fs.real(path))
+
+    def isdir(self, path):
+        return os.path.isdir(self._fs.real(path))
+
+    def islink(self, path):
+        return os.path.islink(self._fs.real(path))
+
+    def samefile(self, first, second):
+        return os.path.samefile(self._fs.real(first), self._fs.real(second))
+
+
+def _entries(folder):
+    return sorted(os.listdir(folder))
+
+
+@pytest.mark.parametrize("normcase", [None, str.lower], ids=["macos", "windows"])
+def test_a_case_only_rename_on_a_disk_that_ignores_case_is_made_and_undone(tmp_path, monkeypatch, normcase):
+    library = Library(tmp_path)
+    path = library.add("ABCDEF.jpg", link="https://cdn.example/files/x/y/abcdef.jpg?Tag=1")
+    rows = library.rows()
+    monkeypatch.setattr(tool, "os", CaseFoldingOS(normcase))
+
+    result = library.run(apply=True)
+
+    assert (result["renamed"], result["rows_changed"], result["left"]) == (1, 1, [])
+    assert _entries(path.parent) == ["abcdef.jpg"]
+    assert library.rows()[0][2] == "abcdef.jpg"
+    # run again: the file has its new name
+    assert library.run(apply=True)["unchanged"] == 1
+
+    done = tool.undo(result["undo_file"], apply=True)
+
+    assert (done["renamed_back"], done["rows_restored"], done["left"]) == (1, 1, [])
+    assert _entries(path.parent) == ["ABCDEF.jpg"]
+    assert library.rows() == rows
+    again = tool.undo(result["undo_file"], apply=True)
+    assert (again["files_to_rename_back"], again["rows_restored"], again["left"]) == (0, 0, [])
+    assert _entries(path.parent) == ["ABCDEF.jpg"]
+
+
+def test_a_case_only_rename_already_made_on_a_disk_that_ignores_case_is_already_there(tmp_path, monkeypatch):
+    library = Library(tmp_path)
+    path = library.add("ABCDEF.jpg", link="https://cdn.example/files/x/y/abcdef.jpg?Tag=1")
+    path.rename(path.with_name("abcdef.jpg"))
+    monkeypatch.setattr(tool, "os", CaseFoldingOS())
+
+    result = library.run(apply=True)
+
+    assert (result["already_there"], result["renamed"], result["rows_changed"]) == (1, 0, 1)
+    assert _entries(path.parent) == ["abcdef.jpg"]
+
+
+@pytest.mark.skipif(not hasattr(os, "link") or os.name == "nt", reason="hard links where a rename is made with one")
+def test_a_link_left_by_a_stopped_case_only_rename_is_finished(tmp_path):
+    library = Library(tmp_path)
+    path = library.add("ABCDEF.jpg", link="https://cdn.example/files/x/y/abcdef.jpg?Tag=1")
+    os.link(path, path.with_name("abcdef.jpg"))
+
+    result = library.run(apply=True)
+
+    assert (result["renamed"], result["left"]) == (1, [])
+    assert _entries(path.parent) == ["abcdef.jpg"]
+    assert library.rows()[0][2] == "abcdef.jpg"
+
+
+@pytest.mark.skipif(not hasattr(os, "link") or os.name == "nt", reason="hard links where a rename is made with one")
+def test_an_undo_that_stopped_after_its_link_is_finished(tmp_path):
+    library = Library(tmp_path)
+    path = library.add("abcdef.jpg")
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    undo_file = library.run(apply=True)["undo_file"]
+    os.link(path.with_name("1.jpg"), path)
+
+    done = tool.undo(undo_file, apply=True)
+
+    assert (done["renamed_back"], done["rows_restored"], done["left"]) == (1, 1, [])
+    assert library.files() == ["alice/Posts/Images/abcdef.jpg"]
+
+
+@pytest.mark.parametrize("normcase", [None, str.lower], ids=["macos", "windows"])
+def test_rows_that_spell_one_file_differently_on_a_disk_that_ignores_case_are_one_file(
+        tmp_path, monkeypatch, normcase):
+    library = Library(tmp_path)
+    path = library.add("shared.jpg", post_id=501, media_id=5)
+    library.add("SHARED.jpg", folder="alice/posts/images", post_id=502, media_id=5, on_disk=False)
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    monkeypatch.setattr(tool, "os", CaseFoldingOS(normcase))
+
+    result = library.run(apply=True)
+
+    assert (result["files"], result["renamed"], result["rows_changed"], result["left"]) == (1, 1, 2, [])
+    assert library.files() == ["alice/Posts/Images/5.jpg"]
+    assert {row[1:] for row in library.rows()} == {(str(path.parent), "5.jpg")}
+
+
+def test_the_row_of_another_media_that_records_the_same_file_keeps_its_name(tmp_path):
+    """A collision left the file of one media where another one's row
+    (downloaded = 0) records its own: that row isn't the renamed file's."""
+    library = Library(tmp_path)
+    path = library.add("abcdef.jpg")
+    library.add("abcdef.jpg", media_id=99, downloaded=0, on_disk=False)
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+
+    result = library.run(apply=True)
+
+    assert (result["renamed"], result["rows_changed"]) == (1, 1)
+    assert library.rows() == [(1, str(path.parent), "1.jpg"), (99, str(path.parent), "abcdef.jpg")]
+
+
+def test_a_folder_at_the_new_place_is_not_taken_for_the_file(tmp_path):
+    library = Library(tmp_path)
+    path = library.add("abcdef.jpg", on_disk=False)
+    with closing(sqlite3.connect(library.db)) as conn, conn:
+        conn.execute("UPDATE medias SET size = NULL")
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    path.with_name("1.jpg").mkdir(parents=True)
+
+    result = library.run(apply=True)
+
+    assert result["already_there"] == 0
+    assert result["left"] == [{"file": str(path), "why": tool.NOT_A_FILE, "new_place": str(path.with_name("1.jpg"))}]
+    assert library.rows()[0][2] == "abcdef.jpg"
+
+
+def test_no_undo_file_is_kept_when_nothing_was_changed(tmp_path, monkeypatch):
+    library = Library(tmp_path)
+    path = library.add("abcdef.jpg")
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+
+    def fails(old, new):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(tool, "rename_file", fails)
+    result = library.run(apply=True)
+
+    assert (result["renamed"], result["rows_changed"], result["undo_file"]) == (0, 0, None)
+    assert list(library.db.parent.glob("*.json")) == []
+    assert path.is_file()
+
+
+@pytest.mark.skipif(not hasattr(os, "link") or os.name == "nt", reason="hard links where a rename is made with one")
+def test_a_rename_whose_old_name_cant_be_removed_leaves_no_copy(tmp_path, monkeypatch):
+    library = Library(tmp_path)
+    path = library.add("abcdef.jpg")
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    fs = CaseFoldingOS(fail_unlink=lambda p: p == str(path))
+    fs.real = staticmethod(os.path.abspath)  # a disk that tells case apart
+    monkeypatch.setattr(tool, "os", fs)
+
+    result = library.run(apply=True)
+
+    assert result["renamed"] == 0 and "could not be renamed" in result["left"][0]["why"]
+    assert library.files() == ["alice/Posts/Images/abcdef.jpg"]
+    assert library.rows()[0][2] == "abcdef.jpg"
+
+
+def test_a_config_with_unescaped_backslashes_is_refused_as_a_run_refuses_it(tmp_path):
+    """The scraper's config_context reads config.json with json.loads and
+    asks to fix one it can't read; this refuses the same file, without
+    asking (config_file.json_loads, which would read it, only reads a
+    config.json that config_context has passed)."""
+    library = Library(tmp_path)
+    library.add("abcdef.jpg")
+    # written by hand on Windows: a backslash that isn't escaped
+    library.config.write_text(
+        '{"file_options": {"save_location": "%s", "dir_format": "{model_username}\\All",'
+        ' "file_format": "{media_id}.{ext}"}}' % library.root.as_posix(), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Run the scraper once to fix it"):
+        library.run()
+
+
+class _WindowsFolders:
+    """os for _remove_emptied as on Windows: ntpath, and a record of rmdir."""
+
+    def __init__(self):
+        import ntpath
+
+        self.path = ntpath
+        self.removed = []
+
+    def rmdir(self, folder):
+        self.removed.append(folder)
+
+
+def test_old_folders_on_another_drive_than_the_save_location_stay(monkeypatch):
+    fs = _WindowsFolders()
+    monkeypatch.setattr(tool, "os", fs)
+
+    assert tool._remove_emptied([r"D:\media\alice\Posts\a.jpg"], r"C:\media") == []
+    assert fs.removed == []
+
+
+def test_old_folders_spelt_in_another_case_than_the_save_location_are_removed(monkeypatch):
+    fs = _WindowsFolders()
+    monkeypatch.setattr(tool, "os", fs)
+
+    removed = tool._remove_emptied([r"C:\Media\alice\Posts\a.jpg"], r"c:\media")
+
+    assert removed == fs.removed == [r"C:\Media\alice\Posts", r"C:\Media\alice"]
