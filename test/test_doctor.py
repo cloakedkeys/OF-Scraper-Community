@@ -318,3 +318,147 @@ def test_online_stash_unreachable(home, monkeypatch):
 
 def test_offline_points_at_online(home):
     assert result(doctor.run(), "login")[0] == "SKIP"
+
+
+# --- review follow-up ---
+
+def test_online_postgres_check_parses_no_command_line(home, monkeypatch, capsys):
+    """The PostgreSQL check runs before the start sets sys.argv: reading the
+    settings there would parse `doctor --online` as a run's options."""
+    import types
+
+    import ofscraper.data.api.init as init
+    import ofscraper.utils.args.globals as global_args
+    import ofscraper.utils.settings as settings
+
+    monkeypatch.setenv(postgres.URL_KEY, f"postgresql://scraper:{SECRET}@db.example:5432/library")
+    monkeypatch.setitem(sys.modules, "psycopg", sys.modules.get("psycopg") or object())
+    monkeypatch.setitem(sys.modules, "psycopg_pool", sys.modules.get("psycopg_pool") or object())
+    monkeypatch.setattr(sys, "argv", ["ofscraper", "doctor", "--online", "--json"])
+    monkeypatch.setattr(settings, "settings", {})
+    monkeypatch.setattr(global_args, "args", None)
+    schemas = []
+    conn = types.SimpleNamespace(info=types.SimpleNamespace(server_version=160002))
+    monkeypatch.setattr(postgres.POSTGRES, "connect", lambda where, ro, timeout: schemas.append(where) or conn)
+    monkeypatch.setattr(postgres.POSTGRES, "close", lambda c: None)
+    monkeypatch.setattr(doctor, "start", lambda *a: None)
+    monkeypatch.setattr(init, "auth_status", lambda: ("UP", None))
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home)
+    entrypoint.main(["doctor", "--online", "--json"])
+    results = {r["check"]: r for r in json.loads(capsys.readouterr().out)["results"]}
+    assert results["PostgreSQL"]["status"] == "PASS" and "16.2" in results["PostgreSQL"]["detail"]
+    assert schemas == ["onlyfans"]
+    assert settings.settings == {} and global_args.args is None
+
+
+def test_an_empty_auth_file_is_a_finding(home, monkeypatch):
+    import ofscraper.utils.settings as settings
+
+    write_config(home, {"main_profile": "main_profile"})
+    path = write_auth(home)
+    path.write_text("", encoding="utf-8")
+    monkeypatch.setattr(settings, "get_settings", lambda: pytest.fail("read the settings"))
+    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked a question"))
+    assert result(doctor.run(), "OnlyFans auth") == ("FAIL", f"{path} is empty")
+
+
+def test_an_empty_config_object_is_the_defaults(home, monkeypatch):
+    import ofscraper.utils.config.file as config_file
+    import ofscraper.utils.settings as settings
+
+    write_config(home, {})
+    monkeypatch.setattr(config_file, "open_config", lambda: pytest.fail("opened the config"))
+    monkeypatch.setattr(settings, "get_args", lambda *a, **k: pytest.fail("read the arguments"))
+    report = doctor.run()
+    assert result(report, "config file")[0] == "PASS"
+    assert result(report, "save folder")[0] in ("PASS", "FAIL")
+
+
+def test_an_unset_check_path_measures_the_save_folders_disk(home, tmp_path, monkeypatch):
+    """OFSC_DISK_SPACE_CHECK_PATH empty means the disk that holds
+    save_location, as the free-space check measures it."""
+    save = tmp_path / "library"
+    save.mkdir()
+    write_config(home, {"file_options": {"save_location": str(save / "not" / "made")},
+                        "download_options": {"system_free_min": 1000}})
+    real = doctor.of_env.getattr
+    # an empty value is what the default becomes with #795
+    monkeypatch.setattr(doctor.of_env, "getattr",
+                        lambda key, *a, **k: "" if key == "DISK_SPACE_CHECK_PATH" else real(key, *a, **k))
+    status, detail = result(doctor.run(), "free-space limit")
+    assert status == "PASS" and detail.startswith(f"1000 bytes, measured at {save}")
+
+
+def test_a_fansly_profile_needs_no_key_files(home):
+    write_config(home, {"cdm_options": {"key-mode-default": "manual"}})
+    folder = config_dir(home) / "main_profile"
+    folder.mkdir(parents=True)
+    (folder / "site.json").write_text('{"site": "fansly"}', encoding="utf-8")
+    assert result(doctor.run(), "key files")[0] == "SKIP"
+
+
+@pytest.mark.parametrize("fields, named", [
+    ({"sess": "   "}, "blank in"),
+    ({"auth_id": 12345}, "not text in"),
+    ({"x-bc": None}, "blank in"),
+])
+def test_auth_values_a_run_cant_use_fail_offline(home, fields, named):
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home, **fields)
+    status, detail = result(doctor.run(), "OnlyFans auth")
+    assert status == "FAIL" and named in detail and detail.endswith(next(iter(fields)))
+
+
+def test_an_ansi_config_and_auth_file_are_read(home, tmp_path, monkeypatch):
+    import locale
+
+    save = tmp_path / "Bibliothèque"
+    save.mkdir()
+    monkeypatch.setattr(locale, "getencoding", lambda: "cp1252")
+    path = write_config(home, "")
+    path.write_bytes(json.dumps({"file_options": {"save_location": str(save)}}, ensure_ascii=False).encode("cp1252"))
+    auth = write_auth(home)
+    auth.write_bytes(auth.read_bytes().replace(b"a test agent", "agent é".encode("cp1252")))
+    report = doctor.run()
+    assert result(report, "config file")[0] == "PASS"
+    assert result(report, "save folder")[0] == "PASS"
+    assert result(report, "OnlyFans auth")[0] == "PASS"
+
+
+def test_a_working_configured_ffmpeg_doesnt_ask_pyffmpeg(monkeypatch):
+    class Pyffmpeg:
+        def FFmpeg(self):
+            pytest.fail("asked pyffmpeg")
+
+    monkeypatch.setitem(sys.modules, "pyffmpeg", Pyffmpeg())
+    monkeypatch.setattr(ffmpeg, "_is_valid_ffmpeg", lambda p: p == "/opt/ffmpeg")
+    monkeypatch.setattr(ffmpeg, "ffmpeg_version", lambda p: (True, "7.1", 7))
+    assert ffmpeg.find_ffmpeg("/opt/ffmpeg") == ("/opt/ffmpeg", "config", "7.1")
+
+
+def test_online_json_is_the_only_thing_on_stdout(home, monkeypatch, capsys):
+    import ofscraper.data.api.init as init
+
+    write_config(home, {"main_profile": "main_profile"})
+    write_auth(home)
+    monkeypatch.setattr(doctor, "start", lambda *a: print("a config was made"))
+    monkeypatch.setattr(init, "auth_status", lambda: ("UP", None))
+    doctor.main(["--online", "--json"])
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["results"]
+    assert "a config was made" in captured.err
+
+
+def test_key_mode_cdrm_with_a_server_of_your_own(home, monkeypatch):
+    """OFSC_CDRM_URL set to a server other than the retired one: keys are
+    asked from it, so the warning says that and not that cdrm can't work."""
+    import ofscraper.utils.of_env.of_env as of_env
+
+    url = f"http://user:{SECRET}@127.0.0.1:8080/api/decrypt"
+    real = of_env.getattr
+    monkeypatch.setattr(of_env, "getattr", lambda key, *a, **k: url if key == "CDRM" else real(key, *a, **k))
+    write_config(home, {"cdm_options": {"key-mode-default": "cdrm"}})
+    status, detail = result(doctor.run(), "key files")
+    assert status == "WARN" and "doesn't work" not in detail
+    assert "127.0.0.1" in detail and "cookies" in detail and SECRET not in detail
