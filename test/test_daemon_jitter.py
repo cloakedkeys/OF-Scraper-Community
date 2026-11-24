@@ -23,7 +23,8 @@ def test_nonzero_jitter_stays_inside_range():
 
 
 def test_set_schedule_applies_jitter_to_next_pass(monkeypatch):
-    fixed_now = arrow.get("2026-11-23T12:00:00+00:00")
+    # now: the pass is scheduled from it, and a past time would run at once
+    fixed_now = arrow.utcnow().replace(microsecond=0)
     recorded = []
     wakeup = daemon_schedule.DaemonWakeup()
 
