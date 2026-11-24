@@ -229,6 +229,36 @@ def test_a_leftover_write_ahead_log_is_copied_without_touching_it(library, monke
     assert snapshot(library.profile) == before
 
 
+
+@pytest.mark.parametrize("dry", [True, False])
+def test_startup_migrates_an_old_config_only_outside_a_dry_run(monkeypatch, tmp_path, dry):
+    import json
+
+    import ofscraper.main.open.load as load
+    import ofscraper.utils.config.config as config_
+
+    # Given a config.json in an older form, missing most settings
+    path = tmp_path / "config.json"
+    old = json.dumps({"config": {"main_profile": "main_profile"}}, indent=4)
+    path.write_text(old, encoding="utf-8")
+    os.utime(path, ns=(1_600_000_000_123_456_789, 1_600_000_000_123_456_789))
+    monkeypatch.setattr(common_paths, "get_config_path", lambda: path)
+    monkeypatch.setattr(config_, "config", None)  # read_config's cache
+    monkeypatch.setitem(settings.get_settings(), "dry_run", dry)
+
+    # When the app reads its config at startup
+    load.readConfig()
+
+    # Then a dry run leaves the file as it was, and a normal run updates it
+    unchanged = (
+        path.read_text(encoding="utf-8") == old
+        and path.stat().st_mtime_ns == 1_600_000_000_123_456_789
+    )
+    assert unchanged is dry
+    if not dry:
+        assert "file_options" in json.loads(path.read_text(encoding="utf-8"))
+
+
 # --- the switch-off list ----------------------------------------------------
 
 
