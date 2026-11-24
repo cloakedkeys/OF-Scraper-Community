@@ -450,8 +450,10 @@ def test_words_on_separate_lines_count_as_separate_words(naming):
 
 
 def test_a_caption_with_nothing_for_a_name_is_the_post_id(naming):
-    text, (media,) = naming("{filename} {text}.{ext}", "???")
-    assert (text, media) == ("8 8.txt", "pic0 8.jpg")
+    text, (media,) = naming("{text}.{ext}", "???")
+    assert (text, media) == ("8.txt", "8.jpg")
+    # a text file's {filename} is its caption too
+    assert naming("{filename}.{ext}", "???")[0] == "8.txt"
 
 
 # A text file reads as the caption does on the site (#751): no HTML, and the
