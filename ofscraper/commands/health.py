@@ -69,7 +69,12 @@ def _login_failed(data):
     if data.get("auth") == "failed":
         return True
     last_pass = data.get("last_pass")
-    if isinstance(last_pass, dict) and last_pass.get("status") == AUTH_EXIT_CODE:
+    # auth "ok" is newer than the last pass: the login was checked again
+    if (
+        data.get("auth") != "ok"
+        and isinstance(last_pass, dict)
+        and last_pass.get("status") == AUTH_EXIT_CODE
+    ):
         return True
     profiles = data.get("profiles")
     if isinstance(profiles, dict):
@@ -101,7 +106,9 @@ def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
     limit = timedelta(minutes=max_quiet_minutes)
     state = data.get("state")
 
-    if state == "running":
+    if state == "running" or (state == "idle" and data.get("next_pass_at") is None):
+        # idle with no next pass is the moment between a pass and its
+        # scheduling: as quiet as a running pass may be, no longer
         hb = _parse_iso(data.get("heartbeat"))
         if hb is None:
             return False, "unhealthy: daemon is running with no valid heartbeat"
@@ -110,7 +117,7 @@ def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
             mins = int(age.total_seconds() // 60)
             return False, f"unhealthy: daemon heartbeat is {mins} min old (limit {max_quiet_minutes} min)"
         mins = max(0, int(age.total_seconds() // 60))
-        return True, f"healthy: daemon running (heartbeat {mins} min ago)"
+        return True, f"healthy: daemon {state} (heartbeat {mins} min ago)"
 
     if state == "idle":
         next_at = data.get("next_pass_at")
@@ -142,6 +149,16 @@ def check_file(path, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
     return evaluate(data, max_quiet_minutes=max_quiet_minutes, now=now)
 
 
+def _max_quiet(value):
+    try:
+        minutes = float(value)
+    except ValueError:
+        minutes = math.nan
+    if not math.isfinite(minutes) or minutes <= 0:
+        raise argparse.ArgumentTypeError(f"must be a number of minutes above 0, not {value!r}")
+    return minutes
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="ofscraper health",
@@ -155,7 +172,7 @@ def build_parser():
     )
     parser.add_argument(
         "--max-quiet",
-        type=float,
+        type=_max_quiet,
         default=DEFAULT_MAX_QUIET_MINUTES,
         help=f"Minutes before a quiet running daemon or overdue idle daemon counts as unhealthy (default: {DEFAULT_MAX_QUIET_MINUTES}).",
     )

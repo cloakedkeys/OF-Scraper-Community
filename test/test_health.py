@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 import json
 import pathlib
 
+import pytest
+
 import ofscraper.commands.health as health
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -94,7 +96,8 @@ def test_failed_login_is_unhealthy():
             "version": 1,
             "mode": "daemon",
             "state": "idle",
-            "auth": "ok",
+            # auth "ok" after it would mean the login was checked again since
+            "auth": "unknown",
             "last_pass": {"status": 3, "outcome": "failed"},
         },
         {
@@ -163,3 +166,41 @@ def test_dockerfile_sets_status_file_env_and_healthcheck():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "ENV OFSC_STATUS_FILE=" in dockerfile
     assert "HEALTHCHECK CMD ofscraper health" in dockerfile
+
+
+# --- review follow-up ---------------------------------------------------------
+
+
+def test_recovered_login_is_healthy_while_the_next_pass_runs():
+    data = {
+        "mode": "daemon", "state": "running", "heartbeat": _iso(-1), "auth": "ok",
+        "last_pass": {"status": 3},  # the pass before the login was fixed
+    }
+    healthy, _ = health.evaluate(data, now=NOW)
+    assert healthy is True
+
+
+def test_idle_daemon_with_no_next_pass_goes_stale():
+    data = {"mode": "daemon", "state": "idle", "next_pass_at": None, "auth": "ok"}
+    data["heartbeat"] = _iso(-5)
+    assert health.evaluate(data, max_quiet_minutes=60, now=NOW)[0] is True
+    data["heartbeat"] = _iso(-120)
+    healthy, reason = health.evaluate(data, max_quiet_minutes=60, now=NOW)
+    assert healthy is False and "heartbeat" in reason
+
+
+@pytest.mark.parametrize("value", ["-5", "nan", "inf", "0"])
+def test_max_quiet_must_be_a_positive_number(value, capsys):
+    with pytest.raises(SystemExit) as exc:
+        health.main(["--max-quiet", value])
+    assert exc.value.code == 2
+
+
+def test_default_path_follows_main_profile_in_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("OFSC_STATUS_FILE", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OFSC_CONFIG_DIR", raising=False)
+    config_home = tmp_path / ".config" / "ofscraper"
+    config_home.mkdir(parents=True)
+    (config_home / "config.json").write_text(json.dumps({"main_profile": "other"}), encoding="utf-8")
+    assert health.default_status_path() == config_home / "other_profile" / "status.json"
