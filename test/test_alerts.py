@@ -95,6 +95,35 @@ def test_free_space_limit_alerts_once(sent, monkeypatch):
     assert download() == "downloaded"
 
 
+def test_free_space_limit_during_a_download_alerts(sent, monkeypatch):
+    # the per-file check in the download manager, not only the decorator
+    from ofscraper.commands.scraper.actions.download.managers.downloadmanager import (
+        DownloadManager,
+    )
+
+    sent.settings.system_free_min = 10
+    monkeypatch.setattr(free, "get_free", lambda: 5)
+    with pytest.raises(Exception):
+        DownloadManager(ctx=object())._downloadspace()
+    assert [a["kind"] for a in sent.script] == ["disk_full"]
+
+
+def test_disk_still_full_after_a_partial_pass_isnt_recovered(sent, monkeypatch):
+    sent.settings.system_free_min = 10
+    free_bytes = [5]
+    monkeypatch.setattr(free, "get_free", lambda: free_bytes[0])
+    download = free.space_checker(lambda: "downloaded")
+    for _ in range(3):  # three daemon passes, the disk full throughout
+        with pytest.raises(Exception, match="Space min"):
+            download()
+        alerts.after_pass(exit_status.PARTIAL)
+    assert [a["kind"] for a in sent.script] == ["disk_full"]
+    free_bytes[0] = 50  # space was freed
+    alerts.after_pass(exit_status.OK)
+    assert [a["kind"] for a in sent.script] == ["disk_full", "disk_full"]
+    assert "running again" in sent.script[1]["message"]
+
+
 # --- the login, at the start and mid-run ------------------------------------
 
 
