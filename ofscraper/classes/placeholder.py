@@ -258,10 +258,41 @@ class Placeholders(basePlaceholder):
         file = await self.createfilename()
         script_name = await naming_script(dir, file, self._ele)
         if not script_name:
+            file = self._fit_text(dir, file)
             self._filepath = paths.truncate(pathlib.Path(dir, file))
         else:
             self._filepath = paths.truncate(pathlib.Path(script_name))
         return self
+
+    def _fit_text(self, dir, file):
+        """A name too long for the path, with {text} made just short enough
+        to fit, so the end of the name ({filename}, {media_id} and the rest
+        after the caption) isn't cut instead (#741). The name unchanged when
+        it fits, or when it doesn't fit even with no caption."""
+
+        def fits(name):
+            return paths.truncate(pathlib.Path(dir, name)).name == name
+
+        text = self._variables.get("text")
+        if (
+            not text
+            or self._ele.responsetype.capitalize() == "Profile"
+            or fits(file)
+            or not fits(self._name_with_text(""))
+        ):
+            return file
+        low, high = 0, len(text)
+        while low < high:
+            mid = (low + high + 1) // 2
+            if fits(self._name_with_text(text[:mid])):
+                low = mid
+            else:
+                high = mid - 1
+        return self._name_with_text(text[:low])
+
+    def _name_with_text(self, text):
+        out = data.get_fileformat().format(**{**self._variables, "text": text.rstrip()})
+        return self._addcount(self._ele, out)
 
     def add_price_variables(self, username):
         modelObj = manager.Manager.current_model_manager.get_model(username)

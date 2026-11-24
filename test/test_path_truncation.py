@@ -68,3 +68,75 @@ def test_a_long_linux_name_fits_in_the_name_limit():
     size = paths.get_string_byte_size_unix
     # measured as the app measures it; as much as fits, one more letter would not
     assert size(out.name) <= 254 < size("a" + out.name)
+
+
+# ---------------------------------------------------------------- the caption is cut, not the end (#741)
+
+
+@pytest.fixture
+def name_env(monkeypatch, tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    import ofscraper.classes.placeholder as placeholder
+
+    async def no_script(*a, **k):
+        return None
+
+    monkeypatch.setattr(placeholder.log, "trace", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(placeholder.me, "parse_user", lambda: ("1", "me"))
+    monkeypatch.setattr(placeholder.me, "get_id", lambda: 1)
+    monkeypatch.setattr(placeholder.profile_data, "get_active_profile", lambda: "main_profile")
+    monkeypatch.setattr(placeholder.common_paths, "get_config_home", lambda: tmp_path / "cfg")
+    monkeypatch.setattr(
+        placeholder.common_paths, "get_save_location", lambda *a, **k: str(tmp_path / "data")
+    )
+    monkeypatch.setattr(placeholder.config_file, "open_config", lambda: {})
+    monkeypatch.setattr(placeholder.settings, "get_args", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        placeholder.manager,
+        "Manager",
+        SimpleNamespace(current_model_manager=SimpleNamespace(get_model=lambda _u: None)),
+    )
+    monkeypatch.setattr(placeholder, "naming_script", no_script)
+    monkeypatch.setattr(placeholder.data, "get_dirformat", lambda *a, **k: "{date}")
+    monkeypatch.setattr(placeholder.data, "get_date", lambda *a, **k: "YYYY-MM-DD")
+    monkeypatch.setattr(paths.platform, "system", lambda: "Linux")
+
+    def names(file_format, text):
+        import ofscraper.classes.of.posts as posts_
+
+        monkeypatch.setattr(placeholder.data, "get_fileformat", lambda *a, **k: file_format)
+        raw = {
+            "id": 7, "text": text, "price": 0, "isOpened": True, "responseType": "post",
+            "postedAt": "2024-05-01T20:00:00+00:00",
+            "media": [
+                {"id": 70 + i, "type": "photo", "canView": True,
+                 "files": {"full": {"url": f"https://example.invalid/photo{i}.jpg"}}}
+                for i in range(3)
+            ],
+        }
+        items = posts_.Post(raw, 1, "u", "timeline").all_media
+        return [
+            asyncio.run(placeholder.Placeholders(item, "jpg").init(create=False)).filepath
+            for item in items
+        ]
+
+    return names
+
+
+@pytest.mark.parametrize("file_format, unique", [
+    ("{date} {text} {filename}.{ext}", "photo{}"),
+    ("{date} {text} {media_id}.{ext}", "7{}"),
+])
+def test_a_long_caption_is_cut_and_the_unique_part_kept(name_env, file_format, unique):
+    out = name_env(file_format, "a long caption " * 40)
+    for i, path in enumerate(out):
+        assert path.name.endswith(f" {unique.format(i)}.jpg")
+        assert path.name.startswith("2024-05-01 a long caption")
+        assert paths.get_string_byte_size_unix(path.name) <= 254
+
+
+def test_a_short_caption_is_left_alone(name_env):
+    out = name_env("{date} {text} {filename}.{ext}", "short")
+    assert [p.name for p in out] == [f"2024-05-01 short photo{i}.jpg" for i in range(3)]
