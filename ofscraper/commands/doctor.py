@@ -526,10 +526,15 @@ def check_keys(config, site, report, folder=None):
         else:
             fix = "client-id and private-key are already set, so that switch is the whole fix"
         url = str(of_env.getattr("CDRM") or "").strip()
-        if url and not keyhelpers.cdrm_retired(url):
+        try:
+            retired = keyhelpers.cdrm_retired(url)
+            host = urllib.parse.urlsplit(url).hostname
+        except ValueError:  # a malformed address, e.g. an unclosed IPv6 bracket
+            retired, host = False, None
+        if url and not retired:
             # a server of the user's own (#677): only its host is shown, as
             # the address can hold a login
-            host = urllib.parse.urlsplit(url).hostname or "an unreadable address"
+            host = host or "an unreadable address"
             report.add(WARN, "key files",
                        f"key mode cdrm: keys are asked from the server in OFSC_CDRM_URL ({host}), which is sent"
                        " your OnlyFans cookies, so use only a server you run (not contacted by this check)."
