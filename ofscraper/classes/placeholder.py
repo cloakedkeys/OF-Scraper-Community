@@ -102,6 +102,14 @@ def default_media_root():
     return pathlib.Path(site_save_location())
 
 
+def final_path(path):
+    """The path a file is saved at: shortened to what the system allows,
+    unless --original or truncation_default: false turns that off."""
+    if settings.get_settings().trunicate:
+        return paths.truncate(pathlib.Path(path))
+    return pathlib.Path(os.path.normpath(path))
+
+
 class basePlaceholder:
     def __init__(self) -> None:
         self._ele = None
@@ -257,10 +265,7 @@ class Placeholders(basePlaceholder):
         dir = await self.getmediadir(create=create)
         file = await self.createfilename()
         script_name = await naming_script(dir, file, self._ele)
-        if not script_name:
-            self._filepath = paths.truncate(pathlib.Path(dir, file))
-        else:
-            self._filepath = paths.truncate(pathlib.Path(script_name))
+        self._filepath = final_path(script_name or pathlib.Path(dir, file))
         return self
 
     def add_price_variables(self, username):
@@ -476,10 +481,7 @@ class Textholders(basePlaceholder):
         dir = await self.getmediadir(create=create)
         file = await self.createfilename()
         script_name = await naming_script(dir, file, self._ele)
-        if not script_name:
-            self._filepath = paths.truncate(pathlib.Path(dir, file))
-        else:
-            self._filepath = paths.truncate(pathlib.Path(script_name))
+        self._filepath = final_path(script_name or pathlib.Path(dir, file))
         return self
 
     def add_price_variables(self, username):

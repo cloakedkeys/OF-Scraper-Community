@@ -204,6 +204,15 @@ from ofscraper.utils.args.parse.commands.main import program
 from test_undated_posts import names_env  # noqa: F401  (fixture)
 
 
+def _post(caption, media=1):
+    raw = {"id": 8, "text": caption, "price": 0, "isOpened": True,
+           "responseType": "post", "postedAt": "2026-10-31T12:00:00+00:00",
+           "media": [{"id": 70 + n, "type": "photo", "canView": True,
+                      "files": {"full": {"url": f"https://example.invalid/pic{n}.jpg"}}}
+                     for n in range(media)]}
+    return posts_.Post(raw, 1, "u", "timeline")
+
+
 @pytest.fixture
 def naming(monkeypatch, names_env):  # noqa: F811
     """Returns names(file_format, caption, *options, media=1): the text file's
@@ -221,12 +230,7 @@ def naming(monkeypatch, names_env):  # noqa: F811
         monkeypatch.setattr(
             placeholder.data, "get_fileformat", lambda *a, **k: file_format
         )
-        raw = {"id": 8, "text": caption, "price": 0, "isOpened": True,
-               "responseType": "post", "postedAt": "2026-10-31T12:00:00+00:00",
-               "media": [{"id": 70 + n, "type": "photo", "canView": True,
-                          "files": {"full": {"url": f"https://example.invalid/pic{n}.jpg"}}}
-                         for n in range(media)]}
-        post = posts_.Post(raw, 1, "u", "timeline")
+        post = _post(caption, media)
         text = asyncio.run(placeholder.Textholders(post, "txt").createfilename())
         return text, [
             asyncio.run(placeholder.Placeholders(item, "jpg").createfilename())
@@ -335,3 +339,33 @@ def test_media_and_text_files_cut_the_caption_alike(naming, replacer, expected):
         "--text-type", "word", "--textlength", "4", "--space-replacer", replacer,
     )
     assert (text, media) == (f"{expected}.txt", f"{expected}.jpg")
+
+
+# --original and truncation_default: false leave a long path as the template
+# gives it (#740).
+
+LONG_CAPTION = " ".join(["word"] * 120)  # 599 characters: over every system's limit
+
+
+def _paths(naming, *options):
+    """The path of a long-captioned post's media file and text file."""
+    naming("{text}.{ext}", LONG_CAPTION, *options)  # applies the settings
+    post = _post(LONG_CAPTION)
+    return [
+        asyncio.run(holder.init(create=False)).filepath
+        for holder in (
+            placeholder.Placeholders(post.all_media[0], "jpg"),
+            placeholder.Textholders(post, "txt"),
+        )
+    ]
+
+
+def test_original_leaves_a_long_name_whole(naming):
+    media, text = _paths(naming, "--original")
+    assert (media.name, text.name) == (f"{LONG_CAPTION}.jpg", f"{LONG_CAPTION}.txt")
+
+
+def test_a_long_name_is_shortened_by_default(naming):
+    media, text = _paths(naming)
+    assert len(media.name) < len(LONG_CAPTION) and media.suffix == ".jpg"
+    assert len(text.name) < len(LONG_CAPTION) and text.suffix == ".txt"
