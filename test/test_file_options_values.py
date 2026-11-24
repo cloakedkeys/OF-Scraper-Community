@@ -142,7 +142,12 @@ def test_a_space_replacer_with_spaces_is_put_in_once(config_json, names_env):
     config_json(space_replacer=" - ", file_format="{filename}.{ext}")
     item = evening_post(url="https://example.invalid/good luck.jpg").all_media[0]
     assert item.no_quality_final_filename == "good - luck"
-    assert asyncio.run(item.final_filename) == "good - luck"
+    # an async cached property gives an awaitable, not a coroutine, and
+    # asyncio.run() on Python 3.11 takes only a coroutine
+    async def final_filename():
+        return await item.final_filename
+
+    assert asyncio.run(final_filename()) == "good - luck"
     assert asyncio.run(placeholder.Placeholders(item, "jpg").createfilename()) == "good - luck.jpg"
 
 
