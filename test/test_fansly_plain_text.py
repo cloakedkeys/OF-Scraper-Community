@@ -123,8 +123,9 @@ from naming_helpers import make_post, naming, text_files  # noqa: F401  (fixture
 
 
 def _write_text(naming, monkeypatch, caption, *options, collision="media_id", before=None):
-    """Write one post's text file (named caption.txt). `before` is what a
-    file already at that name holds."""
+    """Write post 8's text file (named caption.txt). `before` is what a
+    file already at that name holds, or a dict of file names and what each
+    holds."""
 
     async def no_script(path):
         pass
@@ -136,8 +137,11 @@ def _write_text(naming, monkeypatch, caption, *options, collision="media_id", be
     )
     post = make_post(caption, 0)
     if before is not None:
+        if isinstance(before, str):
+            before = {"caption.txt": before}
         folder = asyncio.run(placeholder.Textholders(post, "txt").getmediadir())
-        (folder / "caption.txt").write_text(before, encoding="utf-8")
+        for name, content in before.items():
+            (folder / name).write_text(content, encoding="utf-8")
     asyncio.run(text.get_text("u", [post]))
 
 
@@ -180,6 +184,23 @@ def test_an_older_version_s_text_file_is_corrected_in_place(
         collision=collision, before=OLD_FORM,
     )
     assert text_files(tmp_path) == {"caption.txt": "Line one\nLine two\n\nTom & Jerry"}
+
+
+@pytest.mark.parametrize("taken", [
+    {"caption.txt": "another post"},
+    {"caption.txt": "another post", "caption_8.txt": "a third post"},
+])
+def test_an_older_version_s_text_file_at_a_fallback_name_is_corrected_in_place(
+    naming, monkeypatch, tmp_path, taken
+):
+    # the names before it hold other posts' text, which is kept; the post's
+    # own file, as an older version wrote it, is rewritten where it is
+    own = "caption_8.txt" if len(taken) == 1 else "caption_8_2.txt"
+    _write_text(
+        naming, monkeypatch, "<p>Line one<br />Line two</p>\n<p>Tom &amp; Jerry</p>",
+        before={**taken, own: OLD_FORM},
+    )
+    assert text_files(tmp_path) == {**taken, own: "Line one\nLine two\n\nTom & Jerry"}
 
 
 @pytest.mark.parametrize("caption", ["<p></p>", "<br />", "<p> </p><br>"])
