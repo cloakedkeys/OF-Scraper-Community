@@ -73,36 +73,45 @@ def truncate(path):
         return pathlib.Path(path)
 
 
+def _split_ext(name):
+    """The name without its extension, and the extension (with a "_1"-style
+    number before it, which a cut must keep). Taken off the end only."""
+    match = re.search(r"_[0-9]+\.[a-z4]*$", name, re.IGNORECASE) or re.search(
+        r"\.[a-z4]*$", name, re.IGNORECASE
+    )
+    ext = match.group(0) if match else ""
+    return (name[: -len(ext)] if ext else name), ext
+
+
+def _longest_fitting(text, size, max_size):
+    """The longest start of `text` whose `size` is at most `max_size`."""
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if size(text[:mid]) <= max_size:
+            low = mid
+        else:
+            high = mid - 1
+    return text[:low]
+
+
 def _windows_truncateHelper(path):
     path = pathlib.Path(os.path.normpath(path))
-    if get_string_byte_size_windows(path) <= of_env.getattr("WINDOWS_MAX_PATH_BYTES"):
+    limit = of_env.getattr("WINDOWS_MAX_PATH_BYTES")
+    if get_string_byte_size_windows(path) <= limit:
         return path
-    path = pathlib.Path(path)
     dir = path.parent
-    file = path.name
-    match = re.search(r"_[0-9]+\.[a-z4]*$", path.name, re.IGNORECASE) or re.search(
-        r"\.[a-z4]*$", path.name, re.IGNORECASE
-    )
-    if match:
-        ext = match.group(0)
-    else:
-        ext = ""
-    file = re.sub(ext, "", path.name)
+    file, ext = _split_ext(path.name)
+    # the whole path counts: the folder, the separator after it, the extension
     max_bytes = (
-        of_env.getattr("WINDOWS_MAX_PATH_BYTES")
-        - get_string_byte_size_windows(ext)
+        limit
         - get_string_byte_size_windows(dir)
+        - get_string_byte_size_windows(os.sep)
+        - get_string_byte_size_windows(ext)
     )
     if max_bytes <= 0:
-        raise (f"dir to larger then max bytes {path}")
-    low, high = 0, len(file)
-    while low < high:
-        mid = (low + high) // 2
-        if get_string_byte_size_windows(file[:mid]) <= max_bytes:
-            low = mid + 1
-        else:
-            high = mid
-    newFile = f"{file[:high]}{ext}"
+        raise ValueError(f"the folder is too long for any file name to fit: {path}")
+    newFile = f"{_longest_fitting(file, get_string_byte_size_windows, max_bytes)}{ext}"
     final_path = pathlib.Path(dir, newFile)
     log.debug(
         f"path: {path} filepath bytesize: {get_string_byte_size_windows(final_path)}"
@@ -115,11 +124,7 @@ def _mac_truncateHelper(path):
     if len(str(path)) <= of_env.getattr("MAC_MAX_PATH"):
         return path
     dir = path.parent
-    match = re.search(r"_[0-9]+\.[a-z4]*$", path.name, re.IGNORECASE) or re.search(
-        r"\.[a-z4]*$", path.name, re.IGNORECASE
-    )
-    ext = match.group(0) if match else ""
-    file = re.sub(ext, "", path.name)
+    file, ext = _split_ext(path.name)
     maxlength = of_env.getattr("MAC_MAX_PATH") - len(ext)
     newFile = f"{file[:maxlength]}{ext}"
     final = pathlib.Path(dir, newFile)
@@ -131,22 +136,11 @@ def _mac_truncateHelper(path):
 def _linux_truncateHelper(path):
     path = pathlib.Path(os.path.normpath(path))
     dir = path.parent
-    match = re.search(r"_[0-9]+\.[a-z4]*$", path.name, re.IGNORECASE) or re.search(
-        r"\.[a-z4]*$", path.name, re.IGNORECASE
-    )
-    ext = match.group(0) if match else ""
-    file = re.sub(ext, "", path.name)
+    file, ext = _split_ext(path.name)
     max_bytes = of_env.getattr("LINUX_MAX_FILE_NAME_BYTES") - get_string_byte_size_unix(
         ext
     )
-    low, high = 0, len(file)
-    while low < high:
-        mid = (low + high) // 2
-        if get_string_byte_size_unix(file[:mid]) <= max_bytes:
-            low = mid + 1
-        else:
-            high = mid
-    newFile = f"{file[:high]}{ext}"
+    newFile = f"{_longest_fitting(file, get_string_byte_size_unix, max_bytes)}{ext}"
     log.debug(f"path: {path} filename bytesize: {get_string_byte_size_unix(newFile)}")
     return pathlib.Path(dir, newFile)
 
