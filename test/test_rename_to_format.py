@@ -802,6 +802,40 @@ def test_a_file_spelt_otherwise_than_its_row_on_a_disk_that_ignores_case_is_rena
 
 
 @pytest.mark.parametrize("normcase", [None, str.lower], ids=["macos", "windows"])
+def test_a_folder_spelt_as_the_new_name_on_a_disk_that_ignores_case_is_not_the_file(
+        tmp_path, monkeypatch, normcase):
+    """The file is gone and a folder has its name, spelt as the new name:
+    the folder isn't taken for the file, moved, or recorded in a row."""
+    library = Library(tmp_path)
+    path = library.add("ABCDEF.jpg", link="https://cdn.example/files/x/y/abcdef.jpg?Tag=1", on_disk=False)
+    (path.parent / "abcdef.jpg").mkdir(parents=True)
+    rows = library.rows()
+    monkeypatch.setattr(tool, "os", CaseFoldingOS(normcase))
+
+    result = library.run(apply=True)
+
+    assert (result["already_there"], result["renamed"], result["rows_changed"]) == (0, 0, 0)
+    assert [left["why"] for left in result["left"]] == [tool.OLD_NOT_A_FILE]
+    assert _entries(path.parent) == ["abcdef.jpg"] and (path.parent / "abcdef.jpg").is_dir()
+    assert library.rows() == rows
+
+
+def test_a_folder_at_the_old_place_is_not_moved(tmp_path):
+    library = Library(tmp_path)
+    path = library.add("abcdef.jpg", on_disk=False)
+    path.mkdir(parents=True)
+    rows = library.rows()
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+
+    result = library.run(apply=True)
+
+    assert (result["renamed"], result["rows_changed"]) == (0, 0)
+    assert [left["why"] for left in result["left"]] == [tool.OLD_NOT_A_FILE]
+    assert _entries(path.parent) == ["abcdef.jpg"] and path.is_dir()
+    assert library.rows() == rows
+
+
+@pytest.mark.parametrize("normcase", [None, str.lower], ids=["macos", "windows"])
 def test_rows_spelt_otherwise_than_a_file_that_has_its_new_name_are_changed_and_undone(
         tmp_path, monkeypatch, normcase):
     library = Library(tmp_path)

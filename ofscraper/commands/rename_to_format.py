@@ -71,6 +71,7 @@ SAME_TARGET = "another file would get the same new name"
 NOT_FOUND = "not at the old place, and not at the new one"
 OTHER_SIZE = "not at the old place; the file at the new place doesn't have the size the row records"
 NOT_A_FILE = "not at the old place; what is at the new place isn't a file"
+OLD_NOT_A_FILE = "what is at the old place isn't a file"
 MEDIA = ["rowid", "media_id", "post_id", "link", "directory", "filename", "size",
          "api_type", "media_type", "created_at", "posted_at", "downloaded", "model_id"]
 # the tables a media's post can be in, by the area it came from
@@ -477,6 +478,10 @@ def plan(conn, settings, username=None, path_root=None):
             result["left"].append({"file": old, "why": SAME_TARGET, "new_place": new})
         elif key(new) in taken_by_rows and key(new) != key(old):
             result["left"].append({"file": old, "why": RECORDED, "new_place": new})
+        elif at_old and not _is_file(old):
+            # a folder (on a disk that doesn't tell case apart, perhaps one
+            # spelt as the new name) isn't the file, and isn't moved
+            result["left"].append({"file": old, "why": OLD_NOT_A_FILE})
         elif new == old and at_old:
             # the file has its new name already: only rows spell it otherwise
             result["already_there"] += 1
