@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import html
+import itertools
 import logging
 import pathlib
 import textwrap
@@ -67,25 +68,31 @@ def _own_path(path, ele, *contents):
     """Where a post's text goes. A file template can give two posts the same
     name, e.g. captions that start with the same textlength words. A file
     with other content at path is another post's, so this post's text goes
-    to name_<post_id>, as media go to name_<media_id>. filename_collision
-    "overwrite" keeps the old behaviour: the name is used as it is. When
-    file_format or dir_format has {post_id} (or {postid}), the name is the
-    post's own: a number in the caption or the date that only looks like
-    the post id doesn't count."""
+    to name_<post_id>, as media go to name_<media_id>. That name can be
+    taken by another post's text too (a caption can give a post that very
+    name), so the same check is made there, and then at name_<post_id>_2,
+    _3 and so on: the first name that's free or holds this post's text.
+    filename_collision "overwrite" keeps the old behaviour: the name is
+    used as it is. When file_format or dir_format has {post_id} (or
+    {postid}), the name is the post's own: a number in the caption or the
+    date that only looks like the post id doesn't count."""
     path = pathlib.Path(path)
     if (
         str(config_data.get_filename_collision()).lower() == "overwrite"
-        or not path.exists()
         or _POST_ID & parse_safe(config_data.get_fileformat())
         or _POST_ID & parse_safe(config_data.get_dirformat())
-        or _holds(path, *contents)
     ):
         return path
-    own = path.with_name(f"{path.stem}_{ele.id}{path.suffix}")
-    # shortened as the name itself is, unless truncation is turned off
-    if settings.get_settings().trunicate:
-        own = pathlib.Path(paths.truncate(own))
-    return own
+    if not path.exists() or _holds(path, *contents):
+        return path
+    stem = f"{path.stem}_{ele.id}"
+    for n in itertools.count(1):
+        own = path.with_name(f"{stem}{f'_{n}' if n > 1 else ''}{path.suffix}")
+        # shortened as the name itself is, unless truncation is turned off
+        if settings.get_settings().trunicate:
+            own = pathlib.Path(paths.truncate(own))
+        if not own.exists() or _holds(own, *contents):
+            return own
 
 
 async def get_text_process(username, ele, lock=None):
@@ -116,11 +123,11 @@ async def _write_text(ele):
         older = _older_file_text(new_ele.text)
         filepath = _own_path(placeholderObj.filepath, new_ele, content, older)
 
-        # Check for existing file BEFORE marking the attempt. A file at the
-        # post's own name_<post_id> is kept as it is, as one at the name
-        # itself is, even with other content (an older or hand-edited
-        # caption): --force-all rewrites it. The exception is a file holding
-        # what an older version wrote for this caption, which is rewritten.
+        # Check for existing file BEFORE marking the attempt. A file at a
+        # name with {post_id} in it is kept as it is, even with other
+        # content (an older or hand-edited caption): --force-all rewrites it.
+        # The exception, at any name, is a file holding what an older
+        # version wrote for this caption, which is rewritten.
         if (
             filepath.exists()
             and not dupe
