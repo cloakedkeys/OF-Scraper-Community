@@ -1,9 +1,12 @@
 """ofscraper verify: the library checked against the database, offline."""
 
 import json
+import ntpath
 import os
 import sqlite3
 from contextlib import closing
+from pathlib import PureWindowsPath
+from types import SimpleNamespace
 
 import pytest
 
@@ -476,6 +479,27 @@ def test_a_windows_path_read_on_linux_needs_a_path_map(tmp_path):
     for path_root in (None, tmp_path):
         with pytest.raises(ValueError, match="--path-map"):
             verify.verify([db], path_root=path_root)
+
+
+def _windows_312_isabs(path):
+    """ntpath.isabs before Python 3.13: a path rooted at / counts as full."""
+    path = ntpath.splitdrive(os.fspath(path))[1]
+    return len(path) > 0 and path[0] in "\\/"
+
+
+def test_a_posix_path_read_on_windows_needs_a_path_map(monkeypatch):
+    # Windows Python 3.11 and 3.12, simulated: ntpath, and its isabs that took
+    # /mnt/lib for a full path although it names no drive.
+    import ofscraper.commands.recover_collisions as recover_collisions
+
+    windows_path = SimpleNamespace(**{**vars(ntpath), "isabs": _windows_312_isabs})
+    monkeypatch.setattr(verify, "os", SimpleNamespace(path=windows_path, name="nt"))
+    monkeypatch.setattr(verify, "Path", PureWindowsPath)
+    monkeypatch.setattr(recover_collisions, "os", SimpleNamespace(name="nt"))
+    for path_root in (None, r"C:\run"):
+        with pytest.raises(ValueError, match="--path-map"):
+            verify._full_path("/mnt/lib", "ok.jpg", path_root, None)
+    assert verify._full_path(r"D:\lib", "ok.jpg", None, None) == r"D:\lib\ok.jpg"
 
 
 def test_left_alone_resets_nothing_in_the_totals(tmp_path):

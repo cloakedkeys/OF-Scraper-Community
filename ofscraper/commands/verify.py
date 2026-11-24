@@ -83,12 +83,12 @@ def _deleted_posts(rows):
 def _full_path(directory, filename, path_root, mappings):
     path = os.path.join(directory or "", filename)
     path = map_path(path, mappings) if mappings else path
-    if not os.path.isabs(path) and _from_another_system(Path(path)):
+    if not Path(path).is_absolute() and _from_another_system(Path(path)):
         raise ValueError(
             f"{path} is a full path on another system: give --path-map RECORDED=HERE"
             " to read it as a path here"
         )
-    if not os.path.isabs(path):
+    if not Path(path).is_absolute():
         if path_root is None:
             raise ValueError("Relative recorded paths require --path-root (the original working directory)")
         path = os.path.join(path_root, path)
