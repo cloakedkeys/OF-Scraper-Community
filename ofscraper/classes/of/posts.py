@@ -275,8 +275,9 @@ class Post(base.base):
     def highlight_id(self):
         """The id of the OnlyFans highlight the story was scraped from
         (``highlightId``, added by the highlights scrape), else None."""
-        value = self._post.get("highlightId")
-        return int(value) if str(value or "").isdigit() else None
+        value = str(self._post.get("highlightId") or "")
+        # isdigit() alone also takes superscript and non-ASCII digits, which int() reads differently or not at all
+        return int(value) if value.isascii() and value.isdigit() else None
 
     @property
     def db_mentions(self):

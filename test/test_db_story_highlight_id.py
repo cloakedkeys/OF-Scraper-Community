@@ -303,3 +303,16 @@ def test_merge_keeps_the_highlight(tmp_path):
 def test_postgresql_has_the_column_and_adds_it_to_older_databases():
     assert postgres.COLUMN_TYPES["stories"]["highlight_id"] == "BIGINT"
     assert (FLAG, "stories", ("highlight_id",)) in postgres.ADDED_COLUMNS
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [(123, 123), ("123", 123), (None, None), ("", None), ("abc", None),
+     # digits Python's isdigit() accepts but int() doesn't, or reads as another number
+     ("\u00b2", None), ("\u0663", None), ("\uff11\uff12", None)],
+)
+def test_highlight_id_is_read_only_from_plain_digits(value, expected):
+    from ofscraper.classes.of.posts import Post
+
+    story = Post({"id": 1, "highlightId": value}, 10, "a creator", responsetype="stories")
+    assert story.highlight_id == expected
