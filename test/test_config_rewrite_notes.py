@@ -150,6 +150,12 @@ def missing(section, key):
         # the same value in the form it's saved in
         setting("cdm_options", "key-mode-default", "Manual"),
         setting("performance_options", "download_sems", "6"),
+        setting("download_options", "filter", "Images,Audios,Videos"),
+        setting("download_options", "filter", "images, audios, videos"),
+        setting("download_options", "filter", ["images", "audios", "videos"]),
+        setting("content_filter_options", "file_size_max", "0GB"),
+        setting("content_filter_options", "file_size_max", "0"),
+        setting("advanced_options", "rotate_logs", "true"),
         # unset
         setting("file_options", "textlength", None),
         setting("content_filter_options", "file_size_max", ""),

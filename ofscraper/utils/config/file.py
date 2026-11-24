@@ -3,6 +3,8 @@ import logging
 import pathlib
 import re
 
+from humanfriendly import InvalidSize, parse_size
+
 from ofscraper.utils.markup import escape_text
 
 import ofscraper.utils.config.data as data
@@ -197,7 +199,24 @@ def _replaced(old, new, default):
     """old was swapped for the default, not unset or saved in another form"""
     if old in (None, "") or old == new or new != default:
         return False
-    return str(old).strip().lower() != str(new).lower()
+    return not _same_setting(old, new)
+
+
+def _same_setting(old, new):
+    """whether old is new written another way: "Images,Audios,Videos" for a
+    list, "0GB" for a size, "Manual" for "manual"
+    """
+    if isinstance(new, list):
+        items = old.split(",") if isinstance(old, str) else old
+        if not isinstance(items, list):
+            return False
+        return [str(x).strip().lower() for x in items] == [str(x).lower() for x in new]
+    if isinstance(new, (int, float)) and not isinstance(new, bool):
+        try:
+            return parse_size(str(old)) == new
+        except (ValueError, TypeError, InvalidSize):
+            pass  # compared as text below
+    return str(old).strip().lower() == str(new).lower()
 
 
 def json_loads(configText):
