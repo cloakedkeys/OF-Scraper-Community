@@ -49,6 +49,7 @@ Each file is handled on its own:
 | Where the file is | What happens |
 |---|---|
 | At the old place, and the new place is free | Renamed, and its database rows updated |
+| A folder (not a file) at the old place | Left and listed; the folder isn't moved |
 | Already at the new place (renamed by a run that stopped) | Only the rows are updated, if it is a file of the recorded size |
 | At the old place, and something is at the new place | Left and listed; nothing is replaced |
 | The new place is another file's new name too, or another row records it | Left and listed |
