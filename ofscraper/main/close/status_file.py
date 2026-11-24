@@ -32,6 +32,8 @@ _failing_alerts = []
 _last_heartbeat = None
 _last_heartbeat_mono = 0.0
 _loaded_from = None
+_path_override = None  # the multi-profile parent's file
+_custom = None  # the last payload write_custom wrote
 
 
 def _now_iso():
@@ -41,6 +43,8 @@ def _now_iso():
 def status_path():
     """Path to the status file: ``OFSC_STATUS_FILE`` if set, else ``status.json``
     in the active profile folder. Returns ``None`` if neither can be resolved."""
+    if _path_override is not None:
+        return pathlib.Path(_path_override)
     override = (os.getenv("OFSC_STATUS_FILE") or "").strip()
     if override:
         return pathlib.Path(override)
@@ -175,6 +179,13 @@ def _on_item_finished(**_kwargs):
     touch_heartbeat()
 
 
+def set_path(path):
+    """Write to path whatever OFSC_STATUS_FILE says (the multi-profile parent)."""
+    global _path_override
+    with _lock:
+        _path_override = path
+
+
 def set_mode(mode):
     """Explicitly set mode to ``"daemon"`` or ``"once"``."""
     global _mode
@@ -296,9 +307,11 @@ def stop_daemon():
 
 def write_custom(payload, path=None):
     """Atomically write an explicit status payload (used by multi-profile daemons)."""
+    global _custom
     target = pathlib.Path(path) if path is not None else status_path()
     if target is None:
         return None
+    _custom = (target, dict(payload))
     try:
         _atomic_write(target, payload)
     except Exception as e:
@@ -330,13 +343,23 @@ def set_failing_alerts(kinds):
             return None
         _ensure_loaded_locked(target)
         _failing_alerts = sorted(k for k in kinds if isinstance(k, str))
-        return _write_locked(path=target)
+        if _custom is not None and _custom[0] == target:
+            # the multi-profile parent's file: keep its layout
+            payload = {k: v for k, v in _custom[1].items() if k != "failing_alerts"}
+            if _failing_alerts:
+                payload["failing_alerts"] = list(_failing_alerts)
+            custom = _custom
+        else:
+            return _write_locked(path=target)
+    result = write_custom(payload, path=custom[0])
+    return result
 
 
 def reset():
     """Reset in-memory state (for tests)."""
     global _mode, _state, _auth, _next_pass_at, _last_pass, _last_success
     global _failing_alerts, _last_heartbeat, _last_heartbeat_mono, _loaded_from
+    global _path_override, _custom
     try:
         import ofscraper.utils.events as events
 
@@ -354,3 +377,5 @@ def reset():
         _last_heartbeat = None
         _last_heartbeat_mono = 0.0
         _loaded_from = None
+        _path_override = None
+        _custom = None

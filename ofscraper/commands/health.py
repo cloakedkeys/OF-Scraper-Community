@@ -8,8 +8,10 @@ scripts get an instant answer.
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
+import math
 import os
 import pathlib
+import re
 import sys
 
 DEFAULT_MAX_QUIET_MINUTES = 60
@@ -31,11 +33,36 @@ def _parse_iso(value):
     return dt.astimezone(timezone.utc)
 
 
+def _main_profile(config_home):
+    """The profile config.json names as main_profile, read without loading
+    the app, as the profile folder's name."""
+    name = None
+    try:
+        data = json.loads((config_home / "config.json").read_text(encoding="utf-8-sig"))
+        if isinstance(data.get("config"), dict):
+            data = data["config"]
+        name = data.get(os.getenv("OFSC_MAIN_PROFILE_NAME") or "main_profile")
+    except Exception:
+        pass
+    name = str(name or os.getenv("OFSC_PROFILE_DEFAULT") or "main_profile")
+    return f"{re.sub('_profile', '', name)}_profile"
+
+
 def default_status_path():
+    """OFSC_STATUS_FILE; else the newer of the multi-profile daemon's
+    status.json in the config folder and the main profile's."""
     override = (os.getenv("OFSC_STATUS_FILE") or "").strip()
     if override:
         return pathlib.Path(override)
-    return pathlib.Path.home() / ".config" / "ofscraper" / "main_profile" / "status.json"
+    config_home = pathlib.Path.home() / (os.getenv("OFSC_CONFIG_DIR") or ".config/ofscraper")
+    candidates = [
+        config_home / "status.json",
+        config_home / _main_profile(config_home) / "status.json",
+    ]
+    found = [p for p in candidates if p.is_file()]
+    if not found:
+        return candidates[1]
+    return max(found, key=lambda p: p.stat().st_mtime)
 
 
 def _login_failed(data):

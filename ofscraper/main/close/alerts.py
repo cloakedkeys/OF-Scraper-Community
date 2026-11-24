@@ -147,6 +147,13 @@ def _has_free_space():
         return False
 
 
+def current():
+    """The kinds failing now."""
+    with _lock:
+        _ensure_loaded_locked()
+        return set(_failing)
+
+
 def reset(reload=False):
     global _loaded
     with _lock:

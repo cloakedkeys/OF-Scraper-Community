@@ -31,6 +31,7 @@ def main():
             from ofscraper.commands.scraper.multi_profile import run_multi_profile_daemon
 
             run_multi_profile_daemon(args)
+            exit_manager.shutdown()
             raise SystemExit(exit_status.OK)
         check_database()
         start_manager()

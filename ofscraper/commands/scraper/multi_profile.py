@@ -49,11 +49,27 @@ def validate_multi_profile_args(params):
     return None
 
 
+# short flags whose value can be attached (-d30, -rfoo)
+_ATTACHED_VALUE_FLAGS = ("-d", "-r")
+
+
+def _known_options():
+    """Every option name the main command has, such as -dc and -rd, so an
+    attached value isn't confused with one."""
+    try:
+        from ofscraper.utils.args.parse.commands.main import program
+
+        return {opt for param in program.params for opt in (*param.opts, *param.secondary_opts)}
+    except Exception:
+        return set()
+
+
 def _strip_parent_flags(raw_argv):
     """Remove daemon/profile flags from ``raw_argv`` so a child runs once for one profile."""
     cleaned = []
     i = 0
     items = list(raw_argv)
+    known = None
     while i < len(items):
         arg = items[i]
         if arg == "--":
@@ -65,6 +81,11 @@ def _strip_parent_flags(raw_argv):
         if any(arg.startswith(f"{flag}=") for flag in _STRIP_VALUE_FLAGS):
             i += 1
             continue
+        if len(arg) > 2 and arg[:2] in _ATTACHED_VALUE_FLAGS and not arg.startswith("--"):
+            known = _known_options() if known is None else known
+            if arg not in known:
+                i += 1
+                continue
         cleaned.append(arg)
         i += 1
     return cleaned
@@ -94,17 +115,31 @@ def _label_for_code(returncode):
         return f"exit {returncode}"
 
 
-def _stop_child(proc, timeout=30):
-    """Forward a stop signal to a running child and wait for it to exit."""
+def _terminal_ctrl_c_reached_child():
+    """Whether a Ctrl+C typed in the terminal went to the child as well: the
+    terminal sends it to every process of its foreground group (on Windows,
+    to every process on the console)."""
+    try:
+        if sys.platform == "win32":
+            return bool(sys.stdin) and sys.stdin.isatty()
+        return os.tcgetpgrp(sys.stdin.fileno()) == os.getpgrp()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _stop_child(proc, timeout=30, forward=True):
+    """Forward a stop signal to a running child and wait for it to exit.
+    forward=False when the child got the signal already."""
     if proc.poll() is not None:
         return
-    try:
-        if sys.platform != "win32":
-            proc.send_signal(signal.SIGINT)
-        else:
-            proc.terminate()
-    except OSError:
-        return
+    if forward:
+        try:
+            if sys.platform != "win32":
+                proc.send_signal(signal.SIGINT)
+            else:
+                proc.terminate()
+        except OSError:
+            return
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -127,6 +162,27 @@ def _overall_auth(results):
     return "unknown"
 
 
+def daemon_status_path():
+    """The parent's status file: OFSC_STATUS_FILE, else status.json in the
+    config folder. Not a profile folder: a child writes its own profile's
+    status.json there, main_profile's included."""
+    override = (os.getenv(status_file.STATUS_ENV) or "").strip()
+    if override:
+        return override
+    import ofscraper.utils.paths.common as common_paths
+
+    return common_paths.get_config_home() / "status.json"
+
+
+def _failing_alerts():
+    try:
+        import ofscraper.main.close.alerts as alerts
+
+        return sorted(alerts.current())
+    except Exception:
+        return []
+
+
 def _write_daemon_status(state, results, next_pass_at=None, last_success=None):
     payload = {
         "version": status_file.VERSION,
@@ -139,7 +195,10 @@ def _write_daemon_status(state, results, next_pass_at=None, last_success=None):
         "profiles": dict(results),
         "last_success": last_success,
     }
-    status_file.write_custom(payload)
+    failing = _failing_alerts()
+    if failing:
+        payload["failing_alerts"] = failing
+    status_file.write_custom(payload, path=daemon_status_path())
     return payload
 
 
@@ -167,9 +226,22 @@ def run_profiles_pass(
         _write_daemon_status("running", state_results, next_pass_at=None, last_success=last_success)
         proc = popen(cmd, env=_child_env())
         try:
-            returncode = proc.wait()
-        except BaseException:
-            _stop_child(proc, timeout=stop_timeout)
+            while True:
+                try:
+                    returncode = proc.wait(timeout=status_file.HEARTBEAT_INTERVAL)
+                    break
+                except subprocess.TimeoutExpired:
+                    # a pass can take hours: health reads the heartbeat
+                    _write_daemon_status(
+                        "running", state_results, next_pass_at=None, last_success=last_success
+                    )
+        except BaseException as exc:
+            terminal_ctrl_c = (
+                isinstance(exc, KeyboardInterrupt)
+                and not isinstance(exc, exit_context.SigtermInterrupt)
+                and _terminal_ctrl_c_reached_child()
+            )
+            _stop_child(proc, timeout=stop_timeout, forward=not terminal_ctrl_c)
             raise
 
         if returncode == int(exit_status.AUTH):
@@ -177,7 +249,8 @@ def run_profiles_pass(
         elif returncode in (int(exit_status.OK), int(exit_status.PARTIAL)):
             auth_state = "ok"
         else:
-            auth_state = "unknown"
+            # this run didn't get as far as the login: keep what was known
+            auth_state = (state_results.get(profile) or {}).get("auth", "unknown")
 
         if returncode not in (int(exit_status.OK), int(exit_status.PARTIAL)):
             all_ok = False
@@ -200,6 +273,20 @@ def run_profiles_pass(
     if profiles and all_ok:
         last_success = _now_iso()
     return state_results, last_success
+
+
+def _pass_outcome(profiles, results):
+    """The worst exit code of this pass's children, for the daemon_pass alert."""
+    worst = exit_status.OK
+    for profile in profiles:
+        code = (results.get(profile) or {}).get("status")
+        try:
+            code = exit_status.ExitCode(code)
+        except ValueError:
+            code = exit_status.ERROR
+        if exit_status._SEVERITY[code] > exit_status._SEVERITY[worst]:
+            worst = code
+    return worst
 
 
 def _sleep_until(target_dt, wakeup=None, sleep_fn=time.sleep):
@@ -232,6 +319,9 @@ def run_multi_profile_daemon(
     jitter = float(getattr(args, "daemon_jitter", 0) or 0)
     wakeup = daemon_schedule.DaemonWakeup()
     wakeup.install()
+    # the alerts' state goes in the parent's file, not a profile's
+    status_file.set_path(daemon_status_path())
+    import ofscraper.main.close.alerts as alerts
 
     results = {}
     last_success = None
@@ -248,6 +338,7 @@ def run_multi_profile_daemon(
                 last_success=last_success,
             )
             passes += 1
+            alerts.after_pass(_pass_outcome(profiles, results))
             if max_passes is not None and passes >= max_passes:
                 return results
 
