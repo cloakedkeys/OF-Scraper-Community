@@ -52,7 +52,9 @@ def range_text(username, area, after):
 def start_source(after):
     """Where the scan's start came from, for the range line."""
     current = settings.get_settings()
-    if getattr(current, "after", None) is not None:
+    given = getattr(current, "after", None)
+    # the check commands set after=0 themselves: every post, no --after
+    if given is not None and not (isinstance(given, (int, float)) and given == 0):
         if getattr(current, "redownload", False):
             return "--redownload"
         # imported here: the action prompt imports this module

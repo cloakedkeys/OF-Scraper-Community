@@ -74,6 +74,7 @@ def run(monkeypatch):
     monkeypatch.setattr(scan_range, "_menu", False)
     monkeypatch.setattr(scan_range, "_hint_shown", False)
     monkeypatch.setattr(action_prompts, "_session_values", None)
+    monkeypatch.setattr(action_prompts, "_redownload_answered", False)
     monkeypatch.setattr(settings, "get_settings", lambda: state.settings)
     monkeypatch.setattr(settings, "get_args", lambda copy=False: state.settings)
     monkeypatch.setattr(settings, "update_args", lambda args: None)
@@ -307,3 +308,24 @@ def test_after_from_the_command_line_is_named_in_a_menu_run(run, monkeypatch):
     menu.main_menu_action()
 
     assert run.log.ranges()[0].endswith(" to now (--after)")
+
+
+def test_a_check_command_scan_is_a_full_scan(run):
+    # post_check and msg_check set after=0 themselves: no --after was given
+    import ofscraper.commands.check as check
+
+    check.set_after_check_mode()
+    timeline.time_log("user", 0)
+
+    assert run.log.ranges()[0].endswith(" to now (full scan)")
+
+
+def test_the_menu_check_table_is_a_full_scan(run):
+    # "Browse and pick media" never asks the redownload question
+    import ofscraper.commands.check as check
+
+    action_prompts._apply_action("Browse and pick media (check table)")
+    check.set_after_check_mode()
+    messages.time_log("user", 0)
+
+    assert run.log.ranges()[0].endswith(" to now (full scan)")

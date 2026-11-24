@@ -14,6 +14,8 @@ import ofscraper.utils.settings as settings
 REDOWNLOAD_ARGS = ("after", "force_all", "no_api_cache")
 # their values from the command line, before any answer changed them
 _session_values = None
+# whether this run's prompt got a Yes to the redownload question
+_redownload_answered = False
 # what the Action Menu returns for "Browse and pick media (check table)" (#425)
 CHECK_TABLE = "check"
 # the Action Menu draws a line above these, and one at the end
@@ -75,7 +77,8 @@ def _apply_action(answer):
 
 
 def restore_session_values(args):
-    global _session_values
+    global _session_values, _redownload_answered
+    _redownload_answered = False
     if _session_values is None:
         _session_values = {key: getattr(args, key, None) for key in REDOWNLOAD_ARGS}
     for key, value in _session_values.items():
@@ -85,9 +88,7 @@ def restore_session_values(args):
 def redownload_answered():
     """Whether this run's --after came from a Yes to the redownload question
     rather than the command line."""
-    if _session_values is None:
-        return False
-    return getattr(settings.get_args(), "after", None) != _session_values["after"]
+    return _redownload_answered
 
 
 def restore_session_args():
@@ -112,6 +113,7 @@ def check_table_prompt() -> str:
 
 
 def redownload_prompt(args=None):
+    global _redownload_answered
     args = args or settings.get_args()
     answer = promptClasses.getChecklistSelection(
         message="Would you like to redownload all files",
@@ -119,6 +121,7 @@ def redownload_prompt(args=None):
         default=False,
     )
     if answer:
+        _redownload_answered = True
         args.force_all = True
         args.no_api_cache = True
         args.after = arrow.get("2000")
