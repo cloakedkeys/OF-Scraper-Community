@@ -424,3 +424,83 @@ def test_key_mode_cdrm_with_a_server_of_your_own(home, monkeypatch):
     status, detail = result(doctor.run(), "key files")
     assert status == "WARN" and "doesn't work" not in detail
     assert "127.0.0.1" in detail and "cookies" in detail and SECRET not in detail
+
+
+# --- second review round ---
+
+@pytest.mark.parametrize("reply", ["{}", "[]", '{"data": {"version": "x"}}', '{"errors": ["x"]}'])
+def test_online_stash_with_an_odd_reply_is_a_finding(home, monkeypatch, reply):
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            body = reply.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        monkeypatch.setenv("STASH_URL", f"http://127.0.0.1:{server.server_port}/graphql")
+        report = doctor.Report()
+        doctor.check_stash(report)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+    status, detail = result(report, "Stash")
+    assert status == "FAIL" and "unexpected reply" in detail
+
+
+@pytest.mark.parametrize("text", ["null", "123", "true"])
+def test_an_auth_file_holding_null_or_a_number_is_a_finding(home, text):
+    write_config(home, {"main_profile": "main_profile"})
+    path = write_auth(home)
+    path.write_text(text, encoding="utf-8")
+    assert result(doctor.run(), "OnlyFans auth")[0] == "FAIL"
+
+
+def test_free_space_that_cant_be_read_is_a_finding_not_a_crash(home, tmp_path, monkeypatch):
+    save = tmp_path / "library"
+    save.mkdir()
+    write_config(home, {"file_options": {"save_location": str(save)}})
+    real = doctor.shutil.disk_usage
+
+    def disk_usage(path):
+        if str(path) == str(save):
+            raise PermissionError(13, "Permission denied")
+        return real(path)
+
+    monkeypatch.setattr(doctor.shutil, "disk_usage", disk_usage)
+    status, detail = result(doctor.run(), "save folder")
+    assert status == "PASS" and "free space can't be read" in detail
+
+
+def test_a_linked_save_folder_is_measured_on_the_links_target(home, tmp_path, monkeypatch):
+    """As #795's free-space check: a link is followed first, even to a
+    folder that's missing, so the disk measured is the target's."""
+    target = tmp_path / "other_disk"
+    target.mkdir()
+    links = tmp_path / "links"
+    links.mkdir()
+    save = links / "library"
+    try:
+        save.symlink_to(target / "not" / "made", target_is_directory=True)
+    except OSError:
+        pytest.skip("can't make a symbolic link here")
+    write_config(home, {"file_options": {"save_location": str(save)},
+                        "download_options": {"system_free_min": 1000}})
+    real = doctor.of_env.getattr
+    monkeypatch.setattr(doctor.of_env, "getattr",
+                        lambda key, *a, **k: "" if key == "DISK_SPACE_CHECK_PATH" else real(key, *a, **k))
+    status, detail = result(doctor.run(), "free-space limit")
+    assert detail.startswith(f"1000 bytes, measured at {target.resolve()},")
