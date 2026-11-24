@@ -105,7 +105,7 @@ def default_media_root():
 def final_path(path):
     """The path a file is saved at: shortened to what the system allows,
     unless --original or truncation_default: false turns that off."""
-    if settings.get_settings().trunicate:
+    if getattr(settings.get_settings(), "trunicate", True):
         return paths.truncate(pathlib.Path(path))
     return pathlib.Path(os.path.normpath(path))
 

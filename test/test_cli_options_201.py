@@ -122,6 +122,29 @@ def test_a_long_name_is_shortened_by_default(naming):
 LONG_FOLDER = "{date}/" + "/".join(["d" * 60] * 5)
 
 
+def _long_paths_on_disk():
+    """Whether this system can create a path over 260 characters: on Windows
+    only with LongPathsEnabled set."""
+    import sys
+
+    if sys.platform != "win32":
+        return True
+    import winreg
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem"
+        ) as key:
+            return winreg.QueryValueEx(key, "LongPathsEnabled")[0] == 1
+    except OSError:
+        return False
+
+
+needs_long_paths = pytest.mark.skipif(
+    not _long_paths_on_disk(), reason="Windows without LongPathsEnabled can't create these"
+)
+
+
 @pytest.fixture
 def on_windows(monkeypatch):
     monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Windows")
@@ -138,6 +161,7 @@ def test_original_leaves_the_folder_of_a_long_path_whole(naming, monkeypatch, on
     assert len(str(media.filepath)) > 300
 
 
+@needs_long_paths
 def test_original_leaves_a_temp_file_in_a_long_folder_whole(naming, monkeypatch, on_windows):
     naming("{text}.{ext}", "short", "--original")
     monkeypatch.setattr(placeholder.data, "get_dirformat", lambda *a, **k: LONG_FOLDER)
@@ -149,6 +173,7 @@ def test_original_leaves_a_temp_file_in_a_long_folder_whole(naming, monkeypatch,
     assert temp.tempfilepath.parent.is_dir() and len(str(temp.tempfilepath)) > 300
 
 
+@needs_long_paths
 @pytest.mark.parametrize("options", [(), ("--original",)])
 def test_a_clashing_name_gets_its_media_id_whole_only_with_original(
     naming, tmp_path, on_windows, options
@@ -167,3 +192,12 @@ def test_a_clashing_name_gets_its_media_id_whole_only_with_original(
     whole = target.with_name(f"{target.stem}_71.jpg")
     assert (got == whole) == bool(options)
     assert got.suffix == ".jpg" and got.read_bytes() == b"this download"
+
+
+def test_settings_without_truncation_shorten_by_default(monkeypatch):
+    # settings built without the trunicate key (as some callers and tests
+    # have) shorten, as before, rather than fail
+    monkeypatch.setattr(placeholder.settings, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Linux")
+    out = placeholder.final_path(f"/data/{'a' * 400}.jpg")
+    assert out.suffix == ".jpg" and len(out.name) < 400
