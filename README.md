@@ -40,6 +40,8 @@ Upstream hasn't been updated since April 2026. This fork keeps it working:
 
 This fork is on PyPI as **`ofscraper-community`**. The command is still `ofscraper`.
 
+For a first install in order, ffmpeg and DRM key setup, updating, and going back to an earlier version, see the [install and update guide](INSTALL.md).
+
 **Requirements:**
 - Python 3.11 or higher.
 - ffmpeg 6 or newer, only for protected (DRM) videos.
