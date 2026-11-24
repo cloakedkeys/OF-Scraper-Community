@@ -69,11 +69,20 @@ def dupefilterPost(post):
 
 
 # media filters
-def ele_count_filter(media):
+def ele_count_filter(media, username=None):
+    """The download cap (max_post_count): keep the newest media. The order
+    of what's kept is left to final_media_sort (--media-sort, --media-desc)."""
     count = settings.get_settings().max_post_count or None
-    if count:
-        return media[:count]
-    return media
+    if not count or len(media) <= count:
+        return media
+    media = sorted(
+        media, key=lambda item: (undated_first(item.post.date), item.id, item.count)
+    )
+    log.info(
+        f"[{username}] {len(media) - count} media left out by max_post_count "
+        f"({count}): only the newest {count} are kept"
+    )
+    return media[-count:]
 
 
 def mediatype_type_filter(media):
