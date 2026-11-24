@@ -1,6 +1,7 @@
 """Long paths are cut to fit: Windows' 259-character MAX_PATH, Linux's file-name limit."""
 
 import pathlib
+import unicodedata
 
 import pytest
 
@@ -134,3 +135,29 @@ def test_a_linux_extension_over_the_name_limit_says_so(monkeypatch):
     monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "3")
     with pytest.raises(ValueError, match="no room"):
         paths._linux_truncateHelper("/data/.txt")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["💀" * 100 + ".txt", "💀" * 100, ".longext"],
+    ids=["ext", "no-ext", "ext-only"],
+)
+def test_a_mac_name_with_no_room_for_a_character_says_so(monkeypatch, name):
+    # room for less than one emoji (4 bytes), or an extension that alone is
+    # over the limit: nothing of the name would be left
+    monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
+    monkeypatch.setenv("MAC_MAX_PATH", "7" if name.endswith(".txt") else "3")
+    with pytest.raises(ValueError, match="no room"):
+        paths.truncate(f"/Users/someone/d/{name}")
+
+
+@pytest.mark.parametrize("char", ["ǖ", "ᾂ", "한"], ids=["latin", "greek", "hangul"])
+def test_a_mac_name_fits_hfs_plus_decomposed_form_too(monkeypatch, char):
+    # HFS+ stores a name decomposed (NFD) and allows 255 UTF-16 units of it:
+    # "ǖ" is 2 bytes of UTF-8 but 3 units decomposed
+    monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
+    out = paths.truncate(f"/Volumes/external/d/{char * 300}.mp4")
+    nfd = unicodedata.normalize("NFD", out.name)
+    assert len(out.name.encode("utf-8")) <= 255
+    assert len(nfd.encode("utf-16-le")) // 2 <= 255
+    assert out.name.endswith(".mp4") and len(out.name) > 4
