@@ -319,3 +319,19 @@ def test_no_count_when_the_name_is_already_unique(naming, name):
     _, media = naming("{%s}.{ext}" % name, "hello", media=2)
     assert not any(re.search(r"_[12]\.jpg$", item) for item in media), media
     assert len(set(media)) == 2
+
+
+# A post's media and its text file get the same {text} (#744).
+
+
+@pytest.mark.parametrize(
+    "replacer, expected",
+    [("-", "one-two-three-four"), ("_", "one_two_three_four"),
+     (".", "one.two.three.four"), (" ", "one two three four")],
+)
+def test_media_and_text_files_cut_the_caption_alike(naming, replacer, expected):
+    text, (media,) = naming(
+        "{text}.{ext}", "one two three four five six",
+        "--text-type", "word", "--textlength", "4", "--space-replacer", replacer,
+    )
+    assert (text, media) == (f"{expected}.txt", f"{expected}.jpg")
