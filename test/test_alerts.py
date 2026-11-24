@@ -163,6 +163,59 @@ def test_creator_failing_with_rejected_login_stops_the_pass(sent, monkeypatch, s
     assert [a["kind"] for a in sent.script] == ["login"]
 
 
+class _Session:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def test_rejected_login_stops_the_creator_loop(sent, monkeypatch):
+    # the creator loop catches every error a creator raises; a rejected login
+    # must still end the run, not carry on with the next creator
+    import asyncio
+
+    monkeypatch.setattr(checkers.init, "auth_status", lambda: ("DOWN", None))
+    monkeypatch.setattr(checkers.sites, "is_fansly", lambda: False)
+    monkeypatch.setattr(command.log, "traceback_", lambda *a: None, raising=False)
+    tried = []
+
+    async def process_user(self, ele, c, action_func):
+        tried.append(ele.name)
+        try:
+            raise Forbidden(401)
+        except Forbidden as e:  # as scraper.py's action loop does
+            command.log_user_failure(ele.name, e, what="download")
+
+    monkeypatch.setattr(command.CommandManager, "_process_user", process_user)
+    users = [SimpleNamespace(name="a creator"), SimpleNamespace(name="another creator")]
+    with pytest.raises(checkers.LoginRejected):
+        asyncio.run(command.CommandManager()._process_users_normal(users, _Session(), None))
+    assert tried == ["a creator"]
+    assert exit_status.code() == exit_status.AUTH
+
+
+def test_rejected_login_in_an_area_stops_the_scan(sent, monkeypatch):
+    import asyncio
+    import ofscraper.data.posts.post as post
+
+    monkeypatch.setattr(checkers.init, "auth_status", lambda: ("DOWN", None))
+    monkeypatch.setattr(checkers.sites, "is_fansly", lambda: False)
+    monkeypatch.setattr(post.log, "traceback_", lambda *a: None, raising=False)
+
+    async def timeline():  # an area catches its own errors, as post.py's do
+        try:
+            raise Forbidden(401)
+        except Forbidden as e:
+            post.log_area_failure("a creator", "Timeline", e)
+
+    task = post.process_single_task(timeline, username="a creator", area="Timeline")
+    with pytest.raises(checkers.LoginRejected):
+        asyncio.run(task(sem=asyncio.Semaphore(1)))
+    assert [a["kind"] for a in sent.script] == ["login"]
+
+
 def test_creator_failing_with_a_block_carries_on(sent, monkeypatch):
     asked = []
     monkeypatch.setattr(checkers.init, "auth_status", lambda: asked.append(1) or ("UP", None))
