@@ -249,9 +249,9 @@ _WINDOWS_DEVICE = re.compile(r"(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?=\s*(\.
 
 def _safe_parts(path, literal=None):
     """path with no folder or file name that is only dots ("." or ".." would
-    be this folder or the one above; Windows drops trailing spaces, so ". "
-    is ".") or a Windows device name ("CON" gets "CON_"): a caption or a name
-    can be either. literal marks each character the template itself wrote: a
+    be this folder or the one above; Windows drops trailing spaces and dots,
+    so ". " is "." and " ." nothing) or a Windows device name ("CON" gets
+    "CON_"): a caption or a name can be either. literal marks each character the template itself wrote: a
     name made only of those (dir_format ".", to save in save_location) is
     kept."""
     path = str(path)
@@ -262,7 +262,7 @@ def _safe_parts(path, literal=None):
         start += len(part)
         if len(out) % 2:
             pass
-        elif re.fullmatch(r"\.[.\s]*", part) and not own:
+        elif re.fullmatch(r"\s*\.[.\s]*", part) and not own:
             part = "_"
         else:
             part = _WINDOWS_DEVICE.sub(r"\1_", part)
@@ -289,12 +289,23 @@ def _safe_format(template, variables):
 
 def _safe_name(out, template, variables):
     """out through _safe_parts. When out is the template filled in, a "." the
-    template writes is kept, as in _safe_format."""
+    template writes is kept, as in _safe_format. Otherwise the folders the
+    template writes before any placeholder ("./" in "./{text}.{ext}") are
+    kept when out starts with them."""
     try:
         same = out == template.format(**variables)
     except Exception:
         same = False
-    return _safe_format(template, variables) if same else _safe_parts(out)
+    if same:
+        return _safe_format(template, variables)
+    try:
+        first = next(iter(string.Formatter().parse(template)), ("",))[0] or ""
+    except ValueError:
+        first = ""
+    prefix = first[: max(first.rfind("/"), first.rfind("\\")) + 1]
+    if prefix and out.startswith(prefix):
+        return _safe_parts(out, [True] * len(prefix) + [False] * (len(out) - len(prefix)))
+    return _safe_parts(out)
 
 
 class Placeholders(basePlaceholder):

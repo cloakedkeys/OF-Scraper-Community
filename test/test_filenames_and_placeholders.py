@@ -278,15 +278,27 @@ def test_a_dir_format_of_a_dot_still_saves_in_the_save_location(naming, monkeypa
     assert path == tmp_path / "data" / folder
 
 
-@pytest.mark.parametrize("caption", [". ", ".. ", ". .", "..  "])
+@pytest.mark.parametrize("caption", [". ", ".. ", ". .", "..  ", " .", " .. "])
 def test_a_caption_of_dots_and_spaces_is_not_a_folder_name(naming, caption):
-    # Windows drops the trailing spaces, leaving "." or ".."
+    # Windows drops the trailing spaces and dots, leaving "." or ".." or nothing
     text, (media,) = naming("{text}/{filename}.{ext}", caption)
     for name in (text, media):
-        assert not any(re.fullmatch(r"\.[.\s]*", part) for part in re.split(r"[/\\]", name))
+        assert not any(re.fullmatch(r"\s*\.[.\s]*", part) for part in re.split(r"[/\\]", name))
 
 
 def test_a_file_format_of_a_dot_folder_is_kept(naming):
     # "./" written in file_format is the folder itself, not a caption's dots
     text, (media,) = naming("./{text}.{ext}", "a caption")
     assert (text, media) == ("./a caption.txt", "./a caption.jpg")
+
+
+def test_a_dot_folder_file_format_is_kept_when_the_name_is_not_the_template_filled_in():
+    # a text file's name built otherwise than by filling in file_format (#738
+    # leaves {filename} out beside {text}): the "./" file_format writes before
+    # any placeholder is still its own, not a caption's dots
+    variables = {"text": "a caption", "filename": "a caption", "ext": "txt"}
+    out = placeholder._safe_name("./a caption.txt", "./{text} {filename}.{ext}", variables)
+    assert out == "./a caption.txt"
+    # a caption's own dots after it are still not a folder
+    out = placeholder._safe_name("./../a.txt", "./{text}/{filename}.{ext}", variables)
+    assert out == "./_/a.txt"
