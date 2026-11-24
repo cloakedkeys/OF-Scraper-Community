@@ -80,3 +80,38 @@ def test_table_time_field_accepts_decimal_seconds():
     assert [i.value for i in inputs] == ["1", "30", ""]
     field.update_table_min(90.7)
     assert [i.value for i in inputs] == ["", "1", "30"]
+
+
+# --original and truncation_default: false leave a long path as the template
+# gives it (#740).
+
+import asyncio
+
+import ofscraper.classes.placeholder as placeholder
+from naming_helpers import make_post, naming  # noqa: F401  (fixture)
+
+LONG_CAPTION = " ".join(["word"] * 120)  # 599 characters: over every system's limit
+
+
+def _long_paths(naming, *options):
+    """The path of a long-captioned post's media file and text file."""
+    naming("{text}.{ext}", LONG_CAPTION, *options)  # applies the settings
+    post = make_post(LONG_CAPTION)
+    return [
+        asyncio.run(holder.init(create=False)).filepath
+        for holder in (
+            placeholder.Placeholders(post.all_media[0], "jpg"),
+            placeholder.Textholders(post, "txt"),
+        )
+    ]
+
+
+def test_original_leaves_a_long_name_whole(naming):
+    media, text = _long_paths(naming, "--original")
+    assert (media.name, text.name) == (f"{LONG_CAPTION}.jpg", f"{LONG_CAPTION}.txt")
+
+
+def test_a_long_name_is_shortened_by_default(naming):
+    media, text = _long_paths(naming)
+    assert len(media.name) < len(LONG_CAPTION) and media.suffix == ".jpg"
+    assert len(text.name) < len(LONG_CAPTION) and text.suffix == ".txt"
