@@ -14,6 +14,7 @@ something that would make the start ask a question.
 """
 
 import argparse
+import contextlib
 import json
 import os
 import pathlib
@@ -66,12 +67,13 @@ def config_path(given=None):
 def read_config(path, report):
     """The settings in config.json, or None for the built-in defaults."""
     import ofscraper.utils.config.file as config_file
+    import ofscraper.utils.encoding as encoding
 
     if not path.exists():
         report.add(WARN, "config file", f"{path} isn't there: a run makes one with the defaults")
         return None
     try:
-        text = path.read_text(encoding="utf-8-sig")
+        text = encoding.read_text_file(path)
     except (OSError, UnicodeDecodeError) as error:
         report.add(FAIL, "config file", f"{path} can't be read: {error}")
         return None
@@ -89,9 +91,16 @@ def read_config(path, report):
     return config
 
 
+def _config(config):
+    """What a config getter is given: the settings, or False for the
+    defaults. An empty {} is the defaults too: the getters would open
+    config.json through the settings for it."""
+    return config or False
+
+
 def _get(getter, config):
     """A config getter's value for this config, or the default."""
-    return getter(config=config if config is not None else False)
+    return getter(config=_config(config))
 
 
 def profile_folder(config, profile, path):
@@ -104,21 +113,32 @@ def profile_folder(config, profile, path):
 
 def check_onlyfans_auth(folder, report):
     import ofscraper.utils.auth.utils.dict as auth_dict
+    import ofscraper.utils.encoding as encoding
 
     path = folder / of_env.getattr("authFile")
     if not path.exists():
         report.add(FAIL, "OnlyFans auth", f"{path} isn't there")
         return
     try:
-        auth = auth_dict.get_auth_dict(path.read_text(encoding="utf-8-sig"))
+        text = encoding.read_text_file(path)
+        # get_auth_dict reads the profile's file through the settings for ""
+        if not text.strip():
+            report.add(FAIL, "OnlyFans auth", f"{path} is empty")
+            return
+        auth = auth_dict.get_auth_dict(text)
     except (OSError, ValueError, AttributeError) as error:
         report.add(FAIL, "OnlyFans auth", f"{path} can't be read: {type(error).__name__}")
         return
     if not isinstance(auth, dict):
         report.add(FAIL, "OnlyFans auth", f"{path} doesn't hold the auth fields")
         return
-    blank = [k for k in OF_AUTH_KEYS if auth.get(k) in (None, "")]
-    if blank:
+    # a run strips each value (auth/data.py fix_val), which fails on a
+    # number or true/false, and asks for one that is only spaces
+    not_text = [k for k in OF_AUTH_KEYS if auth.get(k) is not None and not isinstance(auth.get(k), str)]
+    blank = [k for k in OF_AUTH_KEYS if k not in not_text and not (auth.get(k) or "").strip()]
+    if not_text:
+        report.add(FAIL, "OnlyFans auth", f"not text in {path} (put the value in quotes): {', '.join(not_text)}")
+    elif blank:
         report.add(FAIL, "OnlyFans auth", f"blank in {path}: {', '.join(blank)}")
     else:
         report.add(PASS, "OnlyFans auth", f"{path} (every field set; the login itself is checked with --online)")
@@ -192,13 +212,18 @@ def check_ffprobe(ffmpeg_path, report):
         report.add(WARN, "ffprobe", "not found beside ffmpeg or in PATH: media lengths come from ffmpeg instead")
 
 
-def check_keys(config, report):
+def check_keys(config, site, report):
+    import ofscraper.sites as sites
     import ofscraper.utils.config.data as data
     from ofscraper.commands.scraper.actions.download.utils import keyhelpers
 
+    if site == sites.FANSLY:
+        # as at a run's start (system/network.py): Fansly video has no DRM
+        report.add(SKIP, "key files", "not used: Fansly videos aren't protected")
+        return
     mode = _get(data.get_key_mode, config)
-    client_id = _get(data.get_client_id, config) if config is not None else None
-    private_key = _get(data.get_private_key, config) if config is not None else None
+    client_id = _get(data.get_client_id, config) if config else None
+    private_key = _get(data.get_private_key, config) if config else None
     if mode == "cdrm":
         if keyhelpers.cdm_key_problems("manual", client_id, private_key):
             fix = "then set client-id and private-key to your key files"
@@ -235,11 +260,24 @@ def _device(path):
         return None
 
 
+def _check_path(save):
+    """The folder the free-space limit is measured at: OFSC_DISK_SPACE_CHECK_PATH,
+    or when that is empty the disk that holds the save folder, measured at
+    its nearest folder that is there (free.get_check_path's rule)."""
+    measured = of_env.getattr("DISK_SPACE_CHECK_PATH")
+    if measured:
+        return measured
+    path = save.absolute()
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return path
+
+
 def check_folders(config, report):
     import ofscraper.utils.config.data as data
     import ofscraper.utils.paths.common as common_paths
 
-    save = pathlib.Path(os.path.expanduser(common_paths.get_save_location(config if config is not None else False)))
+    save = pathlib.Path(os.path.expanduser(common_paths.get_save_location(_config(config))))
     if save.is_dir():
         report.add(PASS, "save folder", f"{save}, {_free(save)}")
     else:
@@ -258,7 +296,7 @@ def check_folders(config, report):
     if not limit:
         report.add(PASS, "free-space limit", "off")
         return
-    measured = of_env.getattr("DISK_SPACE_CHECK_PATH")
+    measured = _check_path(save)
     if _device(measured) is None:
         report.add(FAIL, "free-space limit", f"measures {measured}, which isn't there (set OFSC_DISK_SPACE_CHECK_PATH)")
     elif save.is_dir() and _device(measured) != _device(save):
@@ -290,7 +328,7 @@ def _status(report, check):
     return found[0]["status"] if found else None
 
 
-def check_postgres(report):
+def check_postgres(report, site):
     import ofscraper.db.postgres as postgres
 
     if not postgres.url():
@@ -299,7 +337,9 @@ def check_postgres(report):
         report.add(SKIP, "PostgreSQL", "the database setting failed above")
         return
     try:
-        version = postgres.POSTGRES.check()
+        # the site is given: the settings would parse doctor's own
+        # command line, as the start hasn't set it yet
+        version = postgres.POSTGRES.check(site)
     except Exception as error:
         report.add(FAIL, "PostgreSQL", str(error))
         return
@@ -353,13 +393,13 @@ def check_signing_rules(report):
 
 
 def check_stash(report):
-    url = os.environ.get("STASH_URL", "").strip()
+    from ofscraper.commands.stash_sync import API_KEY_ENV, URL_ENV, StashClient, StashError
+
+    url = os.environ.get(URL_ENV, "").strip()
     if not url:
         return
-    from ofscraper.commands.stash_sync import StashClient, StashError
-
     try:
-        data = StashClient(url, os.environ.get("STASH_API_KEY"), timeout=15).call(
+        data = StashClient(url, os.environ.get(API_KEY_ENV), timeout=15).call(
             "query { version { version } }", retries=0
         )
     except (StashError, OSError, ValueError) as error:
@@ -374,7 +414,7 @@ def run_online(report, config=None, profile=None, site=None):
     an offline check found what it needs broken."""
     import ofscraper.sites as sites
 
-    check_postgres(report)
+    check_postgres(report, site)
     site_name = sites.SITE_NAMES[site]
     auth_check = "OnlyFans auth" if site == sites.ONLYFANS else "Fansly auth"
     login = f"{site_name} login"
@@ -406,7 +446,7 @@ def run(config=None, profile=None, site=None, online=False):
     check_auth(settings, folder, site, report)
     ffmpeg_path = check_ffmpeg(settings, report)
     check_ffprobe(ffmpeg_path, report)
-    check_keys(settings, report)
+    check_keys(settings, site, report)
     check_folders(settings, report)
     check_database(report)
     if online:
@@ -426,8 +466,12 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="Print the results as JSON")
     parser.add_argument("--online", action="store_true", help="Also connect: PostgreSQL, the login, the signing rules and Stash. Not read-only: it starts the scraper as a run does")
     args = parser.parse_args(argv)
+    # with --json, what the start prints (a config made, log lines) goes to
+    # stderr, so stdout is only the JSON
+    quiet = contextlib.redirect_stdout(sys.stderr) if args.json else contextlib.nullcontext()
     try:
-        report = run(args.config, args.profile, args.site, online=args.online)
+        with quiet:
+            report = run(args.config, args.profile, args.site, online=args.online)
     except KeyboardInterrupt:
         parser.exit(130, "Stopped\n")
     if args.json:
