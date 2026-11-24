@@ -544,6 +544,10 @@ class Textholders(basePlaceholder):
         self._variables.update({"args": settings.get_args()})
 
         sanitized_name = ele.text_trunicate(ele.file_sanitized_text)
+        # with {text} in the name too, {filename} would repeat the caption:
+        # use the post id, as a media file's {filename} is its media id
+        if "text" in parse_safe(data.get_fileformat()):
+            sanitized_name = str(ele.id)
 
         self._variables.update({"quality": "source"})
         self._variables.update({"file_name": sanitized_name})
