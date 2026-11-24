@@ -68,3 +68,24 @@ def test_a_long_linux_name_fits_in_the_name_limit():
     size = paths.get_string_byte_size_unix
     # measured as the app measures it; as much as fits, one more letter would not
     assert size(out.name) <= 254 < size("a" + out.name)
+
+
+@pytest.mark.parametrize(
+    "folder", ["/Users/someone/d", "/Users/someone/" + "d" * 300], ids=["short", "long"]
+)
+@pytest.mark.parametrize(
+    "name", ["日本語のテキスト" * 16, "💀" * 100, "a" * 300], ids=["cjk", "emoji", "ascii"]
+)
+def test_a_long_mac_name_fits_in_255_bytes(monkeypatch, folder, name):
+    monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
+    out = paths.truncate(f"{folder}/{name}.mp4")
+    size = len(out.name.encode("utf-8"))
+    # as much as fits: one more character would not
+    assert size <= 255 < size + len(name[0].encode("utf-8"))
+    assert out.name.endswith(".mp4") and str(out.parent) == folder
+
+
+def test_a_short_mac_name_is_left_alone(monkeypatch):
+    monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
+    path = "/Users/someone/" + "d" * 300 + "/short.mp4"
+    assert str(paths.truncate(path)) == path

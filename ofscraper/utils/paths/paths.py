@@ -123,17 +123,18 @@ def _windows_truncateHelper(path):
 
 
 def _mac_truncateHelper(path):
+    # macOS limits each name, not the path, to 255 bytes of UTF-8
     path = pathlib.Path(os.path.normpath(path))
-    if len(str(path)) <= of_env.getattr("MAC_MAX_PATH"):
-        return path
     dir = path.parent
     file, ext = _split_ext(path.name)
-    maxlength = of_env.getattr("MAC_MAX_PATH") - len(ext)
-    newFile = f"{file[:maxlength]}{ext}"
-    final = pathlib.Path(dir, newFile)
-    log.debug(f"path: {final} path size: {len(str(final))}")
-    log.debug(f"path: {final} filename size: {len(str(final.name))}")
+    max_bytes = of_env.getattr("MAC_MAX_PATH") - _utf8_size(ext)
+    newFile = f"{_longest_fitting(file, _utf8_size, max_bytes)}{ext}"
+    log.debug(f"path: {path} filename bytesize: {_utf8_size(newFile)}")
     return pathlib.Path(dir, newFile)
+
+
+def _utf8_size(text):
+    return len(str(text).encode("utf-8"))
 
 
 def _linux_truncateHelper(path):
