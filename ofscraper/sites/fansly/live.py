@@ -95,7 +95,7 @@ def mask_url_secrets(url):
 
 _QUERY_IN_TEXT = re.compile(r"(\w+://[^\s?'\"]+)\?[^\s'\"]*")
 # the login in a link (http://user:password@host), as an OFSC_PROXY has it
-_LOGIN_IN_TEXT = re.compile(r"(\w+://)[^\s/@'\"]+@")
+_LOGIN_IN_TEXT = re.compile(r"([a-zA-Z][\w+.-]*://)[^\s/@'\"]+@")
 
 
 def strip_queries(text: str) -> str:
@@ -236,14 +236,28 @@ def ffmpeg_command(ffmpeg: str, url: str, out: pathlib.Path, user_agent: str = "
     return cmd
 
 
+def ffmpeg_can_use(proxy: str) -> bool:
+    """Whether ffmpeg sends its requests through this proxy. It only takes a
+    lower-case http:// address with a host, and connects directly otherwise."""
+    if not proxy.startswith("http://"):
+        return False
+    try:
+        return bool(urlparse(proxy).hostname)
+    except ValueError:
+        return False
+
+
 def ffmpeg_env(proxy: str) -> dict:
     """ffmpeg's environment with OFSC_PROXY as its proxy.
 
     ffmpeg reads ``http_proxy`` for every playlist reload and segment request,
     https ones included. It goes in the environment rather than -http_proxy so
     the proxy's login isn't in the command line, which other users can read.
-    ``no_proxy`` is dropped: OFSC_PROXY is for every request.
+    ``no_proxy`` is dropped: OFSC_PROXY is for every request. A proxy ffmpeg
+    would ignore is refused rather than connecting directly.
     """
+    if not ffmpeg_can_use(proxy):
+        raise ValueError("ffmpeg can only use an http:// proxy")
     env = {k: v for k, v in os.environ.items() if k.lower() not in ("no_proxy", "http_proxy")}
     env["http_proxy"] = proxy
     return env
@@ -733,12 +747,16 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
     save_location = common_paths.get_save_location()
     ffmpeg = ffmpeg_finder.get_ffmpeg()
     proxy = of_env.getattr("PROXY") or None
-    if proxy and not proxy.startswith("http://"):
-        # ffmpeg only uses an http:// proxy, and connects directly otherwise
-        log.warning(
-            "OFSC_PROXY isn't an http:// address, and ffmpeg can only use an "
-            "http:// proxy, so livestreams are recorded without the proxy"
+    if proxy and not ffmpeg_can_use(proxy):
+        # ffmpeg would connect directly, so nothing is recorded
+        log.error(
+            "Not recording Fansly livestreams: OFSC_PROXY is set, but ffmpeg "
+            "can only use an http:// proxy (http://host:port or "
+            "http://user:password@host:port) and would connect without it. "
+            "Set OFSC_PROXY to an http:// proxy, or unset it to record "
+            "without a proxy."
         )
+        return
 
     # playlists get one attempt each: a 403 means "fetch a fresh URL", not "retry"
     async with manager.Manager.session.aget_ofsession() as c, \

@@ -1231,6 +1231,12 @@ def test_the_proxy_reaches_ffmpeg_in_its_environment_not_its_arguments(tmp_path,
     assert "Pr0xyPassw0rd" not in caplog.text and "someone" not in caplog.text
 
 
+@pytest.mark.parametrize("scheme", ["http", "socks5h", "socks5+tls", "git+ssh"])
+def test_a_login_is_hidden_whatever_the_scheme(scheme):
+    out = live.strip_queries(f"Error opening input: {scheme}://someone:Pr0xyPassw0rd@127.0.0.1:3128")
+    assert out == f"Error opening input: {scheme}://{{hidden}}@127.0.0.1:3128"
+
+
 def test_without_a_proxy_ffmpeg_keeps_the_environment_it_had(tmp_path, monkeypatch):
     import sys
 
@@ -1280,13 +1286,34 @@ def test_an_empty_ofsc_proxy_means_no_proxy(monkeypatch, tmp_path, fansly_settin
     assert connected == [None]
 
 
-@pytest.mark.parametrize("proxy", ["https://127.0.0.1:3128", "socks5://127.0.0.1:1080"])
-def test_a_proxy_ffmpeg_cannot_use_is_warned_about(monkeypatch, tmp_path, fansly_settings, caplog, proxy):
+@pytest.mark.parametrize("proxy", [
+    "https://someone:Pr0xyPassw0rd@127.0.0.1:3128",
+    "socks5://someone:Pr0xyPassw0rd@127.0.0.1:1080",
+    "HTTP://someone:Pr0xyPassw0rd@127.0.0.1:3128",  # ffmpeg only matches lower-case http://
+    "someone:Pr0xyPassw0rd@127.0.0.1:3128",  # no scheme
+    "http://",  # no host
+])
+def test_a_proxy_ffmpeg_cannot_use_stops_the_recording(monkeypatch, tmp_path, fansly_settings, caplog, proxy):
+    # ffmpeg would connect straight to Fansly with this proxy, so nothing is
+    # recorded and the chat socket isn't opened either
     with caplog.at_level("WARNING", logger="shared"):
-        _run_with_proxy(monkeypatch, fansly_settings, proxy)
-    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING" and "OFSC_PROXY" in r.getMessage()]
-    assert len(warnings) == 1
-    assert "http://" in warnings[0]
+        calls, connected = _run_with_proxy(monkeypatch, fansly_settings, proxy)
+    assert calls == []
+    assert connected == []
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR" and "OFSC_PROXY" in r.getMessage()]
+    assert len(errors) == 1
+    assert "http://" in errors[0]
+    assert "Pr0xyPassw0rd" not in caplog.text
+
+
+@pytest.mark.parametrize("proxy", ["https://127.0.0.1:3128", "socks5://127.0.0.1:1080", "127.0.0.1:3128"])
+def test_ffmpeg_is_never_started_with_a_proxy_it_cannot_use(tmp_path, proxy):
+    import sys
+
+    seen = tmp_path / "seen.json"
+    with pytest.raises(ValueError):
+        asyncio.run(live.run_ffmpeg([sys.executable, "-c", FAKE_FFMPEG, str(seen)], proxy=proxy))
+    assert not seen.exists()
 
 
 def test_an_http_proxy_is_not_warned_about(monkeypatch, tmp_path, fansly_settings, caplog):
