@@ -880,3 +880,25 @@ def test_empty_key_placeholders_in_auth_json_arent_named(home, empty):
     status, detail = result(doctor.run(), "key files")
     assert status == "FAIL" and "private-key is in auth.json: it belongs in config.json" in detail
     assert "client-id and" not in detail
+
+
+@pytest.mark.parametrize("lists", ["active,expired", "Expired, ofscraper.active", "active,expired,vip"])
+def test_active_and_expired_together_are_every_subscription(home, monkeypatch, lists):
+    """A run reads active subscriptions for active and expired ones for
+    expired (subscriptions.py activeHelper, expiredHelper): both is all."""
+    config = {"advanced_options": {"default_user_list": lists}}
+    report = online_logged_in(home, monkeypatch, config, (5, 3))
+    assert [r for r in report.results if r["check"] == "creator filters"] == []
+
+
+def test_active_alone_is_still_a_creator_filter(home, monkeypatch):
+    config = {"advanced_options": {"default_user_list": "active"}}
+    assert result(online_logged_in(home, monkeypatch, config, (5, 3)), "creator filters")[0] == "WARN"
+
+
+def test_offline_hint_names_the_subscription_count(home):
+    write_config(home, {"main_profile": "main_profile"})
+    status, detail = result(doctor.run(), "login")
+    assert status == "SKIP" and "subscription count" in detail
+    status, detail = result(doctor.run(site="fansly"), "login")
+    assert status == "SKIP" and "subscription count" not in detail

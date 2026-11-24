@@ -707,10 +707,18 @@ def creator_filters(config):
     """The config settings that leave out some of the subscriptions."""
     import ofscraper.utils.config.data as data
 
-    every = {of_env.getattr("OFSCRAPER_RESERVED_LIST").lower(), of_env.getattr("OFSCRAPER_RESERVED_LIST_ALT").lower()}
+    def names(key):
+        return {of_env.getattr(key).lower(), of_env.getattr(f"{key}_ALT").lower()}
+
     filters = []
     user_lists = _lists(_get(data.get_default_userlist, config))
-    if user_lists and not every & set(user_lists):
+    chosen = set(user_lists)
+    # active and expired together read every subscription, as main does
+    # (subscriptions.py activeHelper and expiredHelper)
+    every = names("OFSCRAPER_RESERVED_LIST") & chosen or (
+        names("OFSCRAPER_ACTIVE_LIST") & chosen and names("OFSCRAPER_EXPIRED_LIST") & chosen
+    )
+    if user_lists and not every:
         filters.append(f"default_user_list ({', '.join(user_lists)}) selects only those lists")
     black_lists = _lists(_get(data.get_default_blacklist, config))
     if black_lists:
@@ -823,7 +831,8 @@ def run(config=None, profile=None, site=None, online=False):
     if online:
         run_online(report, config, profile, site, settings)
     else:
-        report.add(SKIP, "login", "run with --online to check the login, PostgreSQL and Stash")
+        count = ", the subscription count" if site == sites.ONLYFANS else ""
+        report.add(SKIP, "login", f"run with --online to check the login{count}, PostgreSQL and Stash")
     return report
 
 
