@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import itertools
+import locale
 import logging
 import pathlib
 import textwrap
@@ -26,19 +27,44 @@ async def get_text(username, values):
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
-def _holds(path, content):
-    """True when the text file at path holds exactly content."""
+def _run_together_text(text):
+    """What a version before #133 wrote for the same caption: the wrapped
+    lines run together with nothing between them, in the system's code page
+    rather than UTF-8. Where a line had a character the code page can't
+    encode (an emoji, on Windows), the write stopped before that line. A
+    file holding this is the post's own text, not another post's."""
+    encoding = locale.getpreferredencoding(False)
+    written = []
+    for line in textwrap.wrap(text, width=of_env.getattr("MAX_TEXT_LENGTH")):
+        try:
+            line.encode(encoding)
+        except UnicodeEncodeError:
+            break
+        written.append(line)
+    return "".join(written)
+
+
+def _holds(path, *contents):
+    """True when the text file at path holds exactly one of contents, read
+    as UTF-8 or, as versions before #133 wrote it, the system's code page."""
     try:
-        return pathlib.Path(path).read_text(encoding="utf-8") == content
-    except (OSError, UnicodeError):
+        data = pathlib.Path(path).read_bytes()
+    except OSError:
         return False
+    for encoding in ("utf-8", locale.getpreferredencoding(False)):
+        try:
+            if data.decode(encoding).replace("\r\n", "\n") in contents:
+                return True
+        except (UnicodeError, LookupError):
+            pass
+    return False
 
 
 # {post_id} and its alias {postid}
 _POST_ID = {"post_id", "postid"}
 
 
-def _own_path(path, ele, content):
+def _own_path(path, ele, *contents):
     """Where a post's text goes. A file template can give two posts the same
     name, e.g. captions that start with the same textlength words. A file
     with other content at path is another post's, so this post's text goes
@@ -57,7 +83,7 @@ def _own_path(path, ele, content):
         or _POST_ID & parse_safe(config_data.get_dirformat())
     ):
         return path
-    if not path.exists() or _holds(path, content):
+    if not path.exists() or _holds(path, *contents):
         return path
     stem = f"{path.stem}_{ele.id}"
     for n in itertools.count(1):
@@ -65,7 +91,7 @@ def _own_path(path, ele, content):
         # shortened as the name itself is, unless truncation is turned off
         if settings.get_settings().trunicate:
             own = pathlib.Path(paths.truncate(own))
-        if not own.exists() or _holds(own, content):
+        if not own.exists() or _holds(own, *contents):
             return own
 
 
@@ -93,7 +119,12 @@ async def _write_text(ele):
             new_ele.text, width=of_env.getattr("MAX_TEXT_LENGTH")
         )
         content = "\n".join(wrapped_text)
-        filepath = _own_path(placeholderObj.filepath, new_ele, content)
+        filepath = _own_path(
+            placeholderObj.filepath,
+            new_ele,
+            content,
+            _run_together_text(new_ele.text),
+        )
 
         # Check for existing file BEFORE marking the attempt. A file at a
         # name with {post_id} in it is kept as it is, even with other
