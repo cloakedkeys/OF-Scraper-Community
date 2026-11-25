@@ -4,6 +4,7 @@ import ofscraper.data.api.init as init
 import ofscraper.sites as sites
 import ofscraper.utils.auth.file as auth_file
 import ofscraper.utils.auth.make as make
+import ofscraper.utils.interactive as interactive
 
 log = logging.getLogger("shared")
 
@@ -92,12 +93,26 @@ def check_auth(include_main_menu=False):
             # before any prompt: in a daemon under Docker's tty: true a
             # prompt waits forever, so at least the wait is announced
             alerts.failing(alerts.LOGIN, f"{_site_label()} rejected the login; update the auth")
-            if sites.is_fansly():
-                fansly_auth.make_auth()
-                continue
-            _, choice = make.make_auth(
-                auth=auth_file.read_auth(), include_main_menu=include_main_menu
-            )
+            try:
+                if sites.is_fansly():
+                    fansly_auth.make_auth()
+                    continue
+                _, choice = make.make_auth(
+                    auth=auth_file.read_auth(), include_main_menu=include_main_menu
+                )
+            except interactive.NoConsoleError as e:
+                # no one can answer the auth prompt (a scheduled run, a
+                # --profiles child): end with "login failed", not the
+                # generic error
+                import ofscraper.main.close.exit_status as exit_status
+
+                log.error(
+                    f"{'Fansly' if sites.is_fansly() else 'OnlyFans'} rejected"
+                    " the login, and there's no"
+                    " interactive console to ask for new auth. Update the auth"
+                    " file, or run in a terminal."
+                )
+                raise SystemExit(exit_status.AUTH) from e
             if choice == "quit":
                 raise SystemExit(0)
             if choice == "main":
