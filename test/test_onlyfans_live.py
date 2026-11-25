@@ -342,7 +342,7 @@ def test_a_missing_chromium_says_how_to_install_it(monkeypatch, onlyfans_setting
         return [{"accountId": 1, "username": "creator_a"}, {"accountId": 2, "username": "creator_b"}]
 
     def capture(**kwargs):
-        raise live_capture.BrowserMissing(live_capture.INSTALL_HINT)
+        raise live_capture.BrowserMissing(live_capture.install_hint())
 
     monkeypatch.setattr(live, "get_online_streams", online)
     monkeypatch.setattr(live_capture, "playwright_ready", lambda: True)
@@ -354,9 +354,14 @@ def test_a_missing_chromium_says_how_to_install_it(monkeypatch, onlyfans_setting
     assert len(warnings) == 1
 
 
-def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypatch, onlyfans_settings, caplog):
+@pytest.mark.parametrize("dist", ["ofscraper-community", "ofscraper"])
+def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypatch, onlyfans_settings, caplog, dist):
     import builtins
 
+    import ofscraper.__version__ as version
+
+    # the hint names the package that is installed: datawhores publishes "ofscraper"
+    monkeypatch.setattr(version, "__dist_name__", dist)
     onlyfans_settings(live=True)
     real_import = builtins.__import__
 
@@ -369,8 +374,77 @@ def test_without_playwright_it_says_how_to_install_and_records_nothing(monkeypat
     monkeypatch.setattr(manager, "Manager", None)  # never reached
     with caplog.at_level("WARNING", logger="shared"):
         asyncio.run(live.run(False, asyncio.Event()))
-    assert 'pip install "ofscraper-community[live]"' in caplog.text
+    assert f'pip install "{dist}[live]"' in caplog.text
     assert "playwright install chromium" in caplog.text
+
+
+@pytest.fixture
+def first_use(monkeypatch):
+    """Playwright and Chromium missing; installing them makes them present."""
+    from ofscraper.utils.system import extras
+
+    state = SimpleNamespace(playwright=False, chromium=False, calls=[], works=True)
+
+    def install(extra):
+        state.calls.append(extra)
+        state.playwright = state.works
+        return state.works
+
+    def install_chromium():
+        state.calls.append("chromium")
+        state.chromium = state.works
+        return state.works
+
+    monkeypatch.setattr(live_capture, "has_playwright", lambda: state.playwright)
+    monkeypatch.setattr(live_capture, "chromium_installed", lambda: state.chromium)
+    monkeypatch.setattr(extras, "install", install)
+    monkeypatch.setattr(extras, "install_chromium", install_chromium)
+    return state
+
+
+def test_the_first_run_installs_playwright_and_chromium(first_use):
+    assert live_capture.playwright_ready() is True
+    assert first_use.calls == ["live", "chromium"]
+
+
+def test_nothing_is_installed_when_both_are_there(first_use):
+    first_use.playwright = first_use.chromium = True
+    assert live_capture.playwright_ready() is True
+    assert first_use.calls == []
+
+
+def test_only_chromium_is_downloaded_when_playwright_is_there(first_use):
+    first_use.playwright = True
+    assert live_capture.playwright_ready() is True
+    assert first_use.calls == ["chromium"]
+
+
+def test_a_failed_install_says_how_to_install_and_records_nothing(first_use, caplog):
+    first_use.works = False
+    with caplog.at_level("WARNING", logger="shared"):
+        assert live_capture.playwright_ready() is False
+    assert "playwright install chromium" in caplog.text
+
+
+def test_the_standalone_download_is_not_told_to_pip_install(monkeypatch, onlyfans_settings, caplog):
+    import builtins
+    import sys
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    onlyfans_settings(live=True)
+    real_import = builtins.__import__
+
+    def no_playwright(name, *args, **kwargs):
+        if name.startswith("playwright"):
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_playwright)
+    monkeypatch.setattr(manager, "Manager", None)  # never reached
+    with caplog.at_level("WARNING", logger="shared"):
+        asyncio.run(live.run(False, asyncio.Event()))
+    assert "standalone download" in caplog.text
+    assert "pip install" not in caplog.text
 
 
 def test_live_chat_is_fansly_only(monkeypatch, onlyfans_settings, caplog):
