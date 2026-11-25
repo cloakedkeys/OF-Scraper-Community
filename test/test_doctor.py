@@ -492,7 +492,9 @@ def test_key_files_named_in_another_case(home, tmp_path):
     (tmp_path / "DEVICE_PRIVATE_KEY").write_bytes(b"k")
     status, detail = manual_keys(home, tmp_path / "client_id.bin", tmp_path / "private_key.pem")
     assert status == "FAIL"
-    assert "client-id: no file at that name, but Client_ID.bin is in that folder" in detail
+    if not (tmp_path / "client_id.bin").exists():
+        # on a file system that ignores case (Windows, macOS) it is the file
+        assert "client-id: no file at that name, but Client_ID.bin is in that folder" in detail
     assert "private-key: no file at that name, but DEVICE_PRIVATE_KEY is in that folder" in detail
 
 
