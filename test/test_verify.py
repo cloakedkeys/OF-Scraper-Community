@@ -558,12 +558,68 @@ def test_left_alone_resets_nothing_in_the_totals(tmp_path):
         assert report["creators"][0]["files_to_move_aside"] == 0
 
 
-def test_a_missing_file_whose_folder_is_gone_leaves_the_creator_alone(tmp_path):
-    # most files are there, but two are recorded in a folder that isn't (a
-    # second drive not connected, say): the percentage alone wouldn't stop it
+def per_post_library(tmp_path, folders):
+    """Creator 5's database; each file in its own post folder under
+    tmp_path/save/creator/Posts. folders: {post_id: [file names]}, all on
+    disk at first."""
+    db = tmp_path / ".data" / "5" / "user_data.db"
+    db.parent.mkdir(parents=True)
+    posts = tmp_path / "save" / "creator" / "Posts"
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute(mediaCreate)
+        media_id = 0
+        for post_id, names in folders.items():
+            (posts / str(post_id)).mkdir(parents=True)
+            for name in names:
+                media_id += 1
+                (posts / str(post_id) / name).write_bytes(b"abc")
+                conn.execute(
+                    "INSERT INTO medias (media_id, post_id, directory, filename, size, api_type, media_type,"
+                    " downloaded, model_id, unlocked) VALUES (?, ?, ?, ?, 3, 'Timeline', 'Images', 1, 5, 1)",
+                    (media_id, post_id, str(posts / str(post_id)), name),
+                )
+    return db, posts
+
+
+def test_a_deleted_post_folder_is_reset(tmp_path):
+    # with a folder for each post, a missing file usually means a missing
+    # folder: the creator's folder is there, so the file is really gone
+    import shutil
+
+    db, posts = per_post_library(tmp_path, {post: [f"{post}.jpg"] for post in range(101, 106)})
+    shutil.rmtree(posts / "103")
+
+    (creator,) = verify.verify([db], apply=True)["creators"]
+
+    assert "left_alone" not in creator and creator["media_reset"] == 1
+    assert by_media_id(db)[3] == 0
+
+
+@pytest.mark.parametrize("gone", ["creator", "save"])
+def test_a_missing_creator_or_save_folder_leaves_the_creator_alone(tmp_path, gone):
+    import shutil
+
+    db, posts = per_post_library(tmp_path, {post: [f"{post}.jpg"] for post in range(101, 106)})
+    folder = posts.parent if gone == "creator" else posts.parent.parent
+    shutil.rmtree(folder)
+    before = downloaded(db)
+
+    (creator,) = verify.verify([db], apply=True)["creators"]
+
+    assert f"the creator's folder {posts} isn't there" in creator["left_alone"]
+    assert creator["media_reset"] == 0 and downloaded(db) == before
+    (creator,) = verify.verify([db], apply=True, allow_missing=True)["creators"]
+    assert creator["media_reset"] == 5
+
+
+def test_a_missing_file_whose_folder_is_gone_leaves_the_creator_alone(tmp_path, monkeypatch):
+    # most files are there, but two are recorded on a second drive that isn't
+    # mounted: the percentage alone wouldn't stop it
     rows = [(i, 100 + i, f"{i}.jpg", 3, b"abc", "Timeline", {}) for i in range(1, 11)]
     rows += [(11, 111, "gone.jpg", 3, None, "Timeline", {})]
     db, lib = make_library(tmp_path, rows)
+    # lib stands in for a drive mounted in tmp_path; other-drive isn't mounted
+    monkeypatch.setattr(verify, "MOUNT_PARENTS", (str(tmp_path),))
     unplugged = tmp_path / "other-drive" / "Videos"
     with closing(sqlite3.connect(db)) as conn, conn:
         for media_id in (12, 13):

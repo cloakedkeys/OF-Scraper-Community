@@ -172,20 +172,57 @@ class _Spellings:
         return found[0] if len(found) == 1 else None
 
 
-def _unreadable(folder, seen):
-    """Why the folder of a missing file says the drive may not be connected,
-    or None: it isn't there, or can't be read."""
-    if folder not in seen:
+def _creator_folders(paths):
+    """The creator's folder on each drive: the folder all its recorded
+    folders on that drive are in. {drive: folder}"""
+    by_drive = defaultdict(set)
+    for path in paths:
+        folder = os.path.dirname(path)
+        by_drive[os.path.splitdrive(folder)[0].lower()].add(folder)
+    return {drive: os.path.commonpath(sorted(folders)) for drive, folders in by_drive.items()}
+
+
+def _unreachable(folder, creator_folder, seen):
+    """Why the folder of a missing file says its drive or share may not be
+    connected, or None. Walks up to the nearest folder that is there: a
+    missing folder inside the creator's folder (a post's, say) is gone; the
+    creator's folder itself missing, a folder that can't be read, or nothing
+    there above a place drives are mounted, is a drive not connected."""
+    if folder in seen:
+        return seen[folder]
+    here, why = folder, None
+    while True:
         try:
-            os.listdir(folder)
-            seen[folder] = None
+            os.listdir(here)
+            break
+        except (FileNotFoundError, NotADirectoryError):
+            parent = os.path.dirname(here)
+            if parent == here:
+                why = f"the drive of {folder} isn't there"
+                break
+            here = parent
         except OSError as error:
-            seen[folder] = (
-                f"the folder {folder} of a missing file isn't there"
-                if isinstance(error, (FileNotFoundError, NotADirectoryError))
-                else f"the folder {folder} of a missing file can't be read ({error.strerror or error})"
-            )
-    return seen[folder]
+            why = f"the folder {here} can't be read ({error.strerror or error})"
+            break
+    if why is None and here != folder:
+        inside = os.path.normcase(here + os.sep).startswith(os.path.normcase(creator_folder.rstrip("\\/") + os.sep))
+        if not inside:
+            why = f"the creator's folder {creator_folder} isn't there"
+        elif _mount_parent(here):
+            why = f"the folder {folder} of a missing file isn't there, and {here} above it is where drives are mounted"
+    seen[folder] = why
+    return why
+
+
+# folders a drive or share is usually mounted in, on Linux and macOS
+MOUNT_PARENTS = ("/", "/mnt", "/media", "/Volumes", "/net", "/run/media")
+
+
+def _mount_parent(folder):
+    """A folder drives are mounted in (also /run/media/<user>)."""
+    parents = {os.path.normcase(os.path.normpath(p)) for p in MOUNT_PARENTS}
+    folder = os.path.normcase(os.path.normpath(folder))
+    return folder in parents or os.path.dirname(folder) == os.path.normcase(os.path.normpath("/run/media"))
 
 
 def _not_a_file(path):
@@ -269,9 +306,10 @@ def scan(rows, options):
 
 def _guard(found):
     """The creators --apply should leave alone, with why: {model_id: why}.
-    A missing file whose folder isn't there, or can't be read, says its
-    drive or share may not be connected; so do most files missing. Each
-    creator is judged on its own rows (a database can hold several)."""
+    A missing file whose creator's folder isn't there, or can't be read,
+    says its drive or share may not be connected (see _unreachable); so do
+    most files missing. Each creator is judged on its own rows (a database
+    can hold several)."""
     # what a reset leaves alone anyway (expired stories, say) says nothing
     # about the drive
     by_creator = defaultdict(list)
@@ -282,8 +320,12 @@ def _guard(found):
     hint = ": is the drive or share connected? Give --allow-missing to reset all the same"
     for model_id, with_file in by_creator.items():
         missing = [e for e in with_file if e["finding"] == MISSING]
+        creator_folders = _creator_folders(p for e in with_file for p in e["paths"])
         folders = sorted({os.path.dirname(p) for e in missing for p, (f, _) in e["paths"].items() if f == MISSING})
-        unreadable = next(filter(None, (_unreadable(folder, seen) for folder in folders)), None)
+        unreadable = next(filter(None, (
+            _unreachable(folder, creator_folders[os.path.splitdrive(folder)[0].lower()], seen)
+            for folder in folders
+        )), None)
         if unreadable:
             guards[model_id] = unreadable + hint
         elif len(missing) > MISSING_LIMIT * len(with_file):
@@ -785,7 +827,7 @@ def main(argv=None):
     parser.add_argument("databases", type=Path, nargs="*", help="user_data.db files, or folders (e.g. a profile's .data) to search for them")
     parser.add_argument("--apply", action="store_true", help="Mark missing and empty files as not downloaded, so the next run downloads them again; writes an undo file first")
     parser.add_argument("--reset-size-differs", action="store_true", help="With --apply, also reset files whose size isn't the recorded one (moved aside with .bad added)")
-    parser.add_argument("--allow-missing", action="store_true", help="With --apply, reset a creator even when most of its files are missing, or a missing file's folder isn't there (otherwise left alone: the drive may not be connected)")
+    parser.add_argument("--allow-missing", action="store_true", help="With --apply, reset a creator even when most of its files are missing, or its folder isn't there or can't be read (otherwise left alone: the drive may not be connected)")
     parser.add_argument("--hash", action="store_true", help="Also compare each file's hash with the recorded one, where one was recorded (only with remove_hash_match on); reads every file, so slow")
     parser.add_argument("--reset-hash-differs", action="store_true", help="With --apply, also reset files whose hash isn't the recorded one (moved aside with .bad added); implies --hash")
     parser.add_argument("--untracked", action="store_true", help="Also list files in the creator's folders that no database row points to; nothing is moved or deleted")
