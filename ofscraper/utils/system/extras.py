@@ -29,7 +29,7 @@ log = logging.getLogger("shared")
 
 # the same lists as [project.optional-dependencies] in pyproject.toml (test_extras checks it)
 EXTRAS = {
-    "postgres": ["psycopg[binary,pool]>=3.3.9,<3.4"],
+    "postgres": ["psycopg[binary,pool]>=3.3.9"],
     "live": ["playwright>=1.40,<2"],
 }
 # a slow connection and Chromium's ~150 MB download
