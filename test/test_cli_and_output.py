@@ -146,12 +146,12 @@ def test_exit_status_most_severe_wins_regardless_of_order():
 
     ordered = [
         exit_status.OK,
+        exit_status.USAGE,
         exit_status.PARTIAL,
         exit_status.UNAVAILABLE,
         exit_status.AUTH,
         exit_status.CONFIG,
         exit_status.ERROR,
-        exit_status.USAGE,
         exit_status.INTERRUPTED,
     ]
     try:
@@ -301,6 +301,37 @@ def test_auth_fail_and_unreadable_auth_exit_3(monkeypatch):
     monkeypatch.setattr(auth_file.auth_error, "handle_auth_errors", lambda e: "quit")
     with pytest.raises(SystemExit) as exc:
         auth_file.read_auth()
+    assert exc.value.code == exit_status.AUTH
+
+
+def test_rejected_login_without_a_console_exits_3(monkeypatch, tmp_path):
+    # a scheduled run or a --profiles child: no one can answer the Auth Menu,
+    # so the run ends with "login failed", not the generic error
+    import ofscraper.data.api.init as init
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.sites.fansly.auth as fansly_auth
+    import ofscraper.utils.checkers as checkers
+    import ofscraper.utils.interactive as interactive
+
+    monkeypatch.setattr(run, "check_database", lambda: None)
+    monkeypatch.setattr(run.exit_manager, "shutdown", lambda: None)
+    monkeypatch.setattr(interactive, "is_interactive", lambda: False)
+    monkeypatch.setattr(init, "auth_status", lambda: ("DOWN", None))
+    monkeypatch.setattr(checkers.auth_file, "read_auth", lambda: {})
+    monkeypatch.setattr(
+        checkers.make.settings, "get_settings", lambda: SimpleNamespace(auth_fail=False)
+    )
+    monkeypatch.setattr(checkers.make.common_paths, "get_auth_file", lambda: tmp_path / "auth.json")
+    monkeypatch.setattr(fansly_auth, "auth_path", lambda: tmp_path / "fansly_auth.json")
+    monkeypatch.setattr(run, "start_manager", checkers.check_auth)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == exit_status.AUTH
+
+    monkeypatch.setattr(checkers.sites, "is_fansly", lambda: True)
+    monkeypatch.setattr(fansly_auth, "load", lambda: {})
+    with pytest.raises(SystemExit) as exc:
+        run.main()
     assert exc.value.code == exit_status.AUTH
 
 
