@@ -25,6 +25,8 @@ _lock = threading.Lock()
 _mode = None  # "daemon" | "once" | None (auto-detect from settings)
 _state = "stopped"
 _auth = "unknown"
+_auth_at = None  # when _auth was last recorded, so health can ignore a carried-over one
+_started = None  # when this daemon (or run) started
 _next_pass_at = None
 _last_pass = None
 _last_success = None
@@ -68,7 +70,7 @@ def _read_existing(path):
 def _ensure_loaded_locked(path):
     """Carry over ``last_success``, ``last_pass``, ``auth`` and ``failing_alerts``
     from an existing file on disk once per target path."""
-    global _loaded_from, _last_success, _last_pass, _auth, _failing_alerts
+    global _loaded_from, _last_success, _last_pass, _auth, _auth_at, _failing_alerts
     if path is None or _loaded_from == path:
         return
     _loaded_from = path
@@ -81,6 +83,8 @@ def _ensure_loaded_locked(path):
         _last_pass = existing["last_pass"]
     if _auth == "unknown" and existing.get("auth") in ("ok", "failed", "unknown"):
         _auth = existing["auth"]
+        auth_at = existing.get("auth_at")
+        _auth_at = auth_at if isinstance(auth_at, str) else None
     if not _failing_alerts and isinstance(existing.get("failing_alerts"), list):
         _failing_alerts = sorted(
             k for k in existing["failing_alerts"] if isinstance(k, str)
@@ -137,15 +141,33 @@ def _atomic_write(path, payload):
     return True
 
 
+def _ensure_started_locked(now):
+    """A run without set_mode("daemon") started at its first write."""
+    global _started
+    if _started is None:
+        _started = now
+
+
+def _set_auth_locked(value, now):
+    global _auth, _auth_at
+    _ensure_started_locked(now)
+    _auth = value
+    _auth_at = now
+
+
 def _payload_locked(extra=None):
+    heartbeat = _last_heartbeat or _now_iso()
+    _ensure_started_locked(heartbeat)
     payload = {
         "version": VERSION,
         "pid": os.getpid(),
         "mode": _detect_mode(),
+        "started": _started,
         "state": _state,
-        "heartbeat": _last_heartbeat or _now_iso(),
+        "heartbeat": heartbeat,
         "next_pass_at": _next_pass_at,
         "auth": _auth,
+        "auth_at": _auth_at,
         "last_pass": _last_pass,
         "last_success": _last_success,
     }
@@ -202,20 +224,24 @@ def _on_item_finished(**_kwargs):
 
 
 def set_mode(mode):
-    """Explicitly set mode to ``"daemon"`` or ``"once"``."""
-    global _mode
+    """Explicitly set mode to ``"daemon"`` or ``"once"``. Setting ``"daemon"``
+    records the daemon's start time."""
+    global _mode, _started
     with _lock:
         _mode = mode
+        if mode == "daemon":
+            _started = _now_iso()
 
 
 def set_auth(value):
     """Record auth state (``"ok"``, ``"failed"`` or ``"unknown"``) and write."""
-    global _auth, _last_heartbeat, _last_heartbeat_mono
+    global _last_heartbeat, _last_heartbeat_mono
     if value not in ("ok", "failed", "unknown"):
         return None
     with _lock:
-        _auth = value
-        _last_heartbeat = _now_iso()
+        now = _now_iso()
+        _set_auth_locked(value, now)
+        _last_heartbeat = now
         _last_heartbeat_mono = time.monotonic()
         return _write_locked()
 
@@ -265,6 +291,7 @@ def finish_pass(record=None, outcome=None):
     import ofscraper.main.close.exit_status as exit_status
 
     with _lock:
+        now = _now_iso()
         mode = _detect_mode()
         _state = "idle" if mode == "daemon" else "stopped"
         stripped = _strip_record(record)
@@ -273,15 +300,15 @@ def finish_pass(record=None, outcome=None):
             status = stripped.get("status")
             rec_outcome = stripped.get("outcome") or outcome
             if status == int(exit_status.AUTH):
-                _auth = "failed"
+                _set_auth_locked("failed", now)
             elif rec_outcome == "ok" and status in (
                 int(exit_status.OK),
                 int(exit_status.PARTIAL),
             ):
-                _last_success = stripped.get("finished") or _now_iso()
+                _last_success = stripped.get("finished") or now
                 if _auth == "unknown":
-                    _auth = "ok"
-        _last_heartbeat = _now_iso()
+                    _set_auth_locked("ok", now)
+        _last_heartbeat = now
         _last_heartbeat_mono = time.monotonic()
         return _write_locked()
 
@@ -361,7 +388,7 @@ def set_failing_alerts(kinds):
 
 def reset():
     """Reset in-memory state (for tests)."""
-    global _mode, _state, _auth, _next_pass_at, _last_pass, _last_success
+    global _mode, _state, _auth, _auth_at, _started, _next_pass_at, _last_pass, _last_success
     global _failing_alerts, _last_heartbeat, _last_heartbeat_mono, _loaded_from
     try:
         import ofscraper.utils.events as events
@@ -373,6 +400,8 @@ def reset():
         _mode = None
         _state = "stopped"
         _auth = "unknown"
+        _auth_at = None
+        _started = None
         _next_pass_at = None
         _last_pass = None
         _last_success = None
