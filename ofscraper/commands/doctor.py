@@ -15,9 +15,11 @@ something that would make the start ask a question.
 
 import argparse
 import contextlib
+import getpass
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -29,12 +31,39 @@ PASS, WARN, FAIL, SKIP = "PASS", "WARN", "FAIL", "SKIP"
 OF_AUTH_KEYS = ["sess", "auth_id", "user_agent", "x-bc"]
 
 
+def _homes():
+    """The home folder as it may be written in a path: as given and with
+    links followed, each also with forward slashes; longest first."""
+    home = pathlib.Path.home()
+    found = {str(home)}
+    with contextlib.suppress(OSError, RuntimeError):
+        found.add(str(home.resolve()))
+    found |= {h.replace("\\", "/") for h in found}
+    return sorted((h.rstrip("\\/") for h in found if len(h.rstrip("\\/")) > 1), key=len, reverse=True)
+
+
+def redact(text):
+    """text with the home folder written as ~ and the login name, where it
+    is a folder name elsewhere, as <user>: the output is meant for public
+    issues."""
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    for home in _homes():
+        text = re.sub(re.escape(home) + r"(?=$|[\\/])", "~", text, flags=flags)
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = None
+    if user:
+        text = re.sub(r"(?<=[\\/])" + re.escape(user) + r"(?=$|[\\/])", "<user>", text, flags=flags)
+    return text
+
+
 class Report:
     def __init__(self):
         self.results = []
 
     def add(self, status, check, detail=""):
-        self.results.append({"status": status, "check": check, "detail": detail})
+        self.results.append({"status": status, "check": check, "detail": redact(str(detail))})
 
     @property
     def failed(self):
@@ -162,7 +191,8 @@ def check_onlyfans_auth(folder, report):
 
     path = folder / of_env.getattr("authFile")
     if not path.exists():
-        report.add(FAIL, "OnlyFans auth", f"{path} isn't there")
+        # a run asks for the login and writes the file
+        report.add(WARN, "OnlyFans auth", f"{path} isn't there: a run asks for the login and makes it")
         return
     try:
         text = encoding.read_text_file(path)
@@ -199,7 +229,7 @@ def check_fansly_auth(folder, report):
 
     path = folder / fansly_constants.AUTH_FILE
     if not path.exists():
-        report.add(FAIL, "Fansly auth", f"{path} isn't there")
+        report.add(WARN, "Fansly auth", f"{path} isn't there: a run asks for the login and makes it")
         return
     try:
         auth = fansly_auth.read_auth(path)
@@ -379,6 +409,11 @@ def check_keys(config, site, report, folder=None):
     if mode != "manual":
         report.add(PASS, "key files", f"key mode {mode}: no key files needed")
         return
+    if not str(client_id or "").strip() and not str(private_key or "").strip() and not _keys_in_auth_file(folder):
+        # the default on a fresh install: a run goes on without them (keys
+        # put in auth.json instead are a setup gone wrong, a FAIL below)
+        report.add(WARN, "key files", "no key files set up yet: protected (DRM) videos are skipped until client-id and private-key are set")
+        return
     problem = keyhelpers.cdm_key_problems(mode, client_id, private_key)
     if problem:
         hints = [_key_file_hint("client-id", client_id), _key_file_hint("private-key", private_key)]
@@ -425,6 +460,28 @@ def _check_path(save):
     return path
 
 
+# where Linux and macOS mount drives and shares; a missing save folder whose
+# nearest folder that is there is one of these is on a drive not mounted
+MOUNT_PARENTS = ("/", "/mnt", "/media", "/Volumes", "/net")
+# this holds a folder per user, which holds the mounts (/run/media/<user>)
+USER_MOUNT_PARENTS = ("/run/media",)
+
+
+def _windows():
+    return os.name == "nt"
+
+
+def _unmounted(save):
+    """The save folder isn't there and nothing is above it up to a place
+    drives are mounted: its drive or share likely isn't mounted."""
+    here = save.absolute()
+    while not here.exists() and here.parent != here:
+        here = here.parent
+    return here in {pathlib.Path(p) for p in MOUNT_PARENTS} or here.parent in {
+        pathlib.Path(p) for p in USER_MOUNT_PARENTS
+    }
+
+
 def check_folders(config, report):
     import ofscraper.utils.config.data as data
     import ofscraper.utils.paths.common as common_paths
@@ -432,8 +489,13 @@ def check_folders(config, report):
     save = pathlib.Path(os.path.expanduser(common_paths.get_save_location(_config(config))))
     if save.is_dir():
         report.add(PASS, "save folder", f"{save}, {_free(save)}")
+    elif not _windows() and _unmounted(save):
+        report.add(FAIL, "save folder", f"{save} isn't there: is the drive or share mounted?")
+    elif pathlib.Path(save.anchor or ".").is_dir():
+        # the download makes it, parents included
+        report.add(WARN, "save folder", f"{save} isn't there yet: a run makes it")
     else:
-        report.add(FAIL, "save folder", f"{save} isn't there")
+        report.add(FAIL, "save folder", f"{save} isn't there, nor is its drive {save.anchor}")
     temp = _get(data.get_TempDir, config)
     if temp:
         temp = pathlib.Path(os.path.expanduser(temp))
@@ -578,6 +640,8 @@ def run_online(report, config=None, profile=None, site=None):
         report.add(SKIP, login, "the config file failed above: a run would stop to ask about it")
     elif _status(report, auth_check) == FAIL:
         report.add(SKIP, login, "the auth file failed above: a run would stop to ask for it")
+    elif _status(report, auth_check) == WARN:
+        report.add(SKIP, login, "there's no auth file yet: a run would stop to ask for the login")
     else:
         try:
             start(config, profile, site)
