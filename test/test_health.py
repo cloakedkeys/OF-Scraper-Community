@@ -214,6 +214,7 @@ def test_default_path_follows_main_profile_in_config(tmp_path, monkeypatch):
 def _status_files(tmp_path, monkeypatch):
     monkeypatch.delenv("OFSC_STATUS_FILE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # the home folder on Windows
     monkeypatch.delenv("OFSC_CONFIG_DIR", raising=False)
     config_home = tmp_path / ".config" / "ofscraper"
     (config_home / "main_profile").mkdir(parents=True)

@@ -317,6 +317,7 @@ def test_parent_status_file_is_not_a_profile_folder(tmp_path, monkeypatch):
     assert not (tmp_path / "main_profile" / "status.json").exists()
     # and ofscraper health finds it without OFSC_STATUS_FILE
     monkeypatch.setenv("HOME", str(tmp_path.parent))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path.parent))  # the home folder on Windows
     monkeypatch.setenv("OFSC_CONFIG_DIR", tmp_path.name)
     assert health.default_status_path() == tmp_path / "status.json"
 
