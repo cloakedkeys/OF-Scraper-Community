@@ -149,9 +149,9 @@ def message(record, limit=MESSAGE_LIMIT):
     if creators["failed"]:
         head += f" {creators['failed']} creator{'s' if creators['failed'] != 1 else ''} not finished."
     if record["outcome"] == "failed":
-        head += f" The run failed: {record.get('error') or 'see the log'}."
+        head += f" The run failed: {record.get('error') or 'see the log'} (exit status {record['status']})."
     elif record["outcome"] == "stopped":
-        head += " The run was stopped."
+        head += f" The run was stopped (exit status {record['status']})."
     took = _took(record)
     if took:
         head += f" Took {took}."

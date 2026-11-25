@@ -9,6 +9,7 @@ import pytest
 
 import ofscraper.__main__  # noqa: F401  (import order: avoids a circular import)
 import ofscraper.commands.utils.scrape_context as scrape_context
+import ofscraper.main.close.exit_status as exit_status
 import ofscraper.main.close.final.run_record as run_record
 import ofscraper.scripts.final_script as final_script
 import ofscraper.utils.logs.utils.level as log_level
@@ -148,6 +149,24 @@ def test_record_of_a_stopped_pass(run):
     assert run_record.current()["outcome"] == "stopped"
 
 
+@pytest.mark.parametrize(
+    "code,reason",
+    [(exit_status.UNAVAILABLE, "site unavailable"), (exit_status.AUTH, "login failed")],
+)
+def test_pass_ended_by_maintenance_or_auth_fail_says_why(run, code, reason):
+    # the maintenance abort and --auth-fail end the pass with SystemExit; that
+    # isn't a Ctrl+C, so the summary isn't "stopped, 130 interrupted"
+    exit_status.reset()
+    with pytest.raises(SystemExit):
+        with scrape_context.scrape_context_manager():
+            raise SystemExit(code)
+    record = run_record.current()
+    assert record["outcome"] == "failed"
+    assert record["status"] == code and record["status_label"] == reason
+    assert f"The run failed: {reason} (exit status {int(code)})." in run_record.message(record)
+    exit_status.reset()
+
+
 def test_each_pass_gets_its_own_record(run):
     with scrape_context.scrape_context_manager():
         first = run_record.finish()
@@ -250,7 +269,7 @@ def test_long_creator_list_is_cut_to_fit_one_message(run):
 
 def test_failed_run_says_so(run):
     record = run_record.build("failed", "database is gone")
-    assert "The run failed: database is gone." in run_record.message(record)
+    assert "The run failed: database is gone (exit status 1)." in run_record.message(record)
 
 
 def test_every_line_shown_when_all_fit_without_the_more_line(run):
