@@ -241,7 +241,9 @@ def test_startup_migrates_an_old_config_only_outside_a_dry_run(monkeypatch, tmp_
     path = tmp_path / "config.json"
     old = json.dumps({"config": {"main_profile": "main_profile"}}, indent=4)
     path.write_text(old, encoding="utf-8")
-    os.utime(path, ns=(1_600_000_000_123_456_789, 1_600_000_000_123_456_789))
+    # a whole, even second: every file system stores it exactly (NTFS keeps
+    # 100 ns steps, FAT two seconds)
+    os.utime(path, ns=(1_600_000_000_000_000_000, 1_600_000_000_000_000_000))
     monkeypatch.setattr(common_paths, "get_config_path", lambda: path)
     monkeypatch.setattr(config_, "config", None)  # read_config's cache
     monkeypatch.setitem(settings.get_settings(), "dry_run", dry)
@@ -252,7 +254,7 @@ def test_startup_migrates_an_old_config_only_outside_a_dry_run(monkeypatch, tmp_
     # Then a dry run leaves the file as it was, and a normal run updates it
     unchanged = (
         path.read_text(encoding="utf-8") == old
-        and path.stat().st_mtime_ns == 1_600_000_000_123_456_789
+        and path.stat().st_mtime_ns == 1_600_000_000_000_000_000
     )
     assert unchanged is dry
     if not dry:
