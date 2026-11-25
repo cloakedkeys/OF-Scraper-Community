@@ -169,6 +169,33 @@ def test_failed_page_keeps_fetched_posts_and_records_rescan(
     assert any(f"[a creator] {api} scan is incomplete" in w for w in shown)
 
 
+def _failed_request():
+    # what sessionmanager raises after the retries: the error carries the
+    # request it was for, headers included (#243)
+    from aiohttp import ClientResponseError, RequestInfo
+    from multidict import CIMultiDict, CIMultiDictProxy
+    from yarl import URL
+
+    url = URL("https://example.invalid/api2/v2/posts")
+    headers = CIMultiDictProxy(
+        CIMultiDict({"sign": "fake-sign-in-header", "Cookie": "sess=fake-sess-in-cookie"})
+    )
+    return ClientResponseError(
+        RequestInfo(url, "GET", headers, url), (), status=429, message="Too Many Requests"
+    )
+
+
+@pytest.mark.parametrize("area", AREAS)
+def test_stopped_scan_warning_leaves_out_the_request_headers(
+    monkeypatch, cache, explicit_after, warnings, area
+):
+    entry = setup_area(monkeypatch, area)
+    scan(entry, FakeClient([page([2001]), _failed_request()]))
+    shown = "\n".join(warnings())
+    assert "scan stopped early" in shown and "429" in shown
+    assert "fake-sign-in-header" not in shown and "fake-sess-in-cookie" not in shown
+
+
 @pytest.mark.parametrize("area", AREAS)
 def test_complete_scan_records_nothing(monkeypatch, cache, explicit_after, warnings, area):
     entry = setup_area(monkeypatch, area)
