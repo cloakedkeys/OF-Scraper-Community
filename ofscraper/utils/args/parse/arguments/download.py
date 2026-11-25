@@ -60,7 +60,7 @@ allow_dupes_option = click.option(
 skip_purchased_dupes_option = click.option(
     "--skip-purchased-dupes",
     "skip_purchased_dupes",
-    help="With --allow-dupes, skip a Purchased copy of media that's in another post or was downloaded from one. Media only in Purchased still downloads. Matched by media id before download; remove_hash_match removes exact copies with different IDs",
+    help="With --allow-dupes, skip a Purchased copy of media that's in another post or was downloaded from one. Media only in Purchased still downloads. Matches by media ID before download; remove_hash_match removes copies with other IDs",
     default=False,
     is_flag=True,
 )
