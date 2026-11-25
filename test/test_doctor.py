@@ -58,9 +58,42 @@ def test_an_empty_home_gets_findings_and_nothing_is_created(home):
     report = doctor.run()
     assert files_under(home) == []
     assert result(report, "config file")[0] == "WARN"
-    assert result(report, "OnlyFans auth") == ("FAIL", f"{config_dir(home) / 'main_profile' / 'auth.json'} isn't there")
+    assert result(report, "OnlyFans auth") == (
+        "WARN", f"{os.path.join('~', '.config', 'ofscraper', 'main_profile', 'auth.json')} isn't there: a run asks for the login and makes it")
     assert result(report, "Fansly auth")[0] == "SKIP"
-    assert report.failed
+
+
+def test_a_fresh_install_fails_only_what_a_run_cant_fix_itself(home):
+    """No config, no auth file and no save folder are what a first run
+    meets: it makes the config and the folder and asks for the login. In
+    the default manual key mode, the unset key files are still a finding."""
+    report = doctor.run()
+    failed = {r["check"] for r in report.results if r["status"] == "FAIL"}
+    assert failed <= {"key files", "ffmpeg"}
+    assert result(report, "save folder")[0] == "WARN"
+    assert result(report, "OnlyFans auth")[0] == "WARN"
+
+
+def test_online_without_an_auth_file_skips_the_login_and_never_prompts(home, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked a question"))
+    monkeypatch.setattr(doctor, "start", lambda *a: pytest.fail("started"))
+    status, detail = result(doctor.run(online=True), "Onlyfans login")
+    assert status == "SKIP" and "no auth file yet" in detail
+
+
+def test_the_home_folder_and_login_name_arent_printed(home, tmp_path, monkeypatch, capsys):
+    """The output is pasted into public issues: the home folder is ~ and the
+    login name doesn't show where it's a folder name outside it."""
+    monkeypatch.setattr(doctor.getpass, "getuser", lambda: "someuser")
+    elsewhere = tmp_path / "disk" / "someuser" / "media"
+    write_config(home, {"advanced_options": {"temp_dir": str(elsewhere)}})
+    doctor.main([])
+    doctor.main(["--json"])
+    out = capsys.readouterr().out
+    assert str(home) not in out and str(home).replace("\\", "/") not in out
+    assert "someuser" not in out
+    assert os.path.join("~", ".config", "ofscraper", "config.json") in out
+    assert os.path.join("<user>", "media") in out
 
 
 def test_a_broken_config_is_a_finding_not_a_prompt(home, monkeypatch):
@@ -83,7 +116,7 @@ def test_auth_fields_are_named_never_shown(home, capsys):
     write_config(home, {"main_profile": "main_profile"})
     write_auth(home, **{"x-bc": ""})
     status, detail = result(doctor.run(), "OnlyFans auth")
-    assert status == "FAIL" and detail.endswith("blank in " + str(config_dir(home) / "main_profile" / "auth.json") + ": x-bc")
+    assert status == "FAIL" and detail.endswith("blank in " + os.path.join("~", ".config", "ofscraper", "main_profile", "auth.json") + ": x-bc")
     write_auth(home)
     assert result(doctor.run(), "OnlyFans auth")[0] == "PASS"
     doctor.main([])
@@ -99,7 +132,7 @@ def test_a_fansly_profile_checks_the_fansly_auth(home):
     report = doctor.run()
     assert result(report, "OnlyFans auth")[0] == "SKIP"
     status, detail = result(report, "Fansly auth")
-    assert status == "FAIL" and "isn't there" in detail
+    assert status == "WARN" and "isn't there: a run asks for the login" in detail
     (folder / "fansly_auth.json").write_text(json.dumps({"authorization_token": "x" * 60, "user_agent": UA}), encoding="utf-8")
     assert result(doctor.run(), "Fansly auth")[0] == "PASS"
     (folder / "fansly_auth.json").write_text(json.dumps({"authorization_token": "short", "user_agent": UA}), encoding="utf-8")
@@ -113,7 +146,7 @@ def test_an_old_configured_ffmpeg_fails(home, monkeypatch, tmp_path):
     write_config(home, {"binary_options": {"ffmpeg": str(fake)}})
     monkeypatch.setattr(doctor.shutil, "which", lambda p: p)
     monkeypatch.setattr(ffmpeg, "ffmpeg_version", lambda p: (True, "5.1.2", 5))
-    assert result(doctor.run(), "ffmpeg") == ("FAIL", f"{fake} is version 5.1.2; protected videos need 6 or newer")
+    assert result(doctor.run(), "ffmpeg") == ("FAIL", f"{doctor.redact(str(fake))} is version 5.1.2; protected videos need 6 or newer")
 
 
 def test_ffmpeg_shows_its_version_and_where_it_was_found(home, monkeypatch):
@@ -156,7 +189,7 @@ def test_folders_and_the_free_space_limit(home, tmp_path, monkeypatch):
     save = tmp_path / "library"
     write_config(home, {"file_options": {"save_location": str(save)}, "download_options": {"system_free_min": 1000}})
     report = doctor.run()
-    assert result(report, "save folder") == ("FAIL", f"{save} isn't there")
+    assert result(report, "save folder") == ("WARN", f"{doctor.redact(str(save))} isn't there yet: a run makes it")
     save.mkdir()
     # of_env reads OFSC_DISK_SPACE_CHECK_PATH once, so the value is given here
     check_path = {"value": str(save)}
@@ -165,7 +198,7 @@ def test_folders_and_the_free_space_limit(home, tmp_path, monkeypatch):
                         lambda key, *a, **k: check_path["value"] if key == "DISK_SPACE_CHECK_PATH" else real_getattr(key, *a, **k))
     report = doctor.run()
     assert result(report, "save folder")[0] == "PASS"
-    assert result(report, "free-space limit")[1].startswith(f"1000 bytes, measured at {save}")
+    assert result(report, "free-space limit")[1].startswith(f"1000 bytes, measured at {doctor.redact(str(save))}")
     real = doctor._device
     monkeypatch.setattr(doctor, "_device", lambda p: 1 if str(p) == str(save) else real(p) and 2)
     check_path["value"] = str(tmp_path)
@@ -316,7 +349,7 @@ def test_an_empty_auth_file_is_a_finding(home, monkeypatch):
     path.write_text("", encoding="utf-8")
     monkeypatch.setattr(settings, "get_settings", lambda: pytest.fail("read the settings"))
     monkeypatch.setattr("builtins.input", lambda *a: pytest.fail("asked a question"))
-    assert result(doctor.run(), "OnlyFans auth") == ("FAIL", f"{path} is empty")
+    assert result(doctor.run(), "OnlyFans auth") == ("FAIL", f"{doctor.redact(str(path))} is empty")
 
 
 def test_an_empty_config_object_is_the_defaults(home, monkeypatch):
@@ -328,7 +361,7 @@ def test_an_empty_config_object_is_the_defaults(home, monkeypatch):
     monkeypatch.setattr(settings, "get_args", lambda *a, **k: pytest.fail("read the arguments"))
     report = doctor.run()
     assert result(report, "config file")[0] == "PASS"
-    assert result(report, "save folder")[0] in ("PASS", "FAIL")
+    assert result(report, "save folder")[0] in ("PASS", "WARN")
 
 
 def test_an_unset_check_path_measures_the_save_folders_disk(home, tmp_path, monkeypatch):
@@ -343,7 +376,7 @@ def test_an_unset_check_path_measures_the_save_folders_disk(home, tmp_path, monk
     monkeypatch.setattr(doctor.of_env, "getattr",
                         lambda key, *a, **k: "" if key == "DISK_SPACE_CHECK_PATH" else real(key, *a, **k))
     status, detail = result(doctor.run(), "free-space limit")
-    assert status == "PASS" and detail.startswith(f"1000 bytes, measured at {save}")
+    assert status == "PASS" and detail.startswith(f"1000 bytes, measured at {doctor.redact(str(save))}")
 
 
 def test_a_fansly_profile_needs_no_key_files(home):
@@ -391,6 +424,44 @@ def test_a_working_configured_ffmpeg_doesnt_ask_pyffmpeg(monkeypatch):
     monkeypatch.setattr(ffmpeg, "_is_valid_ffmpeg", lambda p: p == "/opt/ffmpeg")
     monkeypatch.setattr(ffmpeg, "ffmpeg_version", lambda p: (True, "7.1", 7))
     assert ffmpeg.find_ffmpeg("/opt/ffmpeg") == ("/opt/ffmpeg", "config", "7.1")
+
+
+def fake_pyffmpeg(tmp_path, monkeypatch):
+    """An installed pyffmpeg that, like the real one, writes under the home
+    folder as soon as it is imported."""
+    package = tmp_path / "site" / "pyffmpeg"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        "import os, pathlib\n"
+        "folder = pathlib.Path(os.environ['USERPROFILE' if os.name == 'nt' else 'HOME'], '.pyffmpeg', 'bin')\n"
+        "folder.mkdir(parents=True, exist_ok=True)\n"
+        "class FFmpeg:\n"
+        "    def get_ffmpeg_bin(self):\n"
+        "        (folder / 'ffmpeg').write_bytes(b'unpacked')\n"
+        "        return str(folder / 'ffmpeg')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(package.parent))
+    monkeypatch.delitem(sys.modules, "pyffmpeg", raising=False)
+
+
+def test_pyffmpeg_is_found_without_unpacking_it(home, tmp_path, monkeypatch):
+    fake_pyffmpeg(tmp_path, monkeypatch)
+    status, detail = result(doctor.run(), "ffmpeg")
+    assert files_under(home) == []
+    assert "pyffmpeg" not in sys.modules
+    assert status == "PASS" and "not unpacked yet" in detail and os.path.join("~", ".pyffmpeg", "bin") in detail
+
+
+def test_an_unpacked_pyffmpeg_is_checked_where_it_is(home, tmp_path, monkeypatch):
+    fake_pyffmpeg(tmp_path, monkeypatch)
+    _installed, bundled = ffmpeg.pyffmpeg_bin()
+    os.makedirs(os.path.dirname(bundled))
+    open(bundled, "wb").close()
+    monkeypatch.setattr(ffmpeg, "_is_valid_ffmpeg", lambda p: p == bundled)
+    monkeypatch.setattr(ffmpeg, "ffmpeg_version", lambda p: (True, "7.1", 7))
+    assert ffmpeg.find_ffmpeg(None) == (bundled, "pyffmpeg", "7.1")
+    assert "pyffmpeg" not in sys.modules
 
 
 def test_online_json_is_the_only_thing_on_stdout(home, monkeypatch, capsys):
@@ -483,4 +554,4 @@ def test_a_linked_save_folder_is_measured_on_the_links_target(home, tmp_path, mo
     monkeypatch.setattr(doctor.of_env, "getattr",
                         lambda key, *a, **k: "" if key == "DISK_SPACE_CHECK_PATH" else real(key, *a, **k))
     status, detail = result(doctor.run(), "free-space limit")
-    assert detail.startswith(f"1000 bytes, measured at {target.resolve()},")
+    assert detail.startswith(f"1000 bytes, measured at {doctor.redact(str(target.resolve()))},")
