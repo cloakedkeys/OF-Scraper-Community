@@ -302,6 +302,30 @@ def test_a_one_off_run_leaves_a_running_daemons_file_alone(env_status):
     assert json.loads(env_status.path.read_text(encoding="utf-8")) == daemon
 
 
+def test_a_restarted_daemon_records_its_start_and_when_the_login_was_checked(env_status, monkeypatch):
+    # health tells the current daemon's results from ones carried over from
+    # before it started
+    clock = iter(f"2026-11-24T10:{m:02d}:00+00:00" for m in range(60))
+    monkeypatch.setattr(status_file, "_now_iso", lambda: next(clock))
+    status_file.reset()
+    status_file.set_mode("daemon")
+    status_file.set_auth("failed")
+    old = json.loads(env_status.path.read_text(encoding="utf-8"))
+    assert old["auth_at"] >= old["started"]
+
+    status_file.reset()  # a new process
+    status_file.set_mode("daemon")
+    status_file.start_pass()
+    carried = json.loads(env_status.path.read_text(encoding="utf-8"))
+    assert carried["started"] > old["started"]
+    assert carried["auth"] == "failed" and carried["auth_at"] == old["auth_at"]
+
+    status_file.set_auth("ok")
+    checked = json.loads(env_status.path.read_text(encoding="utf-8"))
+    assert checked["started"] == carried["started"]
+    assert checked["auth_at"] > checked["started"]
+
+
 def test_a_one_off_run_replaces_a_stopped_daemons_file(env_status):
     stopped = {"version": 1, "pid": os.getppid(), "mode": "daemon", "state": "stopped"}
     env_status.path.write_text(json.dumps(stopped), encoding="utf-8")

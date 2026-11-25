@@ -158,6 +158,64 @@ def test_daemon_restarted_after_a_stop_mid_pass_is_healthy(tmp_path, monkeypatch
         status_file.reset()
 
 
+def _now_iso(minutes=0):
+    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
+
+
+def test_a_failed_pass_from_before_the_restart_is_not_judged(tmp_path, capsys):
+    # health answers for the daemon running now: a pass (or a login) that
+    # ended before it started says nothing about it
+    path = tmp_path / "status.json"
+    data = {
+        "version": 1, "mode": "daemon", "started": _now_iso(-10),
+        "state": "running", "heartbeat": _now_iso(-1), "next_pass_at": None,
+        "auth": "failed", "auth_at": _now_iso(-30),
+        "last_pass": {"status": 1, "status_label": "error", "outcome": "failed",
+                      "finished": _now_iso(-30)},
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert health.main([str(path)]) == 0
+    assert "healthy: daemon running" in capsys.readouterr().out
+
+    # until its first pass ends, the heartbeat still decides
+    data["heartbeat"] = _now_iso(-90)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert health.main([str(path)]) == 1
+    assert "heartbeat" in capsys.readouterr().out
+
+
+def test_a_failed_pass_or_login_of_the_current_daemon_is_unhealthy(tmp_path, capsys):
+    path = tmp_path / "status.json"
+    base = {
+        "version": 1, "mode": "daemon", "started": _now_iso(-60),
+        "state": "idle", "heartbeat": _now_iso(-1), "next_pass_at": _now_iso(20),
+        "auth": "ok", "auth_at": _now_iso(-59),
+    }
+    failed_pass = {"status": 1, "status_label": "error", "outcome": "failed",
+                   "finished": _now_iso(-10)}
+    path.write_text(json.dumps({**base, "last_pass": failed_pass}), encoding="utf-8")
+    assert health.main([str(path)]) == 1
+    assert "last pass failed (error)" in capsys.readouterr().out
+
+    login = {"auth": "failed", "auth_at": _now_iso(-5)}
+    path.write_text(json.dumps({**base, **login}), encoding="utf-8")
+    assert health.main([str(path)]) == 1
+    assert "failed login" in capsys.readouterr().out
+
+
+def test_a_one_off_run_is_still_healthy_with_a_failed_pass(tmp_path, capsys):
+    path = tmp_path / "status.json"
+    data = {
+        "version": 1, "mode": "once", "started": _now_iso(-10), "state": "stopped",
+        "heartbeat": _now_iso(-5), "auth": "failed", "auth_at": _now_iso(-6),
+        "last_pass": {"status": 1, "status_label": "error", "outcome": "failed",
+                      "finished": _now_iso(-5)},
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert health.main([str(path)]) == 0
+    assert "one-off" in capsys.readouterr().out
+
+
 def test_unknown_extra_keys_are_ignored():
     data = {
         "version": 99,

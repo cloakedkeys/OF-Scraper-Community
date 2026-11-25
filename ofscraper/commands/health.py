@@ -83,10 +83,29 @@ def default_status_path():
     return max(found, key=lambda p: (_running_daemon(p), p.stat().st_mtime))
 
 
-def _login_failed(data):
-    if data.get("auth") == "failed":
+def _since_start(data, when):
+    """Whether ``when`` is at or after the current daemon's start. A result
+    from before it (carried over from the daemon that ran earlier) says
+    nothing about the daemon running now. A file without "started" (written
+    before it was recorded) is judged as a whole."""
+    started = _parse_iso(data.get("started"))
+    if started is None:
         return True
+    at = _parse_iso(when)
+    return at is not None and at >= started
+
+
+def _current_last_pass(data):
     last_pass = data.get("last_pass")
+    if isinstance(last_pass, dict) and _since_start(data, last_pass.get("finished")):
+        return last_pass
+    return None
+
+
+def _login_failed(data):
+    if data.get("auth") == "failed" and _since_start(data, data.get("auth_at")):
+        return True
+    last_pass = _current_last_pass(data)
     # auth "ok" is newer than the last pass: the login was checked again
     if (
         data.get("auth") != "ok"
@@ -108,8 +127,9 @@ def _failed_last_pass(data):
     """The label of the daemon's last pass when it ended neither ok nor
     partial, or None. A failed login is _login_failed's: a later login
     check can clear it. A pass stopped by Ctrl+C or docker stop didn't
-    fail: the restarted daemon carries it over while its first pass runs."""
-    last_pass = data.get("last_pass")
+    fail. A pass that ended before the current daemon started isn't
+    judged: until its own first pass ends, the other checks decide."""
+    last_pass = _current_last_pass(data)
     if not isinstance(last_pass, dict) or last_pass.get("outcome") == "stopped":
         return None
     status = last_pass.get("status")
