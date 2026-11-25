@@ -91,6 +91,49 @@ def test_ofscraper_on_path_from_another_install_warns(home, tmp_path, monkeypatc
     assert result(doctor.run(), "ofscraper on PATH")[0] == "PASS"
 
 
+def installed_command(tmp_path, name, python):
+    """An ofscraper command an install made, outside PATH."""
+    folder = tmp_path / name / "bin"
+    folder.mkdir(parents=True)
+    command = folder / "ofscraper"
+    command.write_bytes(f"#!{python}\nimport ofscraper\n".encode())
+    return command
+
+
+@pytest.mark.parametrize("wrapper", [
+    '#!/bin/sh\nexec "{command}" "$@"\n',
+    '#!/usr/bin/env bash\n# my wrapper\nset -e\nexec {command} --no-rich "$@"\n',
+    '#!/bin/bash\nexec "{python}" -m ofscraper "$@"\n',
+])
+def test_a_shell_wrapper_that_runs_this_install_passes(home, tmp_path, monkeypatch, wrapper):
+    command = installed_command(tmp_path, "venv", sys.executable)
+    command_on_path(tmp_path, monkeypatch, wrapper.format(command=command.as_posix(), python=sys.executable).encode())
+    status, detail = result(doctor.run(), "ofscraper on PATH")
+    assert status == "PASS" and detail.endswith(", this install")
+
+
+def test_a_shell_wrapper_that_runs_another_install_warns(home, tmp_path, monkeypatch):
+    other = str(tmp_path / "pipx" / "venvs" / "ofscraper" / "bin" / "python")
+    command = installed_command(tmp_path, "other", other)
+    command_on_path(tmp_path, monkeypatch, f'#!/bin/sh\nexec "{command}" "$@"\n'.encode())
+    assert result(doctor.run(), "ofscraper on PATH")[0] == "WARN"
+
+
+def test_a_shim_doctor_cant_follow_isnt_called_another_install(home, tmp_path, monkeypatch):
+    # a version manager's shim: the program it runs is only known at run time
+    shim = '#!/usr/bin/env bash\nset -e\nprogram="${0##*/}"\nexec "/opt/manager/libexec/manager" exec "$program" "$@"\n'
+    command_on_path(tmp_path, monkeypatch, shim.encode())
+    status, detail = result(doctor.run(), "ofscraper on PATH")
+    assert status == "SKIP" and "can't tell" in detail
+
+
+def test_the_install_lines_show_the_home_folder_as_tilde(home, tmp_path, monkeypatch):
+    fake_home = pathlib.Path(sys.executable).parents[1]
+    monkeypatch.setattr(doctor.pathlib.Path, "home", classmethod(lambda cls: fake_home))
+    install = doctor.run().results[0]["detail"]
+    assert str(fake_home) not in install and f"~{os.sep}" in install
+
+
 def test_no_ofscraper_on_path(home, tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
     assert result(doctor.run(), "ofscraper on PATH")[0] == "SKIP"

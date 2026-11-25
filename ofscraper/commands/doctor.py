@@ -347,14 +347,59 @@ def _shebang_python(line):
     return None
 
 
-def _script_python(script):
-    """The Python an ofscraper command on PATH starts, from its shebang (or
-    the one in a Windows launcher, or uv's trampoline), or None."""
+def _exec_target(data):
+    """The program a shell script hands over to with exec, or None."""
+    for raw in data.splitlines()[1:100]:
+        try:
+            words = shlex.split(raw.decode("utf-8", "replace"), comments=True)
+        except ValueError:
+            continue
+        if len(words) > 1 and words[0] == "exec":
+            return words[1]
+    return None
+
+
+def _is_script(path):
+    try:
+        with open(path, "rb") as file:
+            return file.read(2) == b"#!"
+    except OSError:
+        return False
+
+
+def _follow(script, depth=0):
+    """(the Python an ofscraper command on PATH starts or None, the last
+    file read): from its shebang (or the one in a Windows launcher, or uv's
+    trampoline), following a shell wrapper that execs a python or another
+    command."""
     try:
         with open(script, "rb") as file:
             data = file.read(4 * 2**20)
     except OSError:
-        return None
+        return None, script
+    python = _script_python(script, data)
+    if python or not data.startswith(b"#!") or depth >= 4:
+        return python, script
+    target = _exec_target(data)
+    if not target:
+        return None, script
+    if PYTHON_NAME.fullmatch(re.split(r"[\\/]", target)[-1]):
+        return target, script
+    found = target if os.path.isabs(target) else shutil.which(target)
+    if not found or not os.path.isfile(found):
+        return None, script
+    return _follow(found, depth + 1)
+
+
+def _script_python(script, data=None):
+    """The Python an ofscraper command on PATH starts, from its shebang (or
+    the one in a Windows launcher, or uv's trampoline), or None."""
+    if data is None:
+        try:
+            with open(script, "rb") as file:
+                data = file.read(4 * 2**20)
+        except OSError:
+            return None
     uv = _pe_resource(data, "UV_PYTHON_PATH")
     if uv is None and data[-4:] in (b"UVSC", b"UVPY") and len(data) > 8:
         # uv's trampolines before the path moved into a resource
@@ -372,7 +417,9 @@ def _script_python(script):
             words = shlex.split(wrapped.group(1).decode("utf-8", "replace"))
         except ValueError:
             words = []
-        if len(words) > 1 and words[0] == "exec":
+        # only a python: a wrapper that execs another command is followed
+        # by _follow
+        if len(words) > 1 and words[0] == "exec" and PYTHON_NAME.fullmatch(re.split(r"[\\/]", words[1])[-1]):
             return words[1]
     # a script's first line, or the last #! line of a Windows launcher
     # (distlib's: the launcher, then the #! line, then a zip of the script)
@@ -411,10 +458,10 @@ def check_install(report):
     if not script:
         report.add(SKIP, "ofscraper on PATH", "no ofscraper command on PATH")
         return
+    python, final = _follow(script)
     if frozen:
-        same = _norm(os.path.realpath(script)) == _norm(os.path.realpath(sys.executable))
+        same = _norm(os.path.realpath(final)) == _norm(os.path.realpath(sys.executable))
     else:
-        python = _script_python(script)
         if python:
             # python and python3 in one folder can be the same install;
             # two virtual environments' pythons can be links to one file
@@ -423,7 +470,13 @@ def check_install(report):
                 and _norm(os.path.realpath(python)) == _norm(os.path.realpath(sys.executable))
             )
         else:
-            same = _norm(os.path.dirname(os.path.realpath(script))) in _scripts_dirs()
+            same = _norm(os.path.dirname(os.path.realpath(final))) in _scripts_dirs()
+    if not same and not python and _is_script(final):
+        # a wrapper or shim whose program is only known when it runs
+        report.add(SKIP, "ofscraper on PATH",
+                   f"{script} is a script that doesn't name the Python or ofscraper it runs: doctor can't tell"
+                   " whether it runs this install")
+        return
     if same:
         report.add(PASS, "ofscraper on PATH", f"{script}, this install")
     else:
