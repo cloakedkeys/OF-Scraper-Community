@@ -246,6 +246,79 @@ def test_run_whose_timeline_requests_all_fail_exits_partial(
     assert exc.value.code == exit_status.PARTIAL
 
 
+def _undated_scans():
+    """Areas scanned without a start date: each fetches with a client and
+    returns what it found."""
+    from ofscraper.data.api import highlights, paid, pinned
+
+    async def all_purchases(c):
+        return await paid.process_tasks_all_paid(await paid.create_tasks_scrape_paid(c))
+
+    async def fansly_purchases(c):
+        return await post.process_paid_post(MODEL_ID, "a creator", c)
+
+    return {
+        "pinned": (lambda c: pinned.get_pinned_posts(MODEL_ID, c=c), []),
+        "stories": (lambda c: highlights.get_stories_post(MODEL_ID, c=c), []),
+        "highlight list": (lambda c: highlights.get_highlight_post(MODEL_ID, c=c), []),
+        # the list came back, the highlight's stories didn't
+        "highlight": (
+            lambda c: highlights.get_highlight_post(MODEL_ID, c=c),
+            [{"list": [{"id": 5}], "hasMore": False}],
+        ),
+        "purchased": (lambda c: paid.get_paid_posts("a creator", MODEL_ID, c=c), []),
+        "all purchased": (all_purchases, []),
+        "fansly purchased": (fansly_purchases, []),
+    }
+
+
+@pytest.mark.parametrize("failure", FAILURES)
+@pytest.mark.parametrize(
+    "area",
+    ["pinned", "stories", "highlight list", "highlight", "purchased", "all purchased",
+     "fansly purchased"],
+)
+def test_run_whose_undated_scan_fails_exits_partial(monkeypatch, cache, area, failure):
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.main.open.run as run
+    from ofscraper.data.api import paid
+    import ofscraper.utils.live.updater as progress_utils
+
+    fetch, pages_before = _undated_scans()[area]
+    monkeypatch.setattr(
+        progress_utils,
+        "api",
+        SimpleNamespace(
+            add_overall_task=Mock(return_value=1),
+            update_overall_task=Mock(),
+            remove_overall_task=Mock(),
+            add_job_task=Mock(return_value=2),
+            remove_job_task=Mock(),
+        ),
+    )
+    # traceback_ is added to loggers by the app's log setup
+    monkeypatch.setattr(
+        logging.getLogger("shared"), "traceback_", lambda *a, **k: None, raising=False
+    )
+    monkeypatch.setattr(paid, "update_check", Mock())
+    monkeypatch.setattr(paid, "cache", cache)
+    monkeypatch.setattr(post.free, "check_free_size", lambda: True)
+    monkeypatch.setattr(post.sites, "is_fansly", lambda: area.startswith("fansly"))
+    monkeypatch.setattr(post.operations, "make_post_table_changes", AsyncMock())
+    client = FakeClient([*pages_before, FAILURES[failure]()])
+    monkeypatch.setattr(run, "check_database", lambda: None)
+
+    async def go():
+        return await fetch(client)
+
+    monkeypatch.setattr(run, "start_manager", lambda: asyncio.run(go()))
+
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+
+    assert exc.value.code == exit_status.PARTIAL
+
+
 def test_post_id_lookup_does_not_clear_the_record(monkeypatch, cache, explicit_after):
     key = incomplete._cache_key(MODEL_ID, messages.API)
     cache.set(key, AFTER)
