@@ -817,12 +817,18 @@ def creator_filters(config):
     every = names("OFSCRAPER_RESERVED_LIST") & chosen or (
         names("OFSCRAPER_ACTIVE_LIST") & chosen and names("OFSCRAPER_EXPIRED_LIST") & chosen
     )
+    # counted, never named: list names are often creator names, and the
+    # output goes into public issues
     if user_lists and not every:
-        filters.append(f"default_user_list ({', '.join(user_lists)}) selects only those lists")
+        filters.append(f"default_user_list ({_count(user_lists)}) selects only those lists")
     black_lists = _lists(_get(data.get_default_blacklist, config))
     if black_lists:
-        filters.append(f"default_black_list ({', '.join(black_lists)}) leaves out their members")
+        filters.append(f"default_black_list ({_count(black_lists)}) leaves out their members")
     return filters
+
+
+def _count(lists):
+    return f"{len(lists)} list" if len(lists) == 1 else f"{len(lists)} lists"
 
 
 def check_subscriptions(report, config):

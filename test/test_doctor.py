@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import re
 import sys
 
 import pytest
@@ -524,11 +525,14 @@ def test_online_warns_at_no_active_subscriptions(home, monkeypatch):
     assert status == "WARN" and detail.startswith("0 active, 4 expired")
 
 
-def test_online_names_the_creator_filters(home, monkeypatch):
+def test_online_names_the_creator_filters(home, monkeypatch, capsys):
+    """List names are often creator names, and the output goes into public
+    issues: the filters are named with how many lists, never the lists."""
     config = {"advanced_options": {"default_user_list": "VIP,old", "default_black_list": ["skip"]}}
     status, detail = result(online_logged_in(home, monkeypatch, config, (5, 0)), "creator filters")
     assert status == "WARN"
-    assert "default_user_list (vip, old)" in detail and "default_black_list (skip)" in detail
+    assert "default_user_list (2 lists)" in detail and "default_black_list (1 list)" in detail
+    assert not {"vip", "old", "skip"} & set(re.findall(r"[a-z]+", detail.lower()))
     config = {"advanced_options": {"default_user_list": "main,vip"}}
     report = online_logged_in(home, monkeypatch, config, (5, 0))
     assert [r for r in report.results if r["check"] == "creator filters"] == []
