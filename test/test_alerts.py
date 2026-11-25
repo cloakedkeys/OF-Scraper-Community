@@ -48,6 +48,42 @@ def test_alert_reaches_discord_and_the_script(sent):
     }]
 
 
+@pytest.mark.parametrize("level", ["LOW", "NORMAL", "DEBUG"])
+def test_alert_reaches_discord_once(monkeypatch, level):
+    # the alert's log line goes through the same Discord handler as the alert
+    import logging
+    import queue
+
+    import ofscraper.utils.logs.utils.level as log_level
+    import ofscraper.utils.profiles.data as profile_data
+    from ofscraper.utils.logs.classes.classes import DiscordFormatter
+    from ofscraper.utils.logs.classes.handlers.discord import DiscordHandler
+
+    s = SimpleNamespace(discord_level=level, alert_script=None, site="onlyfans")
+    monkeypatch.setattr(alerts.settings, "get_settings", lambda: s)
+    monkeypatch.setattr(profile_data, "get_active_profile", lambda: "main_profile")
+    handler = DiscordHandler.__new__(DiscordHandler)
+    logging.Handler.__init__(handler)
+    handler.close = lambda: logging.Handler.close(handler)
+    handler.queue = queue.Queue()
+    handler.setFormatter(DiscordFormatter("%(message)s"))
+    handler.setLevel(log_level.getLevel(level))
+    monkeypatch.setattr(handler, "_tasks", [], raising=False)
+    shared = logging.getLogger("shared")
+    shared.addHandler(handler)
+    alerts.reset()
+    try:
+        alerts.failing(alerts.LOGIN, "OnlyFans rejected the login; update the auth")
+    finally:
+        shared.removeHandler(handler)
+        alerts.reset()
+    messages = []
+    while not handler.queue.empty():
+        messages.append(handler.queue.get())
+    assert len(messages) == 1
+    assert "rejected the login" in messages[0]
+
+
 def test_no_discord_when_off_and_no_script_when_unset(sent):
     sent.settings.discord_level = "OFF"
     sent.settings.alert_script = None
@@ -223,6 +259,51 @@ def test_creator_failing_with_a_block_carries_on(sent, monkeypatch):
     command.log_user_failure("another creator", Forbidden(403))
     assert asked == [1]  # once a pass
     assert sent.script == [] and exit_status.code() == exit_status.PARTIAL
+
+
+def _me_answers(sent, monkeypatch, status):
+    """The real auth check, with /me answering this HTTP status."""
+    import httpx
+
+    request = httpx.Request("GET", "https://onlyfans.com/api2/v2/users/me")
+    error = httpx.HTTPStatusError(
+        "error", request=request, response=httpx.Response(status, request=request)
+    )
+
+    def scrape_user():
+        raise error
+
+    sent.settings.anon = False
+    monkeypatch.setattr(checkers.sites, "is_fansly", lambda: False)
+    monkeypatch.setattr(checkers.init.auth_requests, "get_request_auth", lambda: None)
+    monkeypatch.setattr(checkers.init.me, "scrape_user", scrape_user)
+    monkeypatch.setattr(checkers.init.log, "traceback_", lambda *a, **k: None, raising=False)
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_me_blocked_at_start_isnt_a_rejected_login(sent, monkeypatch, status):
+    # a firewall or ban answering /me with 403 isn't fixed by new auth
+    _me_answers(sent, monkeypatch, status)
+    monkeypatch.setattr(checkers.make, "make_auth", lambda **k: pytest.fail("auth prompt"))
+    with pytest.raises(checkers.AuthCheckUnavailable) as raised:
+        checkers.check_auth()
+    assert f"refused the login check with {status}" in str(raised.value)
+    assert sent.script == []
+
+
+def test_me_blocked_mid_run_carries_on(sent, monkeypatch):
+    _me_answers(sent, monkeypatch, 403)
+    command.log_user_failure("a creator", Forbidden(403))
+    assert sent.script == [] and exit_status.code() == exit_status.PARTIAL
+
+
+@pytest.mark.parametrize("status", [400, 401])
+def test_me_rejecting_the_login_mid_run_stops_the_pass(sent, monkeypatch, status):
+    _me_answers(sent, monkeypatch, status)
+    with pytest.raises(checkers.LoginRejected):
+        command.log_user_failure("a creator", Forbidden(403))
+    assert exit_status.code() == exit_status.AUTH
+    assert [a["kind"] for a in sent.script] == ["login"]
 
 
 def test_other_failures_dont_ask(sent, monkeypatch):
