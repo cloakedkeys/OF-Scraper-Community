@@ -137,7 +137,7 @@ Run `ofscraper creator_names [--all | --find NAME | --add MODEL_ID NAME [--seen 
 
 ### `health` (separate entry point)
 
-`ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health`). Offline tool using argparse. Reads `status.json` (from `STATUS_FILE`, `OFSC_STATUS_FILE`, or else the main profile's) without starting the scraper, prints one line saying why, and exits 0 when healthy or 1 when unhealthy. Reports unhealthy when a running daemon's heartbeat is older than `--max-quiet` (default 60 minutes, above 0), as is an idle daemon's with no next pass scheduled, when an idle daemon's `next_pass_at` passed more than `--max-quiet` ago, or when the last pass recorded a failed login that no later login check cleared. Reports healthy when there is no status file or the last run was a one-off.
+`ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health`). Offline tool using argparse. Reads `status.json` (from `STATUS_FILE`, `OFSC_STATUS_FILE`, or else the main profile's) without starting the scraper, prints one line saying why, and exits 0 when healthy or 1 when unhealthy. Reports unhealthy when a running daemon's heartbeat is older than `--max-quiet` (default 60 minutes, above 0), as is an idle daemon's with no next pass scheduled, when an idle daemon's `next_pass_at` passed more than `--max-quiet` ago, when the last pass recorded a failed login that no later login check cleared, or when the last pass ended any other way than ok (0) or partial (4). Reports healthy when there is no status file or the last run was a one-off.
 
 Run `ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health [STATUS_FILE] [--max-quiet MINUTES]`).
 
