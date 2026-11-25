@@ -71,6 +71,18 @@ def test_a_long_linux_name_fits_in_the_name_limit():
     assert size(out.name) <= 254 < size("a" + out.name)
 
 
+@pytest.mark.parametrize("char", ["é", "я", "日", "’"])
+def test_a_non_ascii_name_is_cut_by_windows_own_count(char):
+    # one UTF-16 unit each, like a letter: as much fits as of "a"
+    out = cut(f"{FOLDER}\\{char * 300}.txt")
+    assert windows_chars(out) == 259
+
+
+def test_an_emoji_counts_as_two_windows_units():
+    out = cut(f"{FOLDER}\\{'💀' * 300}.txt")
+    assert 258 <= windows_chars(out) <= 259
+
+
 @pytest.mark.parametrize(
     "folder", ["/Users/someone/d", "/Users/someone/" + "d" * 300], ids=["short", "long"]
 )
@@ -135,6 +147,15 @@ def test_a_linux_extension_over_the_name_limit_says_so(monkeypatch):
     monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "3")
     with pytest.raises(ValueError, match="no room"):
         paths._linux_truncateHelper("/data/.txt")
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "ascii"])
+def test_utf_does_not_change_how_windows_counts_a_path(monkeypatch, encoding):
+    # the limit is 2 bytes a UTF-16 unit: measured in UTF-8, a path of up to
+    # 518 characters would pass, twice what MAX_PATH allows
+    monkeypatch.setenv("UTF", encoding)
+    out = cut(f"{FOLDER}\\{'a' * 400}.txt")
+    assert windows_chars(out) == 259
 
 
 @pytest.mark.parametrize(
