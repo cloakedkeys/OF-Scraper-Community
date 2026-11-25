@@ -312,7 +312,7 @@ def test_the_guard_leaves_a_creator_with_a_missing_folder_alone(tmp_path):
     (creator,) = verify.verify([db], apply=True)["creators"]
     assert "isn't there" in creator["left_alone"] and creator["media_reset"] == 0
     assert downloaded(db) == before and creator["undo_file"] is None
-    (creator,) = verify.verify([db], apply=True, allow_mostly_missing=True)["creators"]
+    (creator,) = verify.verify([db], apply=True, allow_missing=True)["creators"]
     assert creator["media_reset"] == 3
 
 
@@ -324,7 +324,7 @@ def test_the_guard_leaves_a_creator_with_most_files_missing_alone(tmp_path):
     assert "6 of 10 files are missing" in creator["left_alone"]
     assert report["totals"]["creators_left_alone"] == 1
     assert set(by_media_id(db).values()) == {1}
-    assert verify.verify([db], apply=True, allow_mostly_missing=True)["totals"]["media_reset"] == 6
+    assert verify.verify([db], apply=True, allow_missing=True)["totals"]["media_reset"] == 6
 
 
 def test_the_preview_says_what_apply_would_do(library, tmp_path):
@@ -578,7 +578,7 @@ def test_a_missing_file_whose_folder_is_gone_leaves_the_creator_alone(tmp_path):
 
     assert str(unplugged) in creator["left_alone"] and creator["media_reset"] == 0
     assert downloaded(db) == before and creator["undo_file"] is None
-    (creator,) = verify.verify([db], apply=True, allow_mostly_missing=True)["creators"]
+    (creator,) = verify.verify([db], apply=True, allow_missing=True)["creators"]
     assert creator["media_reset"] == 3
 
 

@@ -52,7 +52,7 @@ OPTIONAL = ["skip_permanent", "unlocked", "hash"]
 PG_ROW = ["media_id", "post_id", "directory", "filename"]
 SQLITE, POSTGRESQL = "sqlite", "postgresql"
 BAD = ".bad"
-MOSTLY_MISSING = 0.5
+MISSING_LIMIT = 0.5
 # files the scraper writes that never get a medias row: post text, live
 # recordings and their chat, unfinished downloads, files moved aside, undo files
 NOT_IN_DATABASE = re.compile(
@@ -279,14 +279,14 @@ def _guard(found):
         if entry["paths"] and not entry.get("not_recoverable"):
             by_creator[entry["model_id"]].append(entry)
     guards, seen = {}, {}
-    hint = ": is the drive or share connected? Give --allow-mostly-missing to reset all the same"
+    hint = ": is the drive or share connected? Give --allow-missing to reset all the same"
     for model_id, with_file in by_creator.items():
         missing = [e for e in with_file if e["finding"] == MISSING]
         folders = sorted({os.path.dirname(p) for e in missing for p, (f, _) in e["paths"].items() if f == MISSING})
         unreadable = next(filter(None, (_unreadable(folder, seen) for folder in folders)), None)
         if unreadable:
             guards[model_id] = unreadable + hint
-        elif len(missing) > MOSTLY_MISSING * len(with_file):
+        elif len(missing) > MISSING_LIMIT * len(with_file):
             guards[model_id] = f"{len(missing)} of {len(with_file)} files are missing" + hint
     return guards
 
@@ -388,7 +388,7 @@ def _plan(report, found, options):
     """Fill in what --apply would do for the creators of these rows; the
     media and files to change. The guard leaves a creator alone on its own:
     the others in the same database are still reset."""
-    guards = {} if options["allow_mostly_missing"] else _guard(found)
+    guards = {} if options["allow_missing"] else _guard(found)
     resetting, moving = _to_reset(found, options, guards)
     report["media_to_reset"] = len(resetting)
     report["files_to_move_aside"] = len(moving)
@@ -504,11 +504,11 @@ def _apply_file(path, options):
 
 
 def _options(path_root=None, mappings=(), sample=20, reset_size_differs=False,
-             allow_mostly_missing=False, hash=False, reset_hash_differs=False,
+             allow_missing=False, hash=False, reset_hash_differs=False,
              untracked=False):
     return {"path_root": path_root, "mappings": mappings, "sample": sample,
             "reset_size_differs": reset_size_differs,
-            "allow_mostly_missing": allow_mostly_missing,
+            "allow_missing": allow_missing,
             "hash": hash or reset_hash_differs, "reset_hash_differs": reset_hash_differs,
             "untracked": untracked}
 
@@ -785,7 +785,7 @@ def main(argv=None):
     parser.add_argument("databases", type=Path, nargs="*", help="user_data.db files, or folders (e.g. a profile's .data) to search for them")
     parser.add_argument("--apply", action="store_true", help="Mark missing and empty files as not downloaded, so the next run downloads them again; writes an undo file first")
     parser.add_argument("--reset-size-differs", action="store_true", help="With --apply, also reset files whose size isn't the recorded one (moved aside with .bad added)")
-    parser.add_argument("--allow-mostly-missing", action="store_true", help="With --apply, reset a creator even when most of its files are missing, or a missing file's folder isn't there (otherwise left alone: the drive may not be connected)")
+    parser.add_argument("--allow-missing", action="store_true", help="With --apply, reset a creator even when most of its files are missing, or a missing file's folder isn't there (otherwise left alone: the drive may not be connected)")
     parser.add_argument("--hash", action="store_true", help="Also compare each file's hash with the recorded one, where one was recorded (only with remove_hash_match on); reads every file, so slow")
     parser.add_argument("--reset-hash-differs", action="store_true", help="With --apply, also reset files whose hash isn't the recorded one (moved aside with .bad added); implies --hash")
     parser.add_argument("--untracked", action="store_true", help="Also list files in the creator's folders that no database row points to; nothing is moved or deleted")
@@ -806,7 +806,7 @@ def main(argv=None):
         mappings.append(tuple(item.split("=", 1)))
     if args.undo is not None and not args.undo.strip():
         parser.error("--undo needs the path of an undo file")
-    if args.undo is not None and (args.reset_size_differs or args.allow_mostly_missing or args.undo_dir
+    if args.undo is not None and (args.reset_size_differs or args.allow_missing or args.undo_dir
                                   or args.hash or args.reset_hash_differs or args.untracked):
         parser.error("--undo puts back an earlier --apply; it takes no other --apply options")
 
@@ -834,7 +834,7 @@ def main(argv=None):
         print(f"warning: {FILES_NOTICE}", file=sys.stderr)
 
     choices = {"reset_size_differs": args.reset_size_differs,
-               "allow_mostly_missing": args.allow_mostly_missing, "hash": args.hash,
+               "allow_missing": args.allow_missing, "hash": args.hash,
                "reset_hash_differs": args.reset_hash_differs, "untracked": args.untracked}
     try:
         if args.undo is not None and args.postgres:
