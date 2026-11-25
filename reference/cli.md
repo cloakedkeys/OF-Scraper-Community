@@ -45,6 +45,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 | [`metadata`](#metadata) (86 options) | Modify metadata or db files |
 | [`db`](#db) (61 options) | Print information from the database |
 | [`creator_names`](#creator_names-separate-entry-point) (argparse) | List and record the usernames each creator account has had. |
+| [`health`](#health-separate-entry-point) (argparse) | Check whether an unattended daemon is healthy from its status file. |
 | [`move_creator_files`](#move_creator_files-separate-entry-point) (argparse) | Move a creator's downloaded files to match new path settings and update recorded paths. |
 | [`postgres_export`](#postgres_export-separate-entry-point) (argparse) | Export creators from PostgreSQL back to per-creator `user_data.db` files. |
 | [`postgres_import`](#postgres_import-separate-entry-point) (argparse) | Import per-creator `user_data.db` files into PostgreSQL. |
@@ -133,6 +134,15 @@ Run `ofscraper creator_names [--all | --find NAME | --add MODEL_ID NAME [--seen 
 - `--seen`: with --add, when the name was in use: 2024-03-01 or 2024-03-01T09:30:00+00:00 (UTC unless it has an offset; no more than a day ahead)
 - `--force`: with --add, add the name even if it changes the deleted-account folder name
 - `--csv`: also write the listing to a CSV file
+
+### `health` (separate entry point)
+
+`ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health`). Offline tool using argparse. Reads `status.json` (from `STATUS_FILE`, `OFSC_STATUS_FILE`, or else the main profile's) without starting the scraper, prints one line saying why, and exits 0 when healthy or 1 when unhealthy. Reports unhealthy when a running daemon's heartbeat is older than `--max-quiet` (default 60 minutes, above 0), as is an idle daemon's with no next pass scheduled, when an idle daemon's `next_pass_at` passed more than `--max-quiet` ago, or when the last pass recorded a failed login that no later login check cleared. Reports healthy when there is no status file or the last run was a one-off.
+
+Run `ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health [STATUS_FILE] [--max-quiet MINUTES]`).
+
+- `STATUS_FILE`: Path to the status JSON file (default: OFSC_STATUS_FILE, or status.json in the main profile's folder).
+- `--max-quiet`: Minutes, above 0, before a quiet running daemon or overdue idle daemon counts as unhealthy (default: 60).
 
 ### `move_creator_files` (separate entry point)
 

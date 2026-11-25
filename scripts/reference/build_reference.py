@@ -512,6 +512,10 @@ SEPARATE_COMMANDS = {
         "[--all | --find NAME | --add MODEL_ID NAME [--seen DATE] [--force] | --csv FILE] [--data-dir DIR | --postgres [--site SITE]]",
         "List and record the usernames each creator account has had.",
     ),
+    "health": (
+        "[STATUS_FILE] [--max-quiet MINUTES]",
+        "Check whether an unattended daemon is healthy from its status file.",
+    ),
     "move_creator_files": (
         "(DATABASE | --postgres --creator NAME) [OPTIONS]",
         "Move a creator's downloaded files to match new path settings and update recorded paths.",
