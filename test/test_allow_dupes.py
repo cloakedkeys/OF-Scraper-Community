@@ -415,6 +415,32 @@ def test_skip_purchased_says_when_a_repost_waits_for_an_area_not_scanned(
     assert "1 copy" in line and "Messages" in line and "Timeline" not in line.split("scan")[-1]
 
 
+def test_skip_purchased_timeline_only_run_says_messages_was_not_scanned(
+    skip_purchased, caplog
+):
+    skip_purchased.stub.download_area = ["Purchased"]
+    assert scrape_and_download((3, "paid", 7, True)) == [(7, 3)]
+    skip_purchased.stub.download_area = ["Timeline"]
+    with caplog.at_level(logging.INFO, logger="shared"):
+        assert scrape_and_download((2, "timeline", 7, True)) == []
+    (line,) = held_back_lines(caplog)
+    assert "Messages wasn't scanned" in line
+    assert "Archived" not in line and "Streams" not in line
+
+
+def test_skip_purchased_says_nothing_when_messages_was_scanned(skip_purchased, caplog):
+    # Archived and Streams aren't scanned, but a bought post that isn't a
+    # message is the copy itself, so nothing is waiting on another area
+    skip_purchased.stub.download_area = ["Purchased"]
+    scrape_and_download((3, "paid", 7, True))
+    skip_purchased.stub.download_area = ["Messages", "Timeline", "Purchased"]
+    with caplog.at_level(logging.INFO, logger="shared"):
+        assert scrape_and_download(
+            (1, "message", 7, True), (2, "timeline", 7, True), (3, "paid", 7, True)
+        ) == [(7, 2)]
+    assert held_back_lines(caplog) == []
+
+
 def test_skip_purchased_says_nothing_when_every_area_was_scanned(skip_purchased, caplog):
     skip_purchased.stub.download_area = ["Purchased"]
     scrape_and_download((3, "paid", 7, True))

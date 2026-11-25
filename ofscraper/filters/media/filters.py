@@ -6,7 +6,6 @@ from collections import defaultdict
 import arrow
 
 import ofscraper.db.operations_.wrapper as db_wrapper
-import ofscraper.sites as sites
 import ofscraper.utils.separate as separate
 import ofscraper.utils.settings as settings
 import ofscraper.utils.me as me_util
@@ -125,28 +124,20 @@ def skip_purchased_copies(media, username=None, model_id=None):
     return out
 
 
-# the areas a bought file's own post can be in (a paid message or post)
-BOUGHT_IN = {
-    sites.ONLYFANS: ("Messages", "Timeline", "Archived", "Streams"),
-    sites.FANSLY: ("Messages", "Timeline"),
-}
-
-
 def log_held_back(username, held, scanned):
     """--skip-purchased-dupes: a downloaded Purchased copy counts for the
-    first other copy a run finds. When a run didn't scan an area the bought
-    post can be in, that copy may be a repost of a post there; say so, as it
-    downloads only once a run includes that area."""
-    missing = [a for a in BOUGHT_IN[sites.current_site()] if a not in scanned]
-    if not held or not missing:
+    first other copy a run finds. When a run didn't scan Messages, that copy
+    may be a repost of a bought message; say so, as it downloads only once a
+    run includes Messages."""
+    if not held or "Messages" in scanned:
         return
     copies = "1 copy" if held == 1 else f"{held} copies"
     they = "it downloads" if held == 1 else "they download"
     log.info(
         f"[{username}] --skip-purchased-dupes held back {copies} of media bought "
         "earlier: the downloaded Purchased file counts for the first copy this "
-        f"run found. This run didn't scan {', '.join(missing)}; if an earlier "
-        f"copy is there, {they} once a run includes it"
+        "run found. Messages wasn't scanned; if the bought message is there, "
+        f"{they} once a run includes Messages"
     )
 
 
