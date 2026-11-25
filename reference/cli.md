@@ -36,7 +36,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 
 | Command | Summary |
 |---|---|
-| [Main program (no command)](#main-program-no-command) (104 options) | OF-Scraper Options |
+| [Main program (no command)](#main-program-no-command) (105 options) | OF-Scraper Options |
 | [`manual`](#manual) (53 options) | Manually download media by providing a list of URLs or IDs |
 | [`msg_check`](#msg_check) (53 options) | Produces a media table from messages with filterable entries and quick downloads |
 | [`story_check`](#story_check) (51 options) | Produces a media table from stories and highlights with filterable entries and quick downloads |
@@ -58,7 +58,7 @@ Run `OF-Scraper [OPTIONS] [COMMAND] [COMMAND OPTIONS]`.
 
 ### Main program (no command)
 
-**Options:** 104 · **`--help` summary:** OF-Scraper Options
+**Options:** 105 · **`--help` summary:** OF-Scraper Options
 
 Runs when no subcommand is given. The entry point is `ofscraper/__main__.py`. Then `Manager.pick()` calls `commands/scraper/scraper.main()`, which cleans temp files and the database and checks the CDM. After that, the run goes one of these ways:
 
@@ -722,6 +722,14 @@ Select batch action(s) to perform [like,unlike,download]. Accepts space or comma
 Run script in the background. Set value for how many minutes between script runs
 
 **Dest:** `daemon` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
+
+#### `--daemon-jitter`
+
+**Type:** float range · **Default:** `0.0` · **Commands:** main program
+
+Add a random delay up to this many minutes to each --daemon interval (default 0)
+
+**Dest:** `daemon_jitter` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
 
 #### `--live`
 
