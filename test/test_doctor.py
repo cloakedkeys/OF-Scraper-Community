@@ -85,14 +85,21 @@ def test_the_first_line_names_the_running_install(home):
 
 def test_ofscraper_on_path_from_this_install_passes(home, tmp_path, monkeypatch):
     script = command_on_path(tmp_path, monkeypatch, f"#!{sys.executable}\nimport ofscraper\n".encode())
-    assert result(doctor.run(), "ofscraper on PATH") == ("PASS", f"{doctor.redact(str(script))}, this install")
+    assert passes_as_this_install(script)
+
+
+def passes_as_this_install(script):
+    # Windows finds ofscraper.exe as ofscraper.EXE, the case PATHEXT gives
+    status, detail = result(doctor.run(), "ofscraper on PATH")
+    return status == "PASS" and os.path.normcase(detail) == os.path.normcase(f"{doctor.redact(str(script))}, this install")
 
 
 def test_ofscraper_on_path_from_another_install_warns(home, tmp_path, monkeypatch):
     other = str(tmp_path / "pipx" / "venvs" / "ofscraper" / "bin" / "python")
     script = command_on_path(tmp_path, monkeypatch, f"#!{other}\nimport ofscraper\n".encode())
     status, detail = result(doctor.run(), "ofscraper on PATH")
-    assert status == "WARN" and doctor.redact(str(script)) in detail and doctor.redact(sys.executable) in detail
+    assert status == "WARN" and os.path.normcase(doctor.redact(str(script))) in os.path.normcase(detail)
+    assert doctor.redact(sys.executable) in detail
     # pip's form for a long path
     script.write_bytes(f"#!/bin/sh\n'''exec' \"{other}\" \"$0\" \"$@\"\n' '''\n".encode())
     assert result(doctor.run(), "ofscraper on PATH")[0] == "WARN"
@@ -753,7 +760,9 @@ def test_key_files_named_in_another_case(home, tmp_path):
     (tmp_path / "DEVICE_PRIVATE_KEY").write_bytes(b"k")
     status, detail = manual_keys(home, tmp_path / "client_id.bin", tmp_path / "private_key.pem")
     assert status == "FAIL"
-    assert "client-id: no file at that name, but Client_ID.bin is in that folder" in detail
+    if not (tmp_path / "client_id.bin").exists():
+        # on a file system that ignores case (Windows, macOS) it is the file
+        assert "client-id: no file at that name, but Client_ID.bin is in that folder" in detail
     assert "private-key: no file at that name, but DEVICE_PRIVATE_KEY is in that folder" in detail
 
 
@@ -911,13 +920,21 @@ def test_a_pip_windows_launcher_with_an_upper_case_python(tmp_path):
 def test_env_shebang_finds_the_python_on_path(home, tmp_path, monkeypatch):
     script = command_on_path(tmp_path, monkeypatch, f"#!/usr/bin/env -S {os.path.basename(sys.executable)} -s\nimport ofscraper\n".encode())
     monkeypatch.setenv("PATH", os.pathsep.join([str(script.parent), os.path.dirname(sys.executable)]))
-    assert result(doctor.run(), "ofscraper on PATH") == ("PASS", f"{doctor.redact(str(script))}, this install")
+    assert passes_as_this_install(script)
 
 
 def test_a_shebang_through_a_linked_folder_is_this_install(home, tmp_path, monkeypatch):
     """macOS's /var is /private/var: the same folder by another path."""
     link = tmp_path / "linked"
-    link.symlink_to(os.path.dirname(sys.executable), target_is_directory=True)
+    try:
+        link.symlink_to(os.path.dirname(sys.executable), target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        # a symlink needs a privilege on Windows; a junction doesn't
+        import _winapi
+
+        _winapi.CreateJunction(os.path.dirname(sys.executable), str(link))
     python = link / os.path.basename(sys.executable)
     script = command_on_path(tmp_path, monkeypatch, f"#!{python}\nimport ofscraper\n".encode())
     assert result(doctor.run(), "ofscraper on PATH")[0] == "PASS"
