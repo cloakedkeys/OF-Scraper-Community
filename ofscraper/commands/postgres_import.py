@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import contextlib
 import math
+import os
 import re
 import shutil
 import sqlite3
@@ -764,6 +765,7 @@ def run(folder, apply=False, skip_bad=False, staging=None, target=None, out=prin
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
+        prog=os.path.basename(sys.argv[0]),
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
