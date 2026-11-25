@@ -235,6 +235,37 @@ def test_a_killed_check_is_not_a_crashing_ffmpeg(monkeypatch, caplog, code, name
     assert "crashed" not in caplog.text
 
 
+@pytest.mark.parametrize(
+    "code,said",
+    [
+        # Ctrl+C or the console closed: Python reports Windows codes
+        # unsigned, but signed is the same 32 bits
+        (0xC000013A, "was stopped (Windows 0xC000013A, Ctrl+C or the console closed)"),
+        (0xC000013A - 2**32, "was stopped (Windows 0xC000013A, Ctrl+C or the console closed)"),
+        # ended from a debugger or by Ctrl+C / Ctrl+Break under one
+        (0x40010004, "was stopped (Windows 0x40010004, ended by a debugger)"),
+        (0x40010005, "was stopped (Windows 0x40010005, Ctrl+C)"),
+        (0x40010008, "was stopped (Windows 0x40010008, Ctrl+Break)"),
+        # a signed crash code is still a crash
+        (0xC0000005 - 2**32, "crashed (Windows error 0xC0000005)"),
+    ],
+)
+def test_a_check_stopped_on_windows_is_not_a_crashing_ffmpeg(monkeypatch, caplog, code, said):
+    import subprocess
+
+    monkeypatch.setattr(
+        ffmpeg.subprocess, "run",
+        lambda cmd, **k: subprocess.CompletedProcess(cmd, code, b"", b""),
+    )
+    with caplog.at_level("DEBUG", logger="shared"):
+        found = ffmpeg._ts_crash("ffmpeg")
+    if said.startswith("crashed"):
+        assert found == said
+    else:
+        assert found is None
+        assert said in caplog.text and "crashed" not in caplog.text
+
+
 @pytest.fixture
 def lookup(monkeypatch):
     """get_ffmpeg with a settings path, no pyffmpeg, and fake binaries:

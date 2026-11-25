@@ -47,6 +47,13 @@ _TS_SAMPLE = base64.b64decode(
 )
 
 _CRASH_SIGNALS = {"SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE", "SIGABRT"}
+# Windows codes for a process ended by the user, not a crash
+_WINDOWS_STOPS = {
+    0xC000013A: "Ctrl+C or the console closed",  # STATUS_CONTROL_C_EXIT
+    0x40010004: "ended by a debugger",  # DBG_TERMINATE_PROCESS
+    0x40010005: "Ctrl+C",  # DBG_CONTROL_C
+    0x40010008: "Ctrl+Break",  # DBG_CONTROL_BREAK
+}
 
 
 def stop_reason(returncode) -> str | None:
@@ -54,6 +61,11 @@ def stop_reason(returncode) -> str | None:
     (Linux, macOS) or by a Windows exception code. None for a normal exit."""
     if returncode is None:
         return None
+    if returncode < -255:
+        # no signal is that large: a Windows code read as signed
+        returncode &= 0xFFFFFFFF
+    if returncode in _WINDOWS_STOPS:
+        return f"was stopped (Windows 0x{returncode:08X}, {_WINDOWS_STOPS[returncode]})"
     if returncode < 0:
         try:
             name = signal.Signals(-returncode).name
