@@ -56,10 +56,17 @@ class base:
             # does label names (labels.decode_label_name). Decoded after the
             # tags are gone, so a decoded "<" isn't read as one. Only an
             # entity ending in ";" is decoded: a cleaned name has none left,
-            # so cleaning it again decodes nothing twice.
+            # so cleaning it again decodes nothing twice. A decoded "\" or
+            # "/" would be a folder in the name ("&#92;..&#92;" climbs out of
+            # the save folder on Windows), so it's removed, as is a decoded
+            # control character other than a line break or tab.
             text = re.sub(
                 r"&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);",
-                lambda m: html.unescape(m[0]),
+                lambda m: re.sub(
+                    r"[\\/\x00-\x08\x0b\x0c\x0e-\x1f\x7f]",
+                    "",
+                    html.unescape(m[0]),
+                ),
                 text,
             )
         # a line break or a tab, written or decoded ("&#10;"), separates

@@ -150,6 +150,21 @@ def test_an_encoded_line_break_separates_words(naming, caption, expected):
 
 
 @pytest.mark.parametrize(
+    "caption, expected",
+    [
+        # a decoded "\" or "/" would be a folder in the name: "\..\" climbs
+        # out of the save folder on Windows
+        ("a&#92;..&#92;b", "a..b"),
+        ("&#47;etc&#47;passwd", "etcpasswd"),
+        ("a&bsol;b&sol;c&#x5C;d", "abcd"),
+    ],
+)
+def test_a_decoded_path_separator_is_removed(naming, caption, expected):
+    text, (media,) = naming("{text}.{ext}", caption)
+    assert (text, media) == (f"{expected}.txt", f"{expected}.jpg")
+
+
+@pytest.mark.parametrize(
     "caption",
     # an entity written in the caption ("&amp;" typed) reaches OnlyFans'
     # text escaped once more: decoded once, it's the entity, as typed
