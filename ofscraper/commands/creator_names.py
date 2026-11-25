@@ -329,6 +329,7 @@ def _shown(name, first, last):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
+        prog=os.path.basename(sys.argv[0]),
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--data-dir", type=pathlib.Path)
