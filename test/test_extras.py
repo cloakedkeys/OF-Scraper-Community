@@ -4,6 +4,7 @@ No package is installed: ``subprocess.run`` is replaced, and conftest sets
 ``OFSC_INSTALL_EXTRAS=False`` so no other test can start a real install.
 """
 
+import os
 import pathlib
 import site
 import subprocess
@@ -18,23 +19,48 @@ from ofscraper.utils.system import extras
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+class _Terminal:
+    """stdin of someone at a terminal."""
+
+    def __init__(self, tty=True):
+        self.tty = tty
+
+    def isatty(self):
+        return self.tty
+
+
 @pytest.fixture
 def runs(monkeypatch):
-    """Turn installs on and record each command instead of running it."""
+    """Turn installs on, answer yes at a terminal, and record each command
+    instead of running it."""
+    import ofscraper.utils.settings as settings
+
     monkeypatch.setenv("INSTALL_EXTRAS", "True")
+    monkeypatch.delenv("SUDO_USER", raising=False)
+    monkeypatch.setattr(sys, "stdin", _Terminal())
+    answer = {"text": "y", "prompts": []}
+
+    def ask(prompt=""):
+        answer["prompts"].append(prompt)
+        return answer["text"]
+
+    monkeypatch.setattr("builtins.input", ask)
+    monkeypatch.setattr(settings, "get_args", lambda *a, **k: SimpleNamespace(daemon=None))
     extras.install.cache_clear()
     extras.install_chromium.cache_clear()
     calls = []
+    kwargs_seen = []
     result = {"code": 0, "stderr": ""}
 
     def run(cmd, **kwargs):
         calls.append(cmd)
+        kwargs_seen.append(kwargs)
         return SimpleNamespace(returncode=result["code"], stdout="", stderr=result["stderr"])
 
     monkeypatch.setattr(extras.subprocess, "run", run)
     # whether this venv has pip or uv doesn't matter here
     monkeypatch.setattr(extras, "pip_command", lambda reqs: [sys.executable, "-m", "pip", "install", *reqs])
-    yield SimpleNamespace(calls=calls, result=result)
+    yield SimpleNamespace(calls=calls, kwargs=kwargs_seen, result=result, answer=answer)
     extras.install.cache_clear()
     extras.install_chromium.cache_clear()
 
@@ -78,10 +104,133 @@ def test_installs_the_extra_into_the_running_python_once(runs, monkeypatch):
     assert runs.calls == [[sys.executable, "-m", "pip", "install", "psycopg[binary,pool]>=3.3.9,<3.4"]]
 
 
-def test_uses_uv_when_this_python_has_no_pip(monkeypatch):
+def test_uses_uv_when_this_python_has_no_pip(monkeypatch, tmp_path):
     monkeypatch.setattr(extras.importlib.util, "find_spec", lambda name: None)
-    monkeypatch.setattr(extras.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
-    assert extras.pip_command(["x"]) == ["/bin/uv", "pip", "install", "--python", sys.executable, "x"]
+    uv = tmp_path / ("uv.exe" if sys.platform == "win32" else "uv")
+    uv.write_text("")
+    uv.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    # --no-config: a uv.toml or pyproject.toml where OF-Scraper runs can't add an index
+    cmd = extras.pip_command(["x"])
+    assert os.path.normcase(cmd[0]) == os.path.normcase(str(uv))  # Windows may say uv.EXE
+    assert cmd[1:] == ["pip", "install", "--no-config", "--python", sys.executable, "x"]
+
+
+def test_uv_in_the_working_directory_is_not_used(monkeypatch, tmp_path):
+    # an empty PATH entry (a trailing separator is common on Windows) means
+    # the working directory, and so does "."
+    monkeypatch.setattr(extras.importlib.util, "find_spec", lambda name: None)
+    planted = tmp_path / ("uv.exe" if sys.platform == "win32" else "uv")
+    planted.write_text("")
+    planted.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(tmp_path / "empty"), ".", ""]))
+    assert extras.pip_command(["x"]) is None
+
+
+def test_pip_in_the_working_directory_is_not_run(monkeypatch, tmp_path):
+    # `python -m pip` imports pip.py from the working directory first
+    marker = tmp_path / "ran"
+    (tmp_path / "pip.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(extras.importlib.util, "find_spec", lambda name: object())
+    cmd = extras.pip_command([])
+    cmd[cmd.index("install")] = "--version"
+    extras._run(cmd, "pip")
+    assert not marker.exists()
+
+
+def test_the_install_runs_from_an_empty_directory(runs, monkeypatch, tmp_path):
+    (tmp_path / "uv.toml").write_text('index-url = "http://127.0.0.1:9/"\n')
+    monkeypatch.chdir(tmp_path)
+    seen = []
+
+    def run(cmd, **kwargs):
+        seen.append((kwargs.get("cwd"), os.listdir(kwargs.get("cwd") or ".")))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(extras.subprocess, "run", run)
+    assert extras.install("postgres") is True
+    assert extras.install_chromium() is True
+    assert len(seen) == 2
+    for cwd, listing in seen:
+        assert cwd and pathlib.Path(cwd) != tmp_path
+        assert listing == []
+
+
+def test_the_chromium_download_does_not_read_the_working_directory(runs):
+    assert extras.install_chromium() is True
+    assert runs.calls[0][:3] == [sys.executable, "-E", "-P"]
+
+
+def test_asks_before_installing(runs):
+    runs.answer["text"] = "n"
+    assert extras.install("live") is False
+    assert extras.install("live") is False
+    assert runs.calls == []
+    assert len(runs.answer["prompts"]) == 1  # asked once per run
+    assert "playwright" in runs.answer["prompts"][0]
+
+
+def test_without_a_terminal_it_says_the_command_instead(runs, monkeypatch, caplog):
+    # cron, a service, docker run without -it
+    monkeypatch.setattr(sys, "stdin", _Terminal(tty=False))
+    with caplog.at_level("WARNING", logger="shared"):
+        assert extras.install("postgres") is False
+        assert extras.install_chromium() is False
+    assert runs.calls == [] and runs.answer["prompts"] == []
+    assert "pip install 'psycopg[binary,pool]>=3.3.9,<3.4'" in caplog.text or (
+        'pip install "psycopg[binary,pool]>=3.3.9,<3.4"' in caplog.text
+    )
+    assert "playwright install chromium" in caplog.text
+
+
+def test_without_stdin_it_says_the_command_instead(runs, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", None)
+    assert extras.install("postgres") is False
+    assert runs.calls == []
+
+
+def test_the_daemon_does_not_install(runs, monkeypatch, caplog):
+    import ofscraper.utils.settings as settings
+
+    monkeypatch.setattr(settings, "get_args", lambda *a, **k: SimpleNamespace(daemon=60))
+    with caplog.at_level("WARNING", logger="shared"):
+        assert extras.install("live") is False
+    assert runs.calls == [] and runs.answer["prompts"] == []
+    assert "playwright" in caplog.text
+
+
+def test_root_under_sudo_does_not_install(runs, monkeypatch, caplog):
+    monkeypatch.setattr(extras.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setenv("SUDO_USER", "someone")
+    with caplog.at_level("WARNING", logger="shared"):
+        assert extras.install("postgres") is False
+    assert runs.calls == [] and runs.answer["prompts"] == []
+    assert "sudo" in caplog.text
+
+
+def test_the_install_uses_ofsc_proxy(runs, monkeypatch):
+    import ofscraper.utils.of_env.of_env as of_env
+
+    real = of_env.getattr
+    proxy = "http://user:secret@proxy.example:3128"
+    monkeypatch.setattr(of_env, "getattr", lambda key, *a, **k: proxy if key == "PROXY" else real(key, *a, **k))
+    assert extras.install("postgres") is True
+    assert extras.install_chromium() is True
+    for kwargs in runs.kwargs:
+        env = kwargs["env"]
+        assert env["HTTPS_PROXY"] == env["https_proxy"] == proxy
+        assert env["HTTP_PROXY"] == env["http_proxy"] == proxy
+    # in the environment, not on a command line other users can read
+    assert not any(proxy in arg for cmd in runs.calls for arg in cmd)
+
+
+def test_without_ofsc_proxy_the_environment_is_left_alone(runs, monkeypatch):
+    monkeypatch.delenv("OFSC_PROXY", raising=False)
+    monkeypatch.setenv("HTTPS_PROXY", "http://already.example:1")
+    assert extras.install("postgres") is True
+    assert runs.kwargs[0]["env"]["HTTPS_PROXY"] == "http://already.example:1"
 
 
 def test_without_pip_or_uv_nothing_runs(runs, monkeypatch, caplog):
@@ -125,7 +274,7 @@ def test_a_install_that_cannot_start_is_a_failure(runs, monkeypatch):
 def test_chromium_is_downloaded_with_this_pythons_playwright(runs):
     assert extras.install_chromium() is True
     assert extras.install_chromium() is True
-    assert runs.calls == [[sys.executable, "-m", "playwright", "install", "chromium"]]
+    assert runs.calls == [[sys.executable, "-E", "-P", "-m", "playwright", "install", "chromium"]]
 
 
 @pytest.mark.parametrize("value, on", [(" True ", True), ("1\n", True), (" false", False), ("0", False)])
