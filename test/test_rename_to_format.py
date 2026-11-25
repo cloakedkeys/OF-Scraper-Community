@@ -107,7 +107,7 @@ class Library:
         return tool.rename(self.db, apply=apply, config=self.config, **dict(args))
 
     def files(self):
-        return sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*") if p.is_file())
+        return sorted(p.relative_to(self.root).as_posix() for p in self.root.rglob("*") if p.is_file())
 
 
 def test_a_preview_lists_the_new_names_and_changes_nothing(tmp_path):
@@ -258,11 +258,11 @@ def test_an_apply_whose_commit_fails_gives_the_files_their_old_names_back(tmp_pa
     with read_lock(library.db), pytest.raises(sqlite3.OperationalError, match="locked"):
         library.run(apply=True)
 
-    # nothing was saved: the files are where their rows say, and no undo
-    # file is left, as nothing needs one
+    # nothing was saved: the files are where their rows say; the undo file
+    # is kept, as on any stop
     assert library.rows() == rows
     assert library.files() == ["alice/Posts/Images/abcdef.jpg", "alice/Posts/Images/other.jpg"]
-    assert not list(Path(library.db).parent.glob("*.rename-undo-*"))
+    assert len(list(Path(library.db).parent.glob("*.rename-undo-*"))) == 1
 
     assert library.run(apply=True)["rows_changed"] == 2
     assert library.files() == ["alice/All/1.jpg", "alice/All/2.jpg"]
@@ -580,7 +580,78 @@ def test_a_stop_part_way_puts_the_files_back_and_changes_no_row(tmp_path, monkey
     monkeypatch.setattr(tool, "rename_file", real)
     assert library.files() == ["alice/Posts/Images/a.jpg", "alice/Posts/Images/b.jpg"]
     assert library.rows() == rows
-    assert list(library.db.parent.glob("*.json")) == []
+    # kept on any stop: it costs nothing, and the next run writes its own
+    assert len(list(library.db.parent.glob("*.rename-undo-*.json"))) == 1
+
+
+def renamed_then_stopped(monkeypatch):
+    """A Ctrl+C that lands just after a rename is made, before the code
+    after it runs."""
+    real = tool.rename_file
+
+    def stopped(old, new):
+        real(old, new)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(tool, "rename_file", stopped)
+    return real
+
+
+def test_a_stop_just_after_a_rename_puts_that_file_back_and_keeps_the_undo_file(tmp_path, monkeypatch):
+    library = Library(tmp_path)
+    library.add("a.jpg")
+    rows = library.rows()
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    real = renamed_then_stopped(monkeypatch)
+
+    with pytest.raises(KeyboardInterrupt):
+        library.run(apply=True)
+
+    monkeypatch.setattr(tool, "rename_file", real)
+    assert library.files() == ["alice/Posts/Images/a.jpg"]
+    assert library.rows() == rows
+    assert len(list(library.db.parent.glob("*.rename-undo-*.json"))) == 1
+
+
+def test_an_undo_stopped_just_after_a_rename_gives_that_file_its_new_name_again(tmp_path, monkeypatch):
+    library = Library(tmp_path)
+    library.add("a.jpg")
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    undo_file = library.run(apply=True)["undo_file"]
+    renamed = library.rows()
+    real = renamed_then_stopped(monkeypatch)
+
+    with pytest.raises(KeyboardInterrupt):
+        tool.undo(undo_file, apply=True)
+
+    monkeypatch.setattr(tool, "rename_file", real)
+    assert library.files() == ["alice/Posts/Images/1.jpg"]
+    assert library.rows() == renamed
+    assert Path(undo_file).is_file()
+
+
+def test_apply_and_undo_are_refused_while_postgresql_is_on(tmp_path, monkeypatch, capsys):
+    library = Library(tmp_path)
+    library.add("a.jpg")
+    rows = library.rows()
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    undo_file = library.run(apply=True)["undo_file"]
+    renamed = library.rows()
+    monkeypatch.setattr(postgres, "url", lambda: "postgresql://u@localhost/db")
+
+    # a preview still works, on the user_data.db
+    assert library.run()["unchanged"] == 1
+    with pytest.raises(ValueError, match="PostgreSQL is on"):
+        library.run(apply=True)
+    with pytest.raises(ValueError, match="PostgreSQL is on"):
+        tool.undo(undo_file, apply=True)
+    assert tool.undo(undo_file)["files_to_rename_back"] == 1
+    with pytest.raises(SystemExit) as exit_:
+        tool.main([str(library.db), "--config", str(library.config), "--apply"])
+    assert exit_.value.code == 1 and "PostgreSQL is on" in capsys.readouterr().err
+
+    assert library.files() == ["alice/Posts/Images/1.jpg"]
+    assert library.rows() == renamed != rows
 
 
 def test_folders_above_the_save_location_and_folders_with_other_files_stay(tmp_path):

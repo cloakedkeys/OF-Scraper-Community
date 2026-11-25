@@ -24,7 +24,10 @@ with no login and no download. See RENAMING_FILES.md.
   a file, and elsewhere it is made with a hard link that can't either.
 - An undo file, beside the database, lists every rename and row change
   before the first one is made. --undo FILE puts back what is still as this
-  left it. A run that stops part way is finished by running it again.
+  left it. A run that stops part way (an error, Ctrl+C) gives the files it
+  renamed their old names back, saves no row and keeps the undo file.
+- While PostgreSQL is on, --apply (and --undo with --apply) is refused: the
+  changes would reach only the user_data.db.
 - The rows of the database are locked for the whole run and their changes
   saved together at the end. Then the old folders that were emptied are
   removed, up to the save location (rmdir: a folder that holds anything
@@ -49,11 +52,16 @@ from pathlib import Path
 import ofscraper.db.postgres as postgres
 import ofscraper.sites as sites
 from ofscraper.commands import move_creator_files as mover
-from ofscraper.commands.recover_collisions import _remove_unused, _unconfirmed
+from ofscraper.commands.recover_collisions import _unconfirmed
 
 FILES_NOTICE = mover.FILES_NOTICE.replace("move_creator_files", "rename_to_format").replace(
     " To work on PostgreSQL, give --postgres and --creator in place of the file.",
     " This command doesn't work on PostgreSQL.",
+)
+POSTGRES_REFUSED = (
+    f"PostgreSQL is on ({postgres.URL_KEY} is set), and rename_to_format only changes"
+    " the user_data.db files: renaming the files would part them from their"
+    " PostgreSQL rows. --apply is refused; a preview still works"
 )
 UNDO_VERSION = 1
 TOOL = "rename_to_format"
@@ -694,6 +702,8 @@ def _connect(database, apply):
 def rename(database, apply=False, username=None, path_root=None, config=None, profile=None, sample=20):
     """Preview, or with `apply` carry out, the renames for the creator a
     user_data.db holds the rows of (see the module's docstring)."""
+    if apply and postgres.enabled():
+        raise ValueError(POSTGRES_REFUSED)
     database = Path(database).resolve(strict=True)
     with closing(_connect(database, apply)) as conn:
         with scraper_settings(config, profile, _site(conn)) as settings:
@@ -716,14 +726,17 @@ def rename(database, apply=False, username=None, path_root=None, config=None, pr
         try:
             for what, old, new, changes in to_do:
                 if what == "rename":
+                    # listed before it is made: a stop (Ctrl+C) in or just
+                    # after it still finds it to put back
+                    moved.append((old, new))
                     try:
                         rename_file(old, new)
                     except OSError as error:
                         # another disk, a folder that can't be written to
+                        moved.pop()
                         result["left"].append({"file": old, "why": f"it could not be renamed ({error.strerror or error})"})
                         result["to_rename"] -= 1
                         continue
-                    moved.append((old, new))
                     result["renamed"] += 1
                 for rowid, directory, filename, new_dir, new_name, _size in changes:
                     changed = conn.execute(
@@ -779,17 +792,14 @@ def _roll_back(conn):
 
 def _apply_rolled_back(conn, moved, undo_file, error):
     """--apply stopped before its rows were saved: give the renamed files
-    their old names back, and remove the undo file nothing needs."""
+    their old names back. The undo file is kept whatever happens (a second
+    stop can land while they are put back); an undo with it changes only
+    what is still as this run left it."""
     _roll_back(conn)
     left = _move_back(moved)
-    if not left:
-        _remove_unused(undo_file, error)
-    else:
-        print(
-            f"Files that could not be given their old names back: {len(left)}."
-            f" The undo file is kept: {undo_file}",
-            file=sys.stderr,
-        )
+    if left:
+        print(f"Files that could not be given their old names back: {len(left)}.", file=sys.stderr)
+    print(f"The undo file is kept: {undo_file}", file=sys.stderr)
 
 
 def _undo_rolled_back(conn, moved):
@@ -806,9 +816,14 @@ def _undo_rolled_back(conn, moved):
 
 
 def _move_back(moved):
-    """Give renamed files their old names back; what can't be is returned."""
+    """Give renamed files their old names back; what can't be is returned.
+    A rename stopped before it was made has nothing at its new place; one
+    stopped after its link has the file at both, and rename_file then only
+    removes the new name."""
     left = []
     for old, new in reversed(moved):
+        if not os.path.lexists(new):
+            continue
         try:
             rename_file(new, old)
         except OSError:
@@ -838,6 +853,8 @@ def undo(undo_file, apply=False):
     name back; then the rows that still record its new name get the old
     one. A file that is at neither place, or at both, is listed and its
     rows are left."""
+    if apply and postgres.enabled():
+        raise ValueError(POSTGRES_REFUSED)
     record = _read_undo(undo_file)
     database = Path(record["database"]).resolve(strict=True)
     result = {"applied": apply, "database": str(database), "files_to_rename_back": 0,
@@ -854,12 +871,14 @@ def undo(undo_file, apply=False):
                 if at_new and (not at_old or _same_file(old, new)):
                     result["files_to_rename_back"] += 1
                     if apply:
+                        # listed before it is made, as in rename()
+                        moved.append((new, old))
                         try:
                             rename_file(new, old)
                         except OSError as error:
+                            moved.pop()
                             result["left"].append({"file": new, "why": f"it could not be renamed ({error.strerror or error})"})
                             continue
-                        moved.append((new, old))
                         result["renamed_back"] += 1
                 elif at_new or not at_old:
                     why = "at its old place and its new one" if at_new else NOT_FOUND
@@ -912,7 +931,8 @@ def main(argv=None):
             parser.error("--undo takes the database from the undo file; give only --apply with it")
     elif not args.database:
         parser.error("the following arguments are required: database")
-    elif os.environ.get(postgres.URL_KEY, "").strip():
+    elif not args.apply and os.environ.get(postgres.URL_KEY, "").strip():
+        # with --apply, rename() refuses instead
         print(f"warning: {FILES_NOTICE}", file=sys.stderr)
 
     # the placeholder code's warnings are for a download's log
