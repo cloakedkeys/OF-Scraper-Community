@@ -17,6 +17,7 @@ import re
 import sqlite3
 import stat
 import sys
+import unicodedata
 import uuid
 from collections import Counter, defaultdict
 from contextlib import closing
@@ -123,6 +124,70 @@ def _check(path, recorded_size, recorded_hash=None, hashing=False):
     return OK, actual
 
 
+class _Spellings:
+    """A file whose recorded name is spelt otherwise on disk: in another
+    Unicode form (a Mac writes names decomposed, NFD; the database holds
+    what the site sent, usually NFC), or, on a disk that doesn't tell case
+    apart, in another case. Each folder is read once."""
+
+    def __init__(self):
+        self._folders = {}
+        self._folds = {}
+
+    def folds_case(self, folder):
+        """The disk doesn't tell case apart here: tried on the nearest
+        folder whose name has letters."""
+        if folder not in self._folds:
+            name, parent = os.path.basename(folder), os.path.dirname(folder)
+            if parent == folder:
+                self._folds[folder] = False
+            elif name.swapcase() != name and os.path.lexists(folder):
+                other = os.path.join(parent, name.swapcase())
+                try:
+                    self._folds[folder] = os.path.samefile(folder, other)
+                except OSError:
+                    self._folds[folder] = False
+            else:
+                self._folds[folder] = self.folds_case(parent)
+        return self._folds[folder]
+
+    def key(self, path):
+        """`path` as this disk tells paths apart, in one Unicode form."""
+        path = unicodedata.normalize("NFC", os.path.normcase(path))
+        return path.casefold() if self.folds_case(os.path.dirname(path)) else path
+
+    def find(self, path):
+        """The path the file is at, or None when no name in its folder, or
+        more than one, is its name spelt otherwise."""
+        folder = os.path.dirname(path)
+        if folder not in self._folders:
+            names = defaultdict(list)
+            try:
+                for name in os.listdir(folder):
+                    names[self.key(os.path.join(folder, name))].append(os.path.join(folder, name))
+            except OSError:
+                pass
+            self._folders[folder] = names
+        found = self._folders[folder].get(self.key(path), [])
+        return found[0] if len(found) == 1 else None
+
+
+def _unreadable(folder, seen):
+    """Why the folder of a missing file says the drive may not be connected,
+    or None: it isn't there, or can't be read."""
+    if folder not in seen:
+        try:
+            os.listdir(folder)
+            seen[folder] = None
+        except OSError as error:
+            seen[folder] = (
+                f"the folder {folder} of a missing file isn't there"
+                if isinstance(error, (FileNotFoundError, NotADirectoryError))
+                else f"the folder {folder} of a missing file can't be read ({error.strerror or error})"
+            )
+    return seen[folder]
+
+
 def _not_a_file(path):
     """Why a download can't put a file at this path, or None: a link to a
     file that isn't there (its drive may not be connected), or a folder."""
@@ -152,37 +217,44 @@ def scan(rows, options):
     Each has "finding", "paths" ({path: (finding, size on disk)}) and, for a
     finding other than ok, what the report shows of it."""
     path_root, mappings, hashing = options["path_root"], options["mappings"], options["hash"]
-    columns = MEDIA_COLUMNS + [_optional(rows, "medias", c) for c in OPTIONAL]
+    columns = MEDIA_COLUMNS + [_optional(rows, "medias", c) for c in [*OPTIONAL, "model_id"]]
     media = rows.select("medias", columns, "downloaded = TRUE AND media_id IS NOT NULL")
     deleted = _deleted_posts(rows)
+    # by creator and media: one database can hold several creators' rows
     by_media = defaultdict(list)
     for row in media:
-        by_media[str(row[0])].append(row)
+        by_media[(None if row[-1] is None else str(row[-1]), str(row[0]))].append(row)
+    spellings = _Spellings()
 
     found = {}
-    for media_id, group in by_media.items():
+    for (model_id, media_id), group in by_media.items():
         if all(not (r[3] or "").strip() for r in group):
-            found[media_id] = {"finding": NO_FILE_RECORDED, "paths": {},
-                               "skip_permanent": any(r[7] for r in group)}
+            found[(model_id, media_id)] = {"finding": NO_FILE_RECORDED, "paths": {}, "model_id": model_id,
+                                           "skip_permanent": any(r[7] for r in group)}
             continue
         paths = {}
+        on_disk = {}
         first = {}
         reasons = []
         no_hash = False
-        for _, post_id, directory, filename, size, _, api_type, _, unlocked, recorded in group:
+        for _, post_id, directory, filename, size, _, api_type, _, unlocked, recorded, _ in group:
             if not (filename or "").strip():
                 continue
             path = _full_path(directory, filename, path_root, mappings)
             # a reset brings the media back if any of its rows can
             reasons.append(_not_recoverable(api_type, post_id, unlocked, deleted))
             if path not in paths:
-                paths[path] = _check(path, size, recorded, hashing)
+                real = path if os.path.lexists(path) else (spellings.find(path) or path)
+                if real != path:
+                    on_disk[path] = real
+                paths[path] = _check(real, size, recorded, hashing)
                 first[path] = (size, post_id, api_type, unlocked)
                 no_hash = no_hash or (hashing and not recorded)
         path = min(paths, key=lambda p: WORST_FIRST.index(paths[p][0]))
         finding, actual = paths[path]
         size, post_id, api_type, unlocked = first[path]
-        entry = {"finding": finding, "paths": paths, "no_hash": no_hash}
+        entry = {"finding": finding, "paths": paths, "on_disk": on_disk, "no_hash": no_hash,
+                 "model_id": model_id}
         if finding != OK:
             entry["shown"] = {"finding": finding, "media_id": media_id, "post_id": str(post_id),
                               "area": api_type, "path": path, "recorded_size": size, "size": actual}
@@ -191,34 +263,37 @@ def scan(rows, options):
             if why:
                 entry["shown"]["not_recoverable"] = why
                 entry["not_recoverable"] = why
-        found[media_id] = entry
+        found[(model_id, media_id)] = entry
     return found
 
 
 def _guard(found):
-    """Why --apply should leave this creator alone, or None: when most of
-    its files are missing, the drive or share is likely not connected."""
+    """The creators --apply should leave alone, with why: {model_id: why}.
+    A missing file whose folder isn't there, or can't be read, says its
+    drive or share may not be connected; so do most files missing. Each
+    creator is judged on its own rows (a database can hold several)."""
     # what a reset leaves alone anyway (expired stories, say) says nothing
     # about the drive
-    with_file = [e for e in found.values() if e["paths"] and not e.get("not_recoverable")]
-    missing = sum(1 for e in with_file if e["finding"] == MISSING)
-    if not with_file or missing <= MOSTLY_MISSING * len(with_file):
-        return None
-    folders = {os.path.dirname(p) for e in with_file for p in e["paths"]}
-    try:
-        top = os.path.commonpath(sorted(folders))
-    except ValueError:
-        top = None
-    if top and not os.path.isdir(top):
-        return (f"the creator's folder {top} isn't there: is the drive or share"
-                " connected? Give --allow-mostly-missing to reset all the same")
-    return (f"{missing} of {len(with_file)} files are missing: is the drive or share"
-            " connected? Give --allow-mostly-missing to reset all the same")
+    by_creator = defaultdict(list)
+    for entry in found.values():
+        if entry["paths"] and not entry.get("not_recoverable"):
+            by_creator[entry["model_id"]].append(entry)
+    guards, seen = {}, {}
+    hint = ": is the drive or share connected? Give --allow-mostly-missing to reset all the same"
+    for model_id, with_file in by_creator.items():
+        missing = [e for e in with_file if e["finding"] == MISSING]
+        folders = sorted({os.path.dirname(p) for e in missing for p, (f, _) in e["paths"].items() if f == MISSING})
+        unreadable = next(filter(None, (_unreadable(folder, seen) for folder in folders)), None)
+        if unreadable:
+            guards[model_id] = unreadable + hint
+        elif len(missing) > MOSTLY_MISSING * len(with_file):
+            guards[model_id] = f"{len(missing)} of {len(with_file)} files are missing" + hint
+    return guards
 
 
-def _to_reset(found, options):
-    """The media --apply resets, and the files it moves aside as
-    [path, new name]."""
+def _to_reset(found, options, left_alone=()):
+    """The media --apply resets, as (model_id, media_id), and the files it
+    moves aside as [path, new name]; none of the creators left alone."""
     # a file several media record is moved aside once
     resetting, moving = [], set()
     wanted = {MISSING, EMPTY}
@@ -226,13 +301,13 @@ def _to_reset(found, options):
         wanted.add(SIZE_DIFFERS)
     if options["reset_hash_differs"]:
         wanted.add(HASH_DIFFERS)
-    for media_id, entry in found.items():
-        if entry["finding"] not in wanted or entry.get("not_recoverable"):
+    for key, entry in found.items():
+        if entry["finding"] not in wanted or entry.get("not_recoverable") or entry["model_id"] in left_alone:
             continue
-        resetting.append(media_id)
+        resetting.append(key)
         for path, (finding, _) in entry["paths"].items():
             if finding in wanted - {MISSING}:
-                moving.add(path)
+                moving.add(entry["on_disk"].get(path, path))
     return resetting, [[path, _bad_name(path)] for path in sorted(moving)]
 
 
@@ -250,11 +325,13 @@ def untracked(rows, options):
     and how many files there are that never get a row."""
     known = set()
     folders = set()
+    # a row names its file however the disk spells it (see _Spellings)
+    spellings = _Spellings()
     for directory, filename in rows.select("medias", ["directory", "filename"]):
         if not (filename or "").strip():
             continue
         path = _full_path(directory, filename, options["path_root"], options["mappings"])
-        known.add(os.path.normcase(path))
+        known.add(spellings.key(path))
         folders.add(os.path.dirname(path))
     found, not_in_database = [], 0
     for folder in sorted(folders):
@@ -264,7 +341,7 @@ def untracked(rows, options):
             continue
         for name in names:
             path = os.path.join(folder, name)
-            if os.path.normcase(path) in known or not os.path.isfile(path):
+            if spellings.key(path) in known or not os.path.isfile(path):
                 continue
             if NOT_IN_DATABASE.search(name) or name.lower() in SYSTEM_FILES:
                 not_in_database += 1
@@ -308,19 +385,22 @@ def _preview(rows, options):
 
 
 def _plan(report, found, options):
-    """Fill in what --apply would do for this creator; the media and files
-    to change, or None when the guard leaves the creator alone."""
-    resetting, moving = _to_reset(found, options)
+    """Fill in what --apply would do for the creators of these rows; the
+    media and files to change. The guard leaves a creator alone on its own:
+    the others in the same database are still reset."""
+    guards = {} if options["allow_mostly_missing"] else _guard(found)
+    resetting, moving = _to_reset(found, options, guards)
     report["media_to_reset"] = len(resetting)
     report["files_to_move_aside"] = len(moving)
     report["media_reset"] = 0
     report["undo_file"] = None
-    guard = None if options["allow_mostly_missing"] else _guard(found)
-    if guard:
-        report["left_alone"] = guard
-        report["media_to_reset"] = 0
-        report["files_to_move_aside"] = 0
-        return None
+    if guards:
+        creators = {e["model_id"] for e in found.values()}
+        report["left_alone"] = "; ".join(
+            why if len(creators) == 1 else f"creator {model_id}: {why}"
+            for model_id, why in sorted(guards.items(), key=lambda item: str(item[0]))
+        )
+        report["creators_left_alone"] = len(guards)
     return resetting, moving
 
 
@@ -381,10 +461,11 @@ def _apply_file(path, options):
             return report
         resetting, moving = planned
         changed = []
-        for media_id in resetting:
+        for model_id, media_id in resetting:
+            # only this creator's rows: another's in the same database may be left alone
             changed.extend(list(r) for r in conn.execute(
                 "SELECT id, model_id, media_id, post_id FROM medias"
-                " WHERE media_id = ? AND downloaded = 1", (media_id,)
+                " WHERE media_id = ? AND CAST(model_id AS TEXT) IS ? AND downloaded = 1", (media_id, model_id)
             ))
         undo_file = database.with_name(f"{database.name}.verify-undo-{uuid.uuid4().hex}.json")
         record = {"version": 1, "source": SQLITE, "database": str(database),
@@ -461,7 +542,8 @@ def _apply_postgres(rows, options, undo_dir, database):
     if not planned or not planned[0]:
         return report
     resetting, moving = planned
-    wanted = set(resetting)
+    # rows holds this one creator's rows
+    wanted = {media_id for _model_id, media_id in resetting}
     columns = ["id", *PG_ROW]
     marking = [tuple(r) for r in rows.select("medias", columns, "downloaded = TRUE AND media_id IS NOT NULL")
                if str(r[1]) in wanted]
@@ -676,7 +758,7 @@ def _add(report, result):
         if key in result:
             report["totals"][key] += result[key]
     if result.get("left_alone"):
-        report["totals"]["creators_left_alone"] += 1
+        report["totals"]["creators_left_alone"] += result.get("creators_left_alone", 1)
 
 
 def _finish(report):
@@ -703,7 +785,7 @@ def main(argv=None):
     parser.add_argument("databases", type=Path, nargs="*", help="user_data.db files, or folders (e.g. a profile's .data) to search for them")
     parser.add_argument("--apply", action="store_true", help="Mark missing and empty files as not downloaded, so the next run downloads them again; writes an undo file first")
     parser.add_argument("--reset-size-differs", action="store_true", help="With --apply, also reset files whose size isn't the recorded one (moved aside with .bad added)")
-    parser.add_argument("--allow-mostly-missing", action="store_true", help="With --apply, reset a creator even when most of its files are missing (otherwise left alone: the drive may not be connected)")
+    parser.add_argument("--allow-mostly-missing", action="store_true", help="With --apply, reset a creator even when most of its files are missing, or a missing file's folder isn't there (otherwise left alone: the drive may not be connected)")
     parser.add_argument("--hash", action="store_true", help="Also compare each file's hash with the recorded one, where one was recorded (only with remove_hash_match on); reads every file, so slow")
     parser.add_argument("--reset-hash-differs", action="store_true", help="With --apply, also reset files whose hash isn't the recorded one (moved aside with .bad added); implies --hash")
     parser.add_argument("--untracked", action="store_true", help="Also list files in the creator's folders that no database row points to; nothing is moved or deleted")

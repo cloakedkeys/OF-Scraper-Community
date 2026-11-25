@@ -552,6 +552,90 @@ def test_left_alone_resets_nothing_in_the_totals(tmp_path):
         assert report["creators"][0]["files_to_move_aside"] == 0
 
 
+def test_a_missing_file_whose_folder_is_gone_leaves_the_creator_alone(tmp_path):
+    # most files are there, but two are recorded in a folder that isn't (a
+    # second drive not connected, say): the percentage alone wouldn't stop it
+    rows = [(i, 100 + i, f"{i}.jpg", 3, b"abc", "Timeline", {}) for i in range(1, 11)]
+    rows += [(11, 111, "gone.jpg", 3, None, "Timeline", {})]
+    db, lib = make_library(tmp_path, rows)
+    unplugged = tmp_path / "other-drive" / "Videos"
+    with closing(sqlite3.connect(db)) as conn, conn:
+        for media_id in (12, 13):
+            conn.execute(
+                "INSERT INTO medias (media_id, post_id, directory, filename, size, api_type, media_type,"
+                " downloaded, model_id, unlocked) VALUES (?, ?, ?, ?, 3, 'Timeline', 'Videos', 1, 5, 1)",
+                (media_id, 100 + media_id, str(unplugged), f"{media_id}.mp4"),
+            )
+    before = downloaded(db)
+
+    (creator,) = verify.verify([db], apply=True)["creators"]
+
+    assert str(unplugged) in creator["left_alone"] and creator["media_reset"] == 0
+    assert downloaded(db) == before and creator["undo_file"] is None
+    (creator,) = verify.verify([db], apply=True, allow_mostly_missing=True)["creators"]
+    assert creator["media_reset"] == 3
+
+
+def test_creators_sharing_one_database_are_guarded_and_reset_each_on_their_own(tmp_path):
+    # creator 5: one file of four missing, in a folder that is there
+    rows = [(i, 100 + i, f"{i}.jpg", 3, b"abc", "Timeline", {}) for i in range(1, 4)]
+    rows += [(4, 104, "gone.jpg", 3, None, "Timeline", {})]
+    db, lib = make_library(tmp_path, rows)
+    # creator 6, in the same database: every file missing
+    with closing(sqlite3.connect(db)) as conn, conn:
+        for media_id in range(20, 26):
+            conn.execute(
+                "INSERT INTO medias (media_id, post_id, directory, filename, size, api_type, media_type,"
+                " downloaded, model_id, unlocked) VALUES (?, ?, ?, ?, 3, 'Timeline', 'Images', 1, 6, 1)",
+                (media_id, 100 + media_id, str(lib), f"{media_id}.jpg"),
+            )
+
+    report = verify.verify([db], apply=True)
+
+    (creator,) = report["creators"]
+    assert "creator 6" in creator["left_alone"] and "creator 5" not in creator["left_alone"]
+    assert creator["media_reset"] == 1 and report["totals"]["creators_left_alone"] == 1
+    state = by_media_id(db)
+    assert state[4] == 0
+    assert all(state[m] == 1 for m in range(20, 26))
+
+
+def folds_case(folder):
+    return os.path.exists(str(folder).swapcase()) and os.path.samefile(folder, str(folder).swapcase())
+
+
+def test_a_file_spelt_in_another_unicode_form_or_case_is_found(tmp_path):
+    import unicodedata
+
+    nfc = unicodedata.normalize("NFC", "café.jpg")
+    nfd = unicodedata.normalize("NFD", "café.jpg")
+    upper_nfc = unicodedata.normalize("NFC", "CAFÉ2.jpg")
+    lower_nfd = unicodedata.normalize("NFD", "café2.jpg")
+    empty_nfd = unicodedata.normalize("NFD", "vidé.jpg")
+    db, lib = make_library(tmp_path, [
+        (1, 100, nfc, 3, None, "Timeline", {}),
+        (2, 101, upper_nfc, 3, None, "Timeline", {}),
+        (3, 102, unicodedata.normalize("NFC", "vidé.jpg"), 3, None, "Timeline", {}),
+        (4, 103, "ok.jpg", 3, b"abc", "Timeline", {}),
+    ])
+    # the files as a Mac writes them: decomposed
+    (lib / nfd).write_bytes(b"abc")
+    (lib / lower_nfd).write_bytes(b"abc")
+    (lib / empty_nfd).write_bytes(b"")
+    if nfc in os.listdir(lib):
+        pytest.skip("this disk stores names in one Unicode form")
+    case_found = folds_case(lib)
+
+    (creator,) = verify.verify([db], untracked=True)["creators"]
+
+    assert creator["ok"] == (3 if case_found else 2)
+    assert creator["missing"] == (0 if case_found else 1) and creator["empty"] == 1
+    assert creator["untracked_files"] == ([] if case_found else [str(lib / lower_nfd)])
+    # the empty file is moved aside under the name it has on disk
+    verify.verify([db], apply=True)
+    assert (lib / f"{empty_nfd}.bad").exists() and not (lib / empty_nfd).exists()
+
+
 def test_expired_stories_do_not_count_toward_the_guard(tmp_path):
     rows = [(i, 100 + i, f"s{i}.jpg", 3, None, "Stories", {}) for i in range(1, 7)]
     rows += [(i, 100 + i, f"{i}.jpg", 3, b"abc", "Timeline", {}) for i in range(7, 11)]
