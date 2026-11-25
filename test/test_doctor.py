@@ -193,6 +193,35 @@ def test_key_files(home, tmp_path):
     assert "isn't contacted" in result(doctor.run(), "key files")[1]
 
 
+@pytest.mark.parametrize(
+    "windows,save,said",
+    [
+        # Linux and macOS: nothing there below a place drives are mounted
+        (False, ("mnt", "nas", "OF"), "FAIL"),
+        (False, ("run-media", "someone", "disk", "OF"), "FAIL"),
+        # a folder that isn't a mount place: a run makes the rest
+        (False, ("data", "new", "OF"), "WARN"),
+        # Windows: the drive is there, so a run makes the folder
+        (True, ("mnt", "nas", "OF"), "WARN"),
+    ],
+)
+def test_a_save_folder_on_a_drive_that_isnt_mounted_fails(home, tmp_path, monkeypatch, windows, save, said):
+    # tmp_path/mnt and tmp_path/run-media stand in for /mnt and /run/media
+    for folder in ("mnt", "run-media/someone", "data"):
+        (tmp_path / folder).mkdir(parents=True)
+    monkeypatch.setattr(doctor, "_windows", lambda: windows)
+    monkeypatch.setattr(doctor, "MOUNT_PARENTS", (str(tmp_path / "mnt"),))
+    monkeypatch.setattr(doctor, "USER_MOUNT_PARENTS", (str(tmp_path / "run-media"),))
+    save = tmp_path.joinpath(*save)
+    write_config(home, {"file_options": {"save_location": str(save)}})
+    status, detail = result(doctor.run(), "save folder")
+    assert status == said
+    if said == "FAIL":
+        assert detail.endswith("isn't there: is the drive or share mounted?")
+    else:
+        assert detail.endswith("isn't there yet: a run makes it")
+
+
 def test_folders_and_the_free_space_limit(home, tmp_path, monkeypatch):
     save = tmp_path / "library"
     write_config(home, {"file_options": {"save_location": str(save)}, "download_options": {"system_free_min": 1000}})

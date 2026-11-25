@@ -308,6 +308,28 @@ def _check_path(save):
     return path
 
 
+# where Linux and macOS mount drives and shares; a missing save folder whose
+# nearest folder that is there is one of these is on a drive not mounted
+MOUNT_PARENTS = ("/", "/mnt", "/media", "/Volumes", "/net")
+# this holds a folder per user, which holds the mounts (/run/media/<user>)
+USER_MOUNT_PARENTS = ("/run/media",)
+
+
+def _windows():
+    return os.name == "nt"
+
+
+def _unmounted(save):
+    """The save folder isn't there and nothing is above it up to a place
+    drives are mounted: its drive or share likely isn't mounted."""
+    here = save.absolute()
+    while not here.exists() and here.parent != here:
+        here = here.parent
+    return here in {pathlib.Path(p) for p in MOUNT_PARENTS} or here.parent in {
+        pathlib.Path(p) for p in USER_MOUNT_PARENTS
+    }
+
+
 def check_folders(config, report):
     import ofscraper.utils.config.data as data
     import ofscraper.utils.paths.common as common_paths
@@ -315,6 +337,8 @@ def check_folders(config, report):
     save = pathlib.Path(os.path.expanduser(common_paths.get_save_location(_config(config))))
     if save.is_dir():
         report.add(PASS, "save folder", f"{save}, {_free(save)}")
+    elif not _windows() and _unmounted(save):
+        report.add(FAIL, "save folder", f"{save} isn't there: is the drive or share mounted?")
     elif pathlib.Path(save.anchor or ".").is_dir():
         # the download makes it, parents included
         report.add(WARN, "save folder", f"{save} isn't there yet: a run makes it")
