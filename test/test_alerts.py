@@ -225,6 +225,51 @@ def test_creator_failing_with_a_block_carries_on(sent, monkeypatch):
     assert sent.script == [] and exit_status.code() == exit_status.PARTIAL
 
 
+def _me_answers(sent, monkeypatch, status):
+    """The real auth check, with /me answering this HTTP status."""
+    import httpx
+
+    request = httpx.Request("GET", "https://onlyfans.com/api2/v2/users/me")
+    error = httpx.HTTPStatusError(
+        "error", request=request, response=httpx.Response(status, request=request)
+    )
+
+    def scrape_user():
+        raise error
+
+    sent.settings.anon = False
+    monkeypatch.setattr(checkers.sites, "is_fansly", lambda: False)
+    monkeypatch.setattr(checkers.init.auth_requests, "get_request_auth", lambda: None)
+    monkeypatch.setattr(checkers.init.me, "scrape_user", scrape_user)
+    monkeypatch.setattr(checkers.init.log, "traceback_", lambda *a, **k: None, raising=False)
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_me_blocked_at_start_isnt_a_rejected_login(sent, monkeypatch, status):
+    # a firewall or ban answering /me with 403 isn't fixed by new auth
+    _me_answers(sent, monkeypatch, status)
+    monkeypatch.setattr(checkers.make, "make_auth", lambda **k: pytest.fail("auth prompt"))
+    with pytest.raises(checkers.AuthCheckUnavailable) as raised:
+        checkers.check_auth()
+    assert f"refused the login check with {status}" in str(raised.value)
+    assert sent.script == []
+
+
+def test_me_blocked_mid_run_carries_on(sent, monkeypatch):
+    _me_answers(sent, monkeypatch, 403)
+    command.log_user_failure("a creator", Forbidden(403))
+    assert sent.script == [] and exit_status.code() == exit_status.PARTIAL
+
+
+@pytest.mark.parametrize("status", [400, 401])
+def test_me_rejecting_the_login_mid_run_stops_the_pass(sent, monkeypatch, status):
+    _me_answers(sent, monkeypatch, status)
+    with pytest.raises(checkers.LoginRejected):
+        command.log_user_failure("a creator", Forbidden(403))
+    assert exit_status.code() == exit_status.AUTH
+    assert [a["kind"] for a in sent.script] == ["login"]
+
+
 def test_other_failures_dont_ask(sent, monkeypatch):
     monkeypatch.setattr(checkers.init, "auth_status", lambda: pytest.fail("asked"))
     command.log_user_failure("a creator", RuntimeError("timeout"))
