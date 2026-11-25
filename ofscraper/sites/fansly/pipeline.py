@@ -158,6 +158,35 @@ class Selector:
         self.downloaded = filters.downloaded_media_ids(
             username=username, model_id=model_id
         )
+        # --skip-purchased-dupes, as filters.skip_purchased_copies: media
+        # ids with a non-Purchased copy this run, with any copy downloaded,
+        # and with a Purchased copy downloaded or chosen
+        self.skip_purchased = settings.skip_purchased_dupes()
+        self.elsewhere = set()
+        self.saved = set()
+        self.purchase_saved = set()
+        if self.skip_purchased and self.downloaded is not None:
+            self.saved = {media_id for media_id, _ in self.downloaded}
+            self.purchase_saved = {
+                media_id
+                for media_id, _ in filters.downloaded_purchased_pairs(
+                    username=username, model_id=model_id
+                )
+            }
+        self.purchase_chosen = set()
+
+    def _purchase_covers(self, item):
+        """Whether --skip-purchased-dupes leaves this copy out. Purchased is
+        scanned last, so the other copies of its media are already seen."""
+        if filters.is_purchased_copy(item):
+            if item.id in self.elsewhere | self.saved | self.purchase_chosen:
+                return True
+            self.purchase_chosen.add(item.id)
+            return False
+        first = item.id not in self.elsewhere
+        self.elsewhere.add(item.id)
+        # a Purchased copy downloaded before stands in for the first other copy
+        return first and item.id in self.purchase_saved
 
     def select(self, posts):
         media = [m for post in posts for m in post.prepare_media_for_download()]
@@ -168,9 +197,8 @@ class Selector:
             if key in self.seen:
                 continue
             self.seen.add(key)
-            # a Purchased copy keyed by media id (--skip-purchased-dupes) is
-            # covered by a copy an earlier area found
-            self.seen.add(item.id)
+            if self.skip_purchased and self._purchase_covers(item):
+                continue
             if self.downloaded is not None and key in self.downloaded:
                 continue
             out.append(item)
@@ -303,7 +331,7 @@ def _new_rows(run, posts):
     """
     out = []
     for item in filters.dupefiltermedia([m for p in posts for m in p.all_media]):
-        key = filters.row_key(item)
+        key = filters.media_key(item)
         if key in run.rows:
             continue
         if not item.canview:

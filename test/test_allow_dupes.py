@@ -172,7 +172,7 @@ def todo(items):
 
     asyncio.run(save())
     media = filters.dupefiltermedia(items)
-    media = filters.skip_purchased_copies(media)
+    media = filters.skip_purchased_copies(media, username=USERNAME, model_id=MODEL_ID)
     media = filters.previous_download_filter(media, username=USERNAME, model_id=MODEL_ID)
     return sorted((m.id, m.post_id) for m in media)
 
@@ -275,13 +275,34 @@ def test_skip_purchased_media_only_in_purchased_still_downloads(env):
     assert todo([item(8, 2, "paid"), item(7, 1, "message")]) == [(7, 1), (8, 2)]
 
 
+def test_skip_purchased_a_purchase_downloaded_first_covers_the_message(env):
+    # the reverse of the test above: the Purchased copy was saved first (a
+    # --scrape-paid run, say), so the message copy isn't downloaded again
+    env.stub.allow_dupe_downloads = True
+    env.stub.skip_purchased_dupes = True
+    purchase = item(7, 2, "paid")
+    assert todo([purchase]) == [(7, 2)]
+    mark(purchase, "a.jpg")
+    assert todo([item(7, 1, "message"), purchase]) == []
+
+
+def test_skip_purchased_a_purchase_downloaded_first_still_leaves_reposts(env):
+    env.stub.allow_dupe_downloads = True
+    env.stub.skip_purchased_dupes = True
+    purchase = item(7, 3, "paid")
+    todo([purchase])
+    mark(purchase, "a.jpg")
+    # the Purchased file stands in for the first other copy only
+    assert todo([item(7, 1, "message"), item(7, 2), purchase]) == [(7, 2)]
+
+
 def test_skip_purchased_does_nothing_without_allow_dupes(env):
     env.stub.skip_purchased_dupes = True
     # one download per media, as without the flag
     assert todo([item(7, 2, "paid"), item(7, 1, "message"), item(7, 3)]) == [(7, 1)]
 
 
-def collection_of(*posts):
+def collection_of(*posts, actions=("download",)):
     """A real PostCollection of (post id, area, media id, viewable) posts."""
     from ofscraper.managers.postcollection import PostCollection
 
@@ -297,7 +318,7 @@ def collection_of(*posts):
             )
             for post_id, area, media_id, viewable in posts
         ],
-        actions=["download"],
+        actions=list(actions),
     )
     return collection
 
@@ -345,6 +366,47 @@ def test_skip_purchased_two_purchases_one_locked_download_the_viewable_one(skip_
     posts = [(1, "paid", 7, False), (2, "paid", 7, True)]
     assert scrape_and_download(*posts) == [(7, 2)]
     assert scrape_and_download(*posts) == []
+
+
+@pytest.mark.parametrize("purchased_first", [True, False])
+def test_skip_purchased_a_message_listed_in_purchased_is_not_a_copy(
+    skip_purchased, purchased_first
+):
+    # OnlyFans can list a bought message in Purchased under its own id: it
+    # is the message, whichever area was scanned first, so it downloads
+    # along with the repost
+    from ofscraper.managers.postcollection import PostCollection
+
+    def post(post_id, area):
+        return Post(
+            {"id": post_id, "postedAt": f"2026-01-0{post_id}T03:04:05+00:00",
+             "text": "", "isOpened": True,
+             "media": [{"id": 7, "type": "photo", "canView": True,
+                        "files": {"full": {"url": "https://cdn.example/7.jpg"}}}]},
+            MODEL_ID, USERNAME, responsetype=area,
+        )
+
+    areas = [[post(1, "paid")], [post(1, "message"), post(2, "timeline")]]
+    collection = PostCollection(model_id=MODEL_ID, username=USERNAME)
+    for posts in areas if purchased_first else areas[::-1]:
+        collection.add_posts(posts, actions=["download"])
+    picked = collection.get_media_to_download()
+    assert sorted((m.id, m.post_id) for m in picked) == [(7, 1), (7, 2)]
+
+
+def test_skip_purchased_leaves_the_metadata_list_alone(skip_purchased):
+    # the flag picks downloads only: metadata sees the same copies without it
+    posts = [(1, "message", 7, True), (2, "paid", 7, True), (3, "paid", 8, True)]
+    scrape_and_download(*posts)
+    skip_purchased.stub.command = "metadata"
+
+    def for_metadata():
+        picked = collection_of(*posts, actions=["metadata"]).get_media_for_processing()
+        return sorted((m.id, m.post_id) for m in picked)
+
+    on = for_metadata()
+    skip_purchased.stub.skip_purchased_dupes = False
+    assert on == for_metadata()
 
 
 # ------------------------------------------------------------------ records
@@ -597,6 +659,34 @@ def test_fansly_skip_purchased_a_copy_downloaded_earlier_covers_the_purchase(
     got = messages_and_purchased(harness)
     harness.run()
     assert got == []
+
+
+def test_fansly_skip_purchased_a_purchase_downloaded_first_covers_the_message(
+    harness, settings_stub
+):
+    settings_stub.allow_dupe_downloads = True
+    settings_stub.skip_purchased_dupes = True
+    harness.downloaded = {(101, 2)}
+    harness.downloaded_purchased = harness.downloaded
+    got = messages_and_purchased(harness)
+    harness.run()
+    assert got == []
+
+
+def test_fansly_skip_purchased_a_purchase_downloaded_first_still_leaves_reposts(
+    harness, settings_stub
+):
+    settings_stub.allow_dupe_downloads = True
+    settings_stub.skip_purchased_dupes = True
+    harness.downloaded = {(101, 3)}
+    harness.downloaded_purchased = harness.downloaded
+    harness.areas = ["Messages", "Timeline", "Purchased"]
+    harness.pages["Messages"] = [page(message(1, [101]))]
+    harness.pages["Timeline"] = [page(post_dict(2, [101]))]
+    harness.pages["Purchased"] = [page(post_dict(3, [101]))]
+    got = downloads(harness)
+    harness.run()
+    assert got == [(101, 2)]
 
 
 def test_fansly_skip_purchased_every_copy_gets_a_row(harness, settings_stub):
