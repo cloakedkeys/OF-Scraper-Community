@@ -145,6 +145,20 @@ def problems():
             " dir_format is always placed under save_location. Set save_location"
             " to choose where downloads go"
         )
+    # before, a "/" in the date (and "\" on Windows) made nested folders
+    date = data.get_date()
+    separators = "/\\" if on_windows() else "/"
+    if (
+        isinstance(dir_format, str)
+        and isinstance(date, str)
+        and re.search(r"\{date[}:!]", dir_format)
+        and any(sep in date for sep in separators)
+    ):
+        out.append(
+            f"file_options.date {json.dumps(date)} has a folder separator, but {{date}}"
+            " in dir_format now fills one folder, so dates no longer nest. Use"
+            " {year}/{month}/{day} in dir_format for nested date folders"
+        )
     return out
 
 

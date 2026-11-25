@@ -373,6 +373,44 @@ def test_a_relative_dir_format_is_not_reported_as_a_full_path(config_json, logge
     assert warnings(logged) == []
 
 
+@pytest.mark.parametrize(
+    "date,windows",
+    [("YYYY/MM/DD", True), ("YYYY/MM/DD", False), ("YYYY\\MM\\DD", True)],
+)
+def test_a_date_with_folders_in_dir_format_is_reported(
+    config_json, logged, monkeypatch, date, windows
+):
+    monkeypatch.setattr(naming_check, "on_windows", lambda: windows)
+    config_json(dir_format="{model_username}/{date}", date=date)
+    load.checkFileOptions()
+    assert warnings(logged) == [
+        f"file_options.date {json.dumps(date)} has a folder separator, but {{date}}"
+        " in dir_format now fills one folder, so dates no longer nest. Use"
+        " {year}/{month}/{day} in dir_format for nested date folders"
+    ]
+
+
+@pytest.mark.parametrize(
+    "dir_format,date",
+    [
+        # no {date} in dir_format: the date only goes in file names
+        ("{model_username}/{media_type}", "YYYY/MM/DD"),
+        # the date has no folder separator
+        ("{model_username}/{date}", "YYYY-MM-DD"),
+        ("{model_username}/{year}/{month}/{day}", "YYYY/MM/DD"),
+        # outside Windows a "\" never made a folder: it stays in the name
+        ("{model_username}/{date}", "YYYY\\MM\\DD"),
+    ],
+)
+def test_a_date_that_fills_one_folder_is_not_reported(
+    config_json, logged, monkeypatch, dir_format, date
+):
+    monkeypatch.setattr(naming_check, "on_windows", lambda: False)
+    config_json(dir_format=dir_format, date=date)
+    load.checkFileOptions()
+    assert warnings(logged) == []
+
+
 def test_ext_is_only_known_in_file_names(config_json, logged):
     config_json(dir_format="{model_username}/{ext}")
     load.checkFileOptions()
