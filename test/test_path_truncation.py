@@ -83,13 +83,13 @@ def test_a_long_mac_name_fits_in_255_bytes(monkeypatch, folder, name):
     size = len(out.name.encode("utf-8"))
     # as much as fits: one more character would not
     assert size <= 255 < size + len(name[0].encode("utf-8"))
-    assert out.name.endswith(".mp4") and str(out.parent) == folder
+    assert out.name.endswith(".mp4") and out.parent.as_posix() == folder
 
 
 def test_a_short_mac_name_is_left_alone(monkeypatch):
     monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
     path = "/Users/someone/" + "d" * 300 + "/short.mp4"
-    assert str(paths.truncate(path)) == path
+    assert paths.truncate(path).as_posix() == path
 
 
 @pytest.mark.parametrize("name", ["💀" * 200 + ".txt", "💀" * 200])
