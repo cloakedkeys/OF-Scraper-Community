@@ -1,5 +1,6 @@
 """Tests for multi-profile daemon (``--daemon N --profiles a,b``)."""
 
+from datetime import datetime, timedelta, timezone
 import json
 import signal
 import subprocess
@@ -422,6 +423,56 @@ def test_health_is_unhealthy_when_a_profiles_last_run_failed(tmp_path, monkeypat
         popen=lambda cmd, **kw: _Proc(code=codes[cmd[cmd.index("--profile") + 1]]),
     )
     assert health.check_file(status_path)[0] is True
+
+
+def _iso_minutes_ago(minutes):
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+
+
+def test_profile_runs_from_before_the_daemon_started_are_not_judged(tmp_path, capsys):
+    # health answers for the --profiles daemon running now: a profile's run
+    # that ended before it started says nothing about it
+    path = tmp_path / "status.json"
+    data = {
+        "version": 1, "mode": "daemon", "started": _iso_minutes_ago(10),
+        "state": "running", "heartbeat": _iso_minutes_ago(1), "next_pass_at": None,
+        "auth": "failed",
+        "profiles": {
+            "a": {"status": 1, "status_label": "error", "auth": "unknown",
+                  "finished": _iso_minutes_ago(30)},
+            "b": {"status": 3, "status_label": "login failed", "auth": "failed",
+                  "finished": _iso_minutes_ago(30)},
+        },
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert health.main([str(path)]) == 0
+    assert "healthy: daemon running" in capsys.readouterr().out
+
+    # a profile's run of the current daemon is judged
+    data["profiles"]["a"]["finished"] = _iso_minutes_ago(5)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert health.main([str(path)]) == 1
+    assert "profile a failed (error)" in capsys.readouterr().out
+    data["profiles"]["a"]["finished"] = _iso_minutes_ago(30)
+    data["profiles"]["b"]["finished"] = _iso_minutes_ago(5)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert health.main([str(path)]) == 1
+    assert "failed login" in capsys.readouterr().out
+
+
+def test_the_profiles_daemon_records_when_it_started(tmp_path, monkeypatch):
+    status_path = tmp_path / "status.json"
+    monkeypatch.setenv("OFSC_STATUS_FILE", str(status_path))
+    monkeypatch.setattr(multi_profile.exit_context, "sigterm_as_keyboard_interrupt", lambda: None)
+    before = datetime.now(timezone.utc)
+    args = SimpleNamespace(daemon=10, daemon_jitter=0, profiles=["a"], live_watch=False, profile=None)
+    multi_profile.run_multi_profile_daemon(
+        args, raw_argv=[], popen=lambda cmd, **kw: _Proc(code=int(exit_status.ERROR)), max_passes=1
+    )
+    data = json.loads(status_path.read_text(encoding="utf-8"))
+    started = datetime.fromisoformat(data["started"])
+    assert before <= started <= datetime.fromisoformat(data["profiles"]["a"]["finished"])
+    assert health.check_file(status_path)[0] is False
 
 
 def test_daemon_pass_alerts_are_kept_per_profile(tmp_path, monkeypatch):

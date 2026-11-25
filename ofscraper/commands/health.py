@@ -113,14 +113,23 @@ def _login_failed(data):
         and last_pass.get("status") == AUTH_EXIT_CODE
     ):
         return True
-    profiles = data.get("profiles")
-    if isinstance(profiles, dict):
-        for entry in profiles.values():
-            if isinstance(entry, dict) and (
-                entry.get("auth") == "failed" or entry.get("status") == AUTH_EXIT_CODE
-            ):
-                return True
+    for entry in _current_profile_runs(data).values():
+        if entry.get("auth") == "failed" or entry.get("status") == AUTH_EXIT_CODE:
+            return True
     return False
+
+
+def _current_profile_runs(data):
+    """The --profiles daemon's profile entries whose run ended since it
+    started."""
+    profiles = data.get("profiles")
+    if not isinstance(profiles, dict):
+        return {}
+    return {
+        name: entry
+        for name, entry in profiles.items()
+        if isinstance(entry, dict) and _since_start(data, entry.get("finished"))
+    }
 
 
 def _failed_last_pass(data):
@@ -144,12 +153,9 @@ def _failed_last_pass(data):
 
 def _failed_profile(data):
     """(name, label) of a multi-profile daemon's profile whose last run
-    ended neither ok nor partial, or None."""
-    profiles = data.get("profiles")
-    if not isinstance(profiles, dict):
-        return None
-    for name, entry in profiles.items():
-        status = entry.get("status") if isinstance(entry, dict) else None
+    ended neither ok nor partial since the daemon started, or None."""
+    for name, entry in _current_profile_runs(data).items():
+        status = entry.get("status")
         if isinstance(status, int) and not isinstance(status, bool) and status not in OK_EXIT_CODES:
             return name, entry.get("status_label") or f"exit {status}"
     return None

@@ -221,11 +221,14 @@ def _child_heartbeat(profile):
     return _parse_iso(data.get("heartbeat")) if isinstance(data, dict) else None
 
 
-def _write_daemon_status(state, results, next_pass_at=None, last_success=None, heartbeat=None):
+def _write_daemon_status(
+    state, results, next_pass_at=None, last_success=None, heartbeat=None, started=None
+):
     payload = {
         "version": status_file.VERSION,
         "pid": os.getpid(),
         "mode": "daemon",
+        "started": started,
         "state": state,
         "heartbeat": heartbeat or _now_iso(),
         "next_pass_at": next_pass_at,
@@ -247,15 +250,18 @@ def run_profiles_pass(
     results=None,
     last_success=None,
     stop_timeout=30,
+    started=None,
 ):
     """Run one pass across ``profiles`` sequentially.
 
     Returns ``(results_dict, updated_last_success)``. A failing child does not
     stop the remaining profiles. Ctrl+C / SIGTERM is forwarded to the running
-    child and re-raised.
+    child and re-raised. ``started`` is the daemon's start time, for health.
     """
     state_results = dict(results) if results else {}
-    _write_daemon_status("running", state_results, next_pass_at=None, last_success=last_success)
+    _write_daemon_status(
+        "running", state_results, next_pass_at=None, last_success=last_success, started=started
+    )
 
     all_ok = True
     for profile in profiles:
@@ -263,7 +269,8 @@ def run_profiles_pass(
         log.info(f"Daemon pass: starting profile '{profile}'")
         progress = _now_iso()
         _write_daemon_status(
-            "running", state_results, next_pass_at=None, last_success=last_success, heartbeat=progress
+            "running", state_results, next_pass_at=None, last_success=last_success,
+            heartbeat=progress, started=started,
         )
         # no terminal input: a child that needs an answer (a rejected login's
         # Auth Menu) fails instead of waiting while the other profiles do
@@ -281,7 +288,7 @@ def run_profiles_pass(
                         progress = child.astimezone(timezone.utc).isoformat()
                     _write_daemon_status(
                         "running", state_results, next_pass_at=None,
-                        last_success=last_success, heartbeat=progress,
+                        last_success=last_success, heartbeat=progress, started=started,
                     )
         except BaseException as exc:
             terminal_ctrl_c = (
@@ -316,7 +323,9 @@ def run_profiles_pass(
             )
         else:
             log.info(f"Daemon pass for profile '{profile}' finished with status 0 (ok)")
-        _write_daemon_status("running", state_results, next_pass_at=None, last_success=last_success)
+        _write_daemon_status(
+            "running", state_results, next_pass_at=None, last_success=last_success, started=started
+        )
 
     if profiles and all_ok:
         last_success = _now_iso()
@@ -367,6 +376,7 @@ def run_multi_profile_daemon(
 
     results = {}
     last_success = None
+    started = _now_iso()
     passes = 0
     try:
         log.info(f"[bold]Daemon mode on (profiles: {', '.join(profiles)})[/bold]")
@@ -378,6 +388,7 @@ def run_multi_profile_daemon(
                 popen=popen,
                 results=results,
                 last_success=last_success,
+                started=started,
             )
             passes += 1
             for profile in profiles:
@@ -393,6 +404,7 @@ def run_multi_profile_daemon(
                 results,
                 next_pass_at=next_dt.isoformat(),
                 last_success=last_success,
+                started=started,
             )
             wakeup.state = "idle"
             _sleep_until(next_dt, wakeup=wakeup, sleep_fn=sleep_fn)
@@ -403,4 +415,5 @@ def run_multi_profile_daemon(
             results,
             next_pass_at=None,
             last_success=last_success,
+            started=started,
         )
