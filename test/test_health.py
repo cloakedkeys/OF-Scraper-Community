@@ -200,6 +200,7 @@ def test_max_quiet_must_be_a_positive_number(value, capsys):
 def test_default_path_follows_main_profile_in_config(tmp_path, monkeypatch):
     monkeypatch.delenv("OFSC_STATUS_FILE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # the home folder on Windows
     monkeypatch.delenv("OFSC_CONFIG_DIR", raising=False)
     config_home = tmp_path / ".config" / "ofscraper"
     config_home.mkdir(parents=True)
