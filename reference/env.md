@@ -552,7 +552,7 @@ A PostgreSQL connection URL, such as postgresql://user:password@host:5432/databa
 
 **Environment variable:** `OFSC_INSTALL_EXTRAS` · **Default:** `True`
 
-Whether a feature that needs an optional extra installs it the first time it's used: the `live` packages and the Chromium browser for OnlyFans livestreams, and the `postgres` driver when `OFSC_DATABASE_URL` is set. They go into the Python running OF-Scraper, with pip, or with uv when that Python has no pip. When False, or when the install fails, the feature stops and says how to install the extra. The standalone download never installs anything.
+Whether a feature that needs an optional extra installs it the first time it's used: the `live` packages and the Chromium browser for OnlyFans livestreams, and the `postgres` driver when `OFSC_DATABASE_URL` is set. It asks first, and only at a terminal: the daemon, runs without a terminal (cron, services) and root under sudo are given the install command instead. They go into the Python running OF-Scraper, with pip, or with uv when that Python has no pip, using `OFSC_PROXY` when set. When False, or when the install is declined or fails, the feature stops and says how to install the extra. The standalone download never installs anything.
 
 ### Menu choices
 
