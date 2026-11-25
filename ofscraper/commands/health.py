@@ -17,6 +17,7 @@ import sys
 DEFAULT_MAX_QUIET_MINUTES = 60
 AUTH_EXIT_CODE = 3
 OK_EXIT_CODES = (0, 4)  # ok, partial
+INTERRUPTED_EXIT_CODE = 130  # Ctrl+C or SIGTERM
 
 
 def _parse_iso(value):
@@ -106,13 +107,16 @@ def _login_failed(data):
 def _failed_last_pass(data):
     """The label of the daemon's last pass when it ended neither ok nor
     partial, or None. A failed login is _login_failed's: a later login
-    check can clear it."""
+    check can clear it. A pass stopped by Ctrl+C or docker stop didn't
+    fail: the restarted daemon carries it over while its first pass runs."""
     last_pass = data.get("last_pass")
-    status = last_pass.get("status") if isinstance(last_pass, dict) else None
+    if not isinstance(last_pass, dict) or last_pass.get("outcome") == "stopped":
+        return None
+    status = last_pass.get("status")
     if (
         isinstance(status, int)
         and not isinstance(status, bool)
-        and status not in (*OK_EXIT_CODES, AUTH_EXIT_CODE)
+        and status not in (*OK_EXIT_CODES, AUTH_EXIT_CODE, INTERRUPTED_EXIT_CODE)
     ):
         return last_pass.get("status_label") or f"exit {status}"
     return None

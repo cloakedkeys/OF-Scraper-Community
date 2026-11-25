@@ -134,6 +134,30 @@ def test_failed_last_pass_of_the_daemon_is_unhealthy(tmp_path, capsys):
             assert "last pass failed" in out and label in out
 
 
+def test_daemon_restarted_after_a_stop_mid_pass_is_healthy(tmp_path, monkeypatch, capsys):
+    # docker stop mid-pass records an interrupted last pass; the restarted
+    # daemon carries it over while its first pass runs
+    import ofscraper.main.close.status_file as status_file
+
+    path = tmp_path / "status.json"
+    monkeypatch.setenv("OFSC_STATUS_FILE", str(path))
+    status_file.reset()
+    try:
+        status_file.start_pass(mode="daemon")
+        status_file.finish_pass(
+            {"status": 130, "status_label": "interrupted", "outcome": "stopped"},
+            outcome="stopped",
+        )
+        status_file.stop_daemon()
+        status_file.reset()  # a new process
+        status_file.start_pass(mode="daemon")
+        assert json.loads(path.read_text(encoding="utf-8"))["last_pass"]["status"] == 130
+        assert health.main([str(path)]) == 0
+        assert "healthy" in capsys.readouterr().out
+    finally:
+        status_file.reset()
+
+
 def test_unknown_extra_keys_are_ignored():
     data = {
         "version": 99,

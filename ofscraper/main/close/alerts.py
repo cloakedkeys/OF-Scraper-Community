@@ -76,7 +76,8 @@ def _send(kind, message, profile=None):
     s = settings.get_settings()
     site, active = _site_and_profile()
     profile = profile or active
-    log.warning(f"Alert: {message}")
+    # the alert reaches Discord once, as the message below, not also as this line
+    log.warning(f"Alert: {message}", extra={"skip_discord": True})
     if (getattr(s, "discord_level", None) or "OFF") != "OFF":
         try:
             from ofscraper.main.close.final.run_record import SITE_LABELS, send_discord

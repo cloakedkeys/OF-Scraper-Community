@@ -29,14 +29,16 @@ CONFIG = ExitCode.CONFIG
 INTERRUPTED = ExitCode.INTERRUPTED
 
 # Ordered from least severe to most severe so the worst outcome wins.
+# USAGE is recorded mid-run only for a -u name no creator has: any real
+# run outcome beside it (partial, failed, login failed) wins.
 _SEVERITY = {
     OK: 0,
-    PARTIAL: 1,
-    UNAVAILABLE: 2,
-    AUTH: 3,
-    CONFIG: 4,
-    ERROR: 5,
-    USAGE: 6,
+    USAGE: 1,
+    PARTIAL: 2,
+    UNAVAILABLE: 3,
+    AUTH: 4,
+    CONFIG: 5,
+    ERROR: 6,
     INTERRUPTED: 7,
 }
 
