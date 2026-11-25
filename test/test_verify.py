@@ -96,10 +96,12 @@ def test_the_preview_changes_nothing(library, tmp_path):
 
 def test_path_map_reads_paths_recorded_elsewhere(tmp_path):
     db, lib = make_library(tmp_path, [(1, 100, "ok.jpg", 3, b"abc", "Timeline", {})])
+    # a full path on this system, recorded on another machine
+    recorded = r"Z:\data\lib" if os.name == "nt" else "/data/lib"
     with closing(sqlite3.connect(db)) as conn, conn:
-        conn.execute("UPDATE medias SET directory = '/data/lib'")
+        conn.execute("UPDATE medias SET directory = ?", (recorded,))
     assert verify.verify([db])["totals"]["missing"] == 1
-    report = verify.verify([db], mappings=[("/data/lib", str(lib))])
+    report = verify.verify([db], mappings=[(recorded, str(lib))])
     assert report["totals"] == {**report["totals"], "ok": 1, "missing": 0}
 
 
@@ -500,7 +502,11 @@ def test_a_broken_link_or_a_folder_is_not_reset(tmp_path):
         (4, 103, "ok4.jpg", 3, b"abc", "Timeline", {}),
         (5, 104, "ok5.jpg", 3, b"abc", "Timeline", {}),
     ])
-    (lib / "link.jpg").symlink_to(tmp_path / "unplugged" / "link.jpg")
+    try:
+        (lib / "link.jpg").symlink_to(tmp_path / "unplugged" / "link.jpg")
+    except OSError as error:
+        # Windows needs a privilege or Developer Mode to make one
+        pytest.skip(f"can't make a symlink here: {error}")
     (lib / "folder.jpg").mkdir()
     (creator,) = verify.verify([db], hash=True)["creators"]
     reasons = {f["media_id"]: f.get("not_recoverable") for f in creator["findings"]}
