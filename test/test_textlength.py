@@ -144,3 +144,61 @@ def test_media_and_text_files_cut_the_caption_alike(naming, replacer, expected):
         "--text-type", "word", "--textlength", "4", "--space-replacer", replacer,
     )
     assert (text, media) == (f"{expected}.txt", f"{expected}.jpg")
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [("https://example.invalid/my-pic.jpg", "my_pic"),  # the file name
+     (None, "2026_10_31")],  # no file name either: the post's date
+)
+def test_media_with_no_usable_caption_uses_the_cleaned_file_name_or_date(
+    naming, monkeypatch, url, expected
+):
+    """A caption that cleans to nothing (only HTML here): a media file's
+    {text} falls back to its file name, then the date, cleaned once there
+    (the "-" becomes "_")."""
+    import naming_helpers
+
+    make_post = naming_helpers.make_post
+
+    def post_with_url(caption, media=1):
+        post = make_post(caption, media)
+        for item in post.all_media:
+            item._media["files"]["full"]["url"] = url
+        return post
+
+    monkeypatch.setattr(naming_helpers, "make_post", post_with_url)
+    _, (media,) = naming(
+        "{text}.{ext}", "<br />", "--space-replacer", "-", text=False
+    )
+    assert media == f"{expected}.jpg"
+
+
+def test_a_profile_image_with_no_text_uses_the_cleaned_date_and_file_name(
+    naming, monkeypatch
+):
+    """A profile image's {text} is its date and its text, or its file name
+    when it has none, cleaned once ("-" and ":" go, spaces become the
+    space_replacer). A profile image's own name doesn't use file_format, so
+    this reads the {text} the placeholders hand on (e.g. to a naming script)."""
+    import asyncio
+
+    import naming_helpers
+    import ofscraper.classes.placeholder as placeholder
+
+    make_post = naming_helpers.make_post
+    built = []
+
+    def profile_post(caption, media=1):
+        post = make_post(caption, media)
+        profile = naming_helpers.posts_.Post(post.post, 1, "u", "profile")
+        for item in profile.all_media:
+            item._media["files"]["full"]["url"] = "https://example.invalid/my-pic.jpg"
+        built.append(profile)
+        return profile
+
+    monkeypatch.setattr(naming_helpers, "make_post", profile_post)
+    naming("{text}.{ext}", None, "--space-replacer", "~", text=False)
+    names = placeholder.Placeholders(built[0].all_media[0], "jpg")
+    asyncio.run(names.createfilename())
+    assert names._variables["text"] == "2026_10_31~120000+0000~my_pic_2026_10_31"
