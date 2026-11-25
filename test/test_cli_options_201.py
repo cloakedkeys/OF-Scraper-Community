@@ -101,6 +101,9 @@ def _kept_by_block_ads(monkeypatch, texts):
     "new set 💦 I've got a special FREE trial for you 😘. Click the link",
     # hashtags that only start with an ad word
     "#adult #adorable #advent calendar",
+    # "user promo" in ordinary prose, not a promo line or a mention
+    "every user promo code I tried worked",
+    "thanks to each user promo-sharing their favourite set",
 ])
 def test_block_ads_keeps_ordinary_posts(monkeypatch, text):
     assert _kept_by_block_ads(monkeypatch, [text]) == [text]
@@ -112,7 +115,11 @@ def test_block_ads_keeps_ordinary_posts(monkeypatch, text):
     # any case: an upper-case letter in the pattern made the whole filter
     # case-sensitive, so these got through
     "#Ad go follow her", "#Sponsored", "Giveaway time", "SHOUTOUT",
-    "user promo for a friend", "@someuser promo",
+    "user promo for a friend", "@someuser promo", "@user promo",
+    "new set!\nUser promo: go follow her",
+    # longer ad hashtags still count
+    "#advert", "#advertisement", "#advertising", "#sponsoredpost",
+    "#promotions",
 ])
 def test_block_ads_still_blocks_ads(monkeypatch, text):
     assert _kept_by_block_ads(monkeypatch, [text]) == []
