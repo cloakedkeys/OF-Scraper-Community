@@ -94,10 +94,12 @@ When more than one problem happens in a run, the most severe code wins (ordered 
 | `3` | Login failed (`--auth-fail` or an unreadable auth file). |
 | `6` | Configuration error (unreadable config, or a configured database that can't be reached). |
 | `1` | Unexpected error. |
-| `2` | Usage error (command-line mistake). |
+| `2` | Usage error (command-line mistake, such as a `-u` name no creator has). |
 | `130` | Interrupted with Ctrl+C. |
 
 In `--daemon` mode, each pass logs its outcome and resets the status for the next pass. Stopping the daemon with `SIGTERM` exits `0`. Outside the daemon, `SIGTERM` isn't caught: the signal ends the run, and a shell reports `143`.
+
+**Docker restart policies:** a file or creator that keeps failing makes every run exit `4`. With `restart: on-failure` on a one-off run, Docker starts the container again straight after each run, so it loops without a pause. Run the container with `--daemon` and `restart: unless-stopped` instead: the daemon waits between passes, and a failed pass doesn't stop it.
 
 ## Features only this fork has
 
