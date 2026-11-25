@@ -14,6 +14,7 @@ from ofscraper.classes.table.sections.table import get_styled, get_post_styled
 from ofscraper.classes.table.css import CSS
 from ofscraper.classes.table.const import AMOUNT_PER_PAGE
 from ofscraper.classes.table.compose import composer
+from ofscraper.classes.table.fields.timefield import hms_to_seconds
 from ofscraper.commands.scraper.actions.download import stop
 import ofscraper.classes.table.utils.open_folder as open_folder
 import ofscraper.utils.logs.logger as logger
@@ -301,16 +302,19 @@ class InputApp(App):
             0.3, lambda: self._apply_per_page(prefix)
         )
 
+    def _per_page(self, prefix):
+        """The Per Page box's number, or None when it isn't above 0."""
+        val = str(self.query_one(f"#{prefix}_per_page_input").value or "").strip()
+        return int(val) if val.isnumeric() and int(val) > 0 else None
+
     def _apply_per_page(self, prefix):
         self._per_page_timers.pop(prefix, None)
         try:
-            val = str(self.query_one(f"#{prefix}_per_page_input").value or "").strip()
+            size = self._per_page(prefix)
         except NoMatches:
             # the app closed while the redraw was waiting
             return
-        if not (val.isnumeric() and int(val) > 0):
-            return
-        if self._shown_per_page.get(prefix) == int(val):
+        if size is None or self._shown_per_page.get(prefix) == size:
             return
         if prefix == "main":
             self.set_page()
@@ -600,15 +604,11 @@ class InputApp(App):
         else:
             rows = [r for r in self.table_data if r.get("download_cart") == "[added]"]
 
-        per_page_node = self.query_one(f"#{prefix}_per_page_input")
-        per_page_val = per_page_node.value
-
-        if per_page_val and str(per_page_val).isnumeric() and int(per_page_val) > 0:
-            num_page = int(per_page_val)
-        else:
+        num_page = self._per_page(prefix)
+        if num_page is None:
             # If empty or invalid, force it back to 100
             num_page = AMOUNT_PER_PAGE
-            per_page_node.value = str(AMOUNT_PER_PAGE)
+            self.query_one(f"#{prefix}_per_page_input").value = str(AMOUNT_PER_PAGE)
 
         # 3. Calculate Boundaries
         total_pages = max((len(rows) + num_page - 1) // num_page, 1)
@@ -1024,7 +1024,7 @@ class InputApp(App):
                         0.0 if price_str.lower() in {"", "free"} else float(price_str)
                     )
                 elif key == "length":
-                    sort_val = arrow.get(raw_val or "0:0:0", ["h:m:s"]).timestamp()
+                    sort_val = hms_to_seconds(raw_val)
                 elif key == "post_date":
                     sort_val = arrow.get(raw_val).timestamp()
                 elif key in {"post_id", "media_id"}:
@@ -1114,12 +1114,7 @@ class InputApp(App):
             ]
 
             # 2. Get the current "Per Page" value safely
-            per_page_val = self.query_one("#cart_per_page_input").value
-            num_page = (
-                int(per_page_val)
-                if per_page_val and str(per_page_val).isnumeric()
-                else AMOUNT_PER_PAGE
-            )
+            num_page = self._per_page("cart") or AMOUNT_PER_PAGE
             self._shown_per_page["cart"] = num_page
 
             # 3. Calculate pagination boundaries
@@ -1189,12 +1184,7 @@ class InputApp(App):
             rows = self._filtered_rows
 
             # 1. Get the current "Per Page" value safely
-            per_page_val = self.query_one("#main_per_page_input").value
-            num_page = (
-                int(per_page_val)
-                if per_page_val and str(per_page_val).isnumeric()
-                else AMOUNT_PER_PAGE
-            )
+            num_page = self._per_page("main") or AMOUNT_PER_PAGE
             self._shown_per_page["main"] = num_page
 
             # 2. Calculate pagination boundaries
@@ -1257,7 +1247,7 @@ class InputApp(App):
             if ele == "text":
                 width = 50
             elif ele == "other_posts_with_media":
-                width = 22
+                width = 30
             else:
                 width = max(18, header_width)
 
@@ -1575,8 +1565,7 @@ class InputApp(App):
             table = self.post_table
             table.clear()
             rows = self._filtered_post_rows
-            per_page_val = self.query_one("#post_per_page_input").value
-            num_page = int(per_page_val) if per_page_val and str(per_page_val).isnumeric() else AMOUNT_PER_PAGE
+            num_page = self._per_page("post") or AMOUNT_PER_PAGE
             self._shown_per_page["post"] = num_page
             total_pages = max((len(rows) + num_page - 1) // num_page, 1)
             if self.post_page > total_pages:
