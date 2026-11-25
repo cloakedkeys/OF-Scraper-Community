@@ -5,7 +5,7 @@ browser; ``OFSC_DATABASE_URL`` needs psycopg, which is a dependency wherever it
 has prebuilt wheels and the ``postgres`` extra elsewhere. Instead of stopping
 with an install command, the first run asks to install them into the Python
 running OF-Scraper, with pip, or with uv when that Python has no pip
-(``uv tool install``). ``OFSC_INSTALL_EXTRAS=False`` turns this off.
+(``uv pip install --python``). ``OFSC_INSTALL_EXTRAS=False`` turns this off.
 
 It only asks at a terminal. The daemon, cron, services and ``sudo`` runs
 get the install command to run themselves instead. The standalone download
@@ -59,11 +59,12 @@ def enabled() -> bool:
     return bool(of_env.getattr("INSTALL_EXTRAS"))
 
 
-# This Python, ignoring PYTHON* variables (-E) and not importing modules from
-# the working directory (-P): a pip.py there would otherwise run as pip. Not
-# -I, which also hides the user site, where pip installs (and may itself be)
-# when site-packages isn't writable.
-PYTHON = [sys.executable, "-E", "-P"]
+# This Python, not importing modules from the working directory (-P): a pip.py
+# there would otherwise run as pip. Not -E, which drops PYTHONPATH, so the pip
+# this run found could be missing there. Not -I, which also hides the user
+# site, where pip installs (and may itself be) when site-packages isn't
+# writable.
+PYTHON = [sys.executable, "-P"]
 
 
 def _which_uv() -> str | None:

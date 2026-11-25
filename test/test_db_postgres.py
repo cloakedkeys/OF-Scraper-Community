@@ -7,6 +7,7 @@ which CI runs with a PostgreSQL container.
 import asyncio
 import builtins
 import contextlib
+import importlib.util
 import logging
 import sqlite3
 from types import SimpleNamespace
@@ -425,9 +426,17 @@ def state(name):
     ],
 )
 def test_only_an_error_a_retry_can_fix_is_retried(name, again, monkeypatch):
-    # PostgreSQL in use, as backend_for() leaves it; not left to whichever
-    # earlier test in this worker happened to add it
-    monkeypatch.setattr(wrapper, "_BACKENDS", [wrapper.SQLITE, postgres.POSTGRES])
+    # With the driver installed, the wrapper knows PostgreSQL's errors once a
+    # run picks PostgreSQL. Pick it here as a run does, so this test doesn't
+    # rely on an earlier one having done it, and put the wrapper's engine list
+    # back afterwards. Without the driver there is nothing to pick.
+    if importlib.util.find_spec("psycopg"):
+        monkeypatch.setattr(wrapper, "_BACKENDS", list(wrapper._BACKENDS))
+        monkeypatch.setattr(wrapper, "DB_ERRORS", wrapper.DB_ERRORS)
+        monkeypatch.setattr(wrapper, "OPERATIONAL_ERRORS", wrapper.OPERATIONAL_ERRORS)
+        monkeypatch.setenv(postgres.URL_KEY, URL)
+        assert wrapper.backend_for({}) is postgres.POSTGRES
+
     assert postgres.POSTGRES.retryable(state(name)) is again
     assert wrapper._retryable(state(name)) is again
 
