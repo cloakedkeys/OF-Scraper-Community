@@ -1286,6 +1286,32 @@ def test_the_option_is_on_the_main_command(monkeypatch, tmp_path):
     assert Path(args.migrate_sqlite_to_postgres) == tmp_path
 
 
+def test_the_option_with_a_subcommand_is_refused(monkeypatch, tmp_path, capsys):
+    """Given before a subcommand, the option would be dropped silently and the
+    subcommand run instead: it is refused with a message."""
+    import sys
+
+    import ofscraper.utils.args.main as args_main
+
+    monkeypatch.setattr(
+        sys, "argv",
+        ["OF-Scraper", "--migrate-sqlite-to-postgres", str(tmp_path), "manual", "--url", "https://onlyfans.com/1/a"],
+    )
+    # another test in this process may have added the subcommands already
+    program = args_main.main.program
+    add = program.add_command
+    monkeypatch.setattr(
+        program, "add_command",
+        lambda cmd, name=None, *a, **k: None if name in program.commands else add(cmd, name, *a, **k),
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        args_main.parse_args()
+    assert exit_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "--migrate-sqlite-to-postgres" in err
+    assert "manual" in err
+
+
 def test_the_app_runs_the_migration_instead_of_scraping(monkeypatch, tmp_path):
     import ofscraper.managers.manager as manager
 
