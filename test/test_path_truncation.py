@@ -2,6 +2,7 @@
 
 import pathlib
 import re
+import unicodedata
 
 import pytest
 
@@ -76,6 +77,146 @@ def test_a_long_linux_name_fits_in_the_name_limit():
     size = paths.get_string_byte_size_unix
     # measured as the app measures it; as much as fits, one more letter would not
     assert size(out.name) <= 254 < size("a" + out.name)
+
+
+@pytest.mark.parametrize("ext", [".mp3", ".3gp", ".3g2", "_2.mp3"])
+def test_an_extension_with_digits_is_kept(ext):
+    out = cut(f"{FOLDER}\\2026-10-31 {CAPTION}{ext}")
+    assert out.name.endswith(ext) and windows_chars(out) <= 259
+    out = paths._linux_truncateHelper(f"/data/2026-10-31 {CAPTION * 3}{ext}")
+    assert out.name.endswith(ext)
+
+
+@pytest.mark.parametrize("char", ["é", "я", "日", "’"])
+def test_a_non_ascii_name_is_cut_by_windows_own_count(char):
+    # one UTF-16 unit each, like a letter: as much fits as of "a"
+    out = cut(f"{FOLDER}\\{char * 300}.txt")
+    assert windows_chars(out) == 259
+
+
+def test_an_emoji_counts_as_two_windows_units():
+    out = cut(f"{FOLDER}\\{'💀' * 300}.txt")
+    assert 258 <= windows_chars(out) <= 259
+
+
+@pytest.mark.parametrize(
+    "folder", ["/Users/someone/d", "/Users/someone/" + "d" * 300], ids=["short", "long"]
+)
+@pytest.mark.parametrize(
+    "name", ["日本語のテキスト" * 16, "💀" * 100, "a" * 300], ids=["cjk", "emoji", "ascii"]
+)
+def test_a_long_mac_name_fits_in_255_bytes(monkeypatch, folder, name):
+    monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
+    out = paths.truncate(f"{folder}/{name}.mp4")
+    size = len(out.name.encode("utf-8"))
+    # as much as fits: one more character would not
+    assert size <= 255 < size + len(name[0].encode("utf-8"))
+    assert out.name.endswith(".mp4") and out.parent.as_posix() == folder
+
+
+def test_a_short_mac_name_is_left_alone(monkeypatch):
+    monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
+    path = "/Users/someone/" + "d" * 300 + "/short.mp4"
+    assert paths.truncate(path).as_posix() == path
+
+
+@pytest.mark.parametrize("name", ["💀" * 200 + ".txt", "💀" * 200])
+def test_a_folder_that_leaves_no_room_for_a_character_says_so(name):
+    # room for 2 bytes after the folder: not one emoji (4), so nothing of the
+    # name would be left, giving ".txt", or with no extension the folder itself
+    folder = "C:\\" + "d" * (250 if name.endswith(".txt") else 254)
+    with pytest.raises(ValueError, match="folder"):
+        cut(f"{folder}\\{name}")
+
+
+@pytest.mark.parametrize("end", [" ", ". ", " . "])
+def test_a_cut_without_an_extension_drops_trailing_spaces_and_dots(end):
+    # Windows silently drops them from a name; the cut must not end on one
+    room = 259 - len(FOLDER) - 1
+    kept = "a" * (room - len(end))
+    out = cut(f"{FOLDER}\\{kept}{end}{'b' * 300}")
+    assert out.name == kept and str(out.parent) == FOLDER
+
+
+def test_a_cut_that_is_only_spaces_and_dots_says_so():
+    room = 259 - len(FOLDER) - 1
+    with pytest.raises(ValueError, match="folder"):
+        cut(f"{FOLDER}\\{'. ' * room}{'b' * 300}")
+
+
+def test_a_linux_name_with_no_room_for_a_character_says_so(monkeypatch):
+    # room for 2 bytes beside ".txt": not one emoji (4)
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "10")
+    with pytest.raises(ValueError, match="no room"):
+        paths._linux_truncateHelper(f"/data/{'💀' * 100}.txt")
+
+
+@pytest.mark.parametrize("end", [" fine.", " fine_1."])
+def test_a_bare_trailing_dot_is_not_an_extension(end):
+    # a caption ending in "." has no extension: the dot is cut with the rest
+    # rather than kept on the end, where Windows would drop it anyway
+    name = f"2026-10-31 {CAPTION * 3}{end}"
+    assert paths._split_ext(name) == (name, "")
+    assert not cut(f"{FOLDER}\\{name}").name.endswith(".")
+    assert not paths._linux_truncateHelper(f"/data/{name}").name.endswith(".")
+
+
+@pytest.mark.parametrize("root", ["C:\\", "\\\\server\\share\\"])
+def test_a_name_in_a_drive_or_share_root_gets_all_of_max_path(root):
+    # the root already ends with its backslash: it isn't counted twice
+    out = cut(f"{root}{'a' * 300}.txt")
+    assert windows_chars(out) == 259 and str(out.parent) == root
+
+
+def test_a_linux_extension_over_the_name_limit_says_so(monkeypatch):
+    # nothing of the name to keep, and the extension alone is too long
+    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "3")
+    with pytest.raises(ValueError, match="no room"):
+        paths._linux_truncateHelper("/data/.txt")
+
+
+def test_a_long_dotted_tail_is_not_taken_for_an_extension():
+    # a name with no extension whose caption ends ".word...": no real
+    # extension is that long, so the tail is cut like the rest of the name
+    name = f"2026-10-31 {CAPTION}.{'y' * 300}"
+    assert paths._split_ext(name) == (name, "")
+    assert str(cut(f"{FOLDER}\\{name}").parent) == FOLDER
+    assert paths._linux_truncateHelper(f"/data/{name}").name.startswith("2026-10-31")
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "ascii"])
+def test_utf_does_not_change_how_windows_counts_a_path(monkeypatch, encoding):
+    # the limit is 2 bytes a UTF-16 unit: measured in UTF-8, a path of up to
+    # 518 characters would pass, twice what MAX_PATH allows
+    monkeypatch.setenv("UTF", encoding)
+    out = cut(f"{FOLDER}\\{'a' * 400}.txt")
+    assert windows_chars(out) == 259
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["💀" * 100 + ".txt", "💀" * 100, ".longext"],
+    ids=["ext", "no-ext", "ext-only"],
+)
+def test_a_mac_name_with_no_room_for_a_character_says_so(monkeypatch, name):
+    # room for less than one emoji (4 bytes), or an extension that alone is
+    # over the limit: nothing of the name would be left
+    monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
+    monkeypatch.setenv("MAC_MAX_PATH", "7" if name.endswith(".txt") else "3")
+    with pytest.raises(ValueError, match="no room"):
+        paths.truncate(f"/Users/someone/d/{name}")
+
+
+@pytest.mark.parametrize("char", ["ǖ", "ᾂ", "한"], ids=["latin", "greek", "hangul"])
+def test_a_mac_name_fits_hfs_plus_decomposed_form_too(monkeypatch, char):
+    # HFS+ stores a name decomposed (NFD) and allows 255 UTF-16 units of it:
+    # "ǖ" is 2 bytes of UTF-8 but 3 units decomposed
+    monkeypatch.setattr(paths.platform, "system", lambda: "Darwin")
+    out = paths.truncate(f"/Volumes/external/d/{char * 300}.mp4")
+    nfd = unicodedata.normalize("NFD", out.name)
+    assert len(out.name.encode("utf-8")) <= 255
+    assert len(nfd.encode("utf-16-le")) // 2 <= 255
+    assert out.name.endswith(".mp4") and len(out.name) > 4
 
 
 # ---------------------------------------------------------------- the caption is cut, not the end (#741)
@@ -210,48 +351,3 @@ def test_the_caption_is_left_whole_when_truncation_is_off(name_env, monkeypatch)
 
     monkeypatch.setattr(placeholder.Placeholders, "_name_with_text", shortened)
     name_env("{date} {text} {filename}.{ext}", "a long caption " * 40)
-
-
-@pytest.mark.parametrize("name", ["💀" * 200 + ".txt", "💀" * 200])
-def test_a_folder_that_leaves_no_room_for_a_character_says_so(name):
-    # room for 2 bytes after the folder: not one emoji (4), so nothing of the
-    # name would be left, giving ".txt", or with no extension the folder itself
-    folder = "C:\\" + "d" * (250 if name.endswith(".txt") else 254)
-    with pytest.raises(ValueError, match="folder"):
-        cut(f"{folder}\\{name}")
-
-
-@pytest.mark.parametrize("end", [" ", ". ", " . "])
-def test_a_cut_without_an_extension_drops_trailing_spaces_and_dots(end):
-    # Windows silently drops them from a name; the cut must not end on one
-    room = 259 - len(FOLDER) - 1
-    kept = "a" * (room - len(end))
-    out = cut(f"{FOLDER}\\{kept}{end}{'b' * 300}")
-    assert out.name == kept and str(out.parent) == FOLDER
-
-
-def test_a_cut_that_is_only_spaces_and_dots_says_so():
-    room = 259 - len(FOLDER) - 1
-    with pytest.raises(ValueError, match="folder"):
-        cut(f"{FOLDER}\\{'. ' * room}{'b' * 300}")
-
-
-def test_a_linux_name_with_no_room_for_a_character_says_so(monkeypatch):
-    # room for 2 bytes beside ".txt": not one emoji (4)
-    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "10")
-    with pytest.raises(ValueError, match="no room"):
-        paths._linux_truncateHelper(f"/data/{'💀' * 100}.txt")
-
-
-@pytest.mark.parametrize("root", ["C:\\", "\\\\server\\share\\"])
-def test_a_name_in_a_drive_or_share_root_gets_all_of_max_path(root):
-    # the root already ends with its backslash: it isn't counted twice
-    out = cut(f"{root}{'a' * 300}.txt")
-    assert windows_chars(out) == 259 and str(out.parent) == root
-
-
-def test_a_linux_extension_over_the_name_limit_says_so(monkeypatch):
-    # nothing of the name to keep, and the extension alone is too long
-    monkeypatch.setenv("LINUX_MAX_FILE_NAME_BYTES", "3")
-    with pytest.raises(ValueError, match="no room"):
-        paths._linux_truncateHelper("/data/.txt")

@@ -5,6 +5,7 @@ import pathlib
 import platform
 import re
 import shutil
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -76,9 +77,10 @@ def truncate(path):
 
 def _split_ext(name):
     """The name without its extension, and the extension (with a "_1"-style
-    number before it, which a cut must keep). Taken off the end only."""
-    match = re.search(r"_[0-9]+\.[a-z4]*$", name, re.IGNORECASE) or re.search(
-        r"\.[a-z4]*$", name, re.IGNORECASE
+    number before it, which a cut must keep). Taken off the end only, and
+    at most 10 characters long, so a caption's ".word..." tail isn't one."""
+    match = re.search(r"_[0-9]+\.[a-z0-9]{1,10}$", name, re.IGNORECASE) or re.search(
+        r"\.[a-z0-9]{1,10}$", name, re.IGNORECASE
     )
     ext = match.group(0) if match else ""
     return (name[: -len(ext)] if ext else name), ext
@@ -129,17 +131,27 @@ def _windows_truncateHelper(path):
 
 
 def _mac_truncateHelper(path):
+    # macOS limits each name, not the path, to 255 bytes of UTF-8
     path = pathlib.Path(os.path.normpath(path))
-    if len(str(path)) <= of_env.getattr("MAC_MAX_PATH"):
-        return path
     dir = path.parent
     file, ext = _split_ext(path.name)
-    maxlength = of_env.getattr("MAC_MAX_PATH") - len(ext)
-    newFile = f"{file[:maxlength]}{ext}"
-    final = pathlib.Path(dir, newFile)
-    log.debug(f"path: {final} path size: {len(str(final))}")
-    log.debug(f"path: {final} filename size: {len(str(final.name))}")
+    max_bytes = of_env.getattr("MAC_MAX_PATH") - _mac_name_size(ext)
+    name = _longest_fitting(file, _mac_name_size, max_bytes)
+    if (file and not name) or max_bytes < 0:
+        raise ValueError(f"the name limit leaves no room for any of the name: {path}")
+    newFile = f"{name}{ext}"
+    log.debug(f"path: {path} filename bytesize: {_mac_name_size(newFile)}")
     return pathlib.Path(dir, newFile)
+
+
+def _mac_name_size(text):
+    """A name's size by both macOS file systems' limits: APFS counts bytes of
+    UTF-8; HFS+ (still used on external drives) counts UTF-16 units of the
+    name decomposed (NFD), where "ǖ" is 3 units but 2 bytes. The larger of
+    the two, so a name that fits fits on either."""
+    text = str(text)
+    decomposed = unicodedata.normalize("NFD", text)
+    return max(len(text.encode("utf-8")), len(decomposed.encode("utf-16-le")) // 2)
 
 
 def _linux_truncateHelper(path):
@@ -190,32 +202,19 @@ def get_string_byte_size_unix(text):
 
 def get_string_byte_size_windows(text):
     """
-    This function estimates the byte size of a string considering ASCII characters.
+    The size of a string as Windows counts a path: 2 bytes for each UTF-16
+    code unit, so 4 for a character outside the Basic Multilingual Plane
+    (an emoji) and 2 for any other. `UTF` isn't used here: the limit,
+    WINDOWS_MAX_PATH_BYTES, is in these units, so any other count would let
+    a path past MAX_PATH.
 
     Args:
         text: The string to analyze.
 
     Returns:
-        The estimated byte size of the string.
+        The byte size of the string.
     """
-    total_size = 0
-    text = str(text)
-    normal_char_size = of_env.getattr("NORMAL_CHAR_SIZE_WINDOWS")
-    special_char_size = of_env.getattr("SPECIAL_CHAR_SIZE_WINDOWS")
-    utf = of_env.getattr("UTF")
-    if utf:
-        return len(text.encode(utf))
-    for char in text:
-        try:
-            if ord(char) < 128:
-                total_size += normal_char_size  # 2 bytes for ASCII characters
-            else:
-                total_size += special_char_size
-        except ValueError:
-            total_size += (
-                special_char_size  # 4 bytes for non-ASCII characters (assumption)
-            )
-    return total_size
+    return len(str(text).encode("utf-16-le"))
 
 
 def cleanDB():
