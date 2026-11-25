@@ -16,6 +16,7 @@ import sys
 
 DEFAULT_MAX_QUIET_MINUTES = 60
 AUTH_EXIT_CODE = 3
+OK_EXIT_CODES = (0, 4)  # ok, partial
 
 
 def _parse_iso(value):
@@ -77,6 +78,20 @@ def _login_failed(data):
     return False
 
 
+def _failed_last_pass(data):
+    """The label of the daemon's last pass when it ended neither ok nor
+    partial, or None. A failed login is _login_failed's: a later login
+    check can clear it."""
+    last_pass = data.get("last_pass")
+    status = last_pass.get("status") if isinstance(last_pass, dict) else None
+    if (
+        isinstance(status, int)
+        and not isinstance(status, bool)
+        and status not in (*OK_EXIT_CODES, AUTH_EXIT_CODE)
+    ):
+        return last_pass.get("status_label") or f"exit {status}"
+    return None
+
 
 def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
     """Return ``(healthy: bool, reason: str)`` for a parsed status dict."""
@@ -90,6 +105,9 @@ def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
     if _login_failed(data):
         return False, "unhealthy: last pass recorded a failed login"
 
+    failed = _failed_last_pass(data)
+    if failed:
+        return False, f"unhealthy: the daemon's last pass failed ({failed})"
 
     now_utc = (
         datetime.now(timezone.utc)
