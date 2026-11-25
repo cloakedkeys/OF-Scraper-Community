@@ -124,6 +124,7 @@ def test_placeholder_model_has_no_avatar_or_header():
 # ----------------------------------------------------------------------
 
 import asyncio
+import textwrap
 from types import SimpleNamespace
 
 import aiofiles
@@ -309,6 +310,44 @@ def test_overwrite_mode_keeps_the_first_text_file(naming, monkeypatch, tmp_path)
     _write_texts(naming, monkeypatch, CAPTIONS, collision="overwrite")
     assert list(text_files(tmp_path)) == ["Good morning.txt"]
 
+
+LONG = (
+    "Good morning everyone, this caption is long enough to wrap onto a "
+    "second line in the text file"
+)
+
+
+def _rerun_over_older_file(naming, monkeypatch, tmp_path, caption, data):
+    """Saves data where the post's text file goes, as a version before #133
+    did, runs again, and returns the folder's files: name -> text."""
+    _write_texts(naming, monkeypatch, [caption])
+    (path,) = (tmp_path / "data").rglob("*.txt")
+    path.write_bytes(data)
+    _write_texts(naming, monkeypatch, [caption])
+    return {p.name: p.read_text(encoding="utf-8") for p in path.parent.iterdir()}
+
+
+def test_a_text_file_from_before_133_is_rewritten_in_place(
+    naming, monkeypatch, tmp_path
+):
+    # versions before #133 ran the wrapped lines together
+    older = "".join(textwrap.wrap(LONG, width=70)).encode()
+    files = _rerun_over_older_file(naming, monkeypatch, tmp_path, LONG, older)
+    assert files == {"Good morning.txt": text.file_text(LONG)}
+
+
+def test_a_windows_text_file_from_before_133_is_rewritten_in_place(
+    naming, monkeypatch, tmp_path
+):
+    # written in the Windows code page, and stopped at the line with an
+    # emoji, which that code page can't encode
+    caption = "Good morning café " + LONG + " \U0001f525 now"
+    lines = textwrap.wrap(caption, width=70)
+    assert "\U0001f525" in lines[1]
+    older = lines[0].encode("cp1252")
+    monkeypatch.setattr("locale.getpreferredencoding", lambda *a: "cp1252")
+    files = _rerun_over_older_file(naming, monkeypatch, tmp_path, caption, older)
+    assert files == {"Good morning.txt": text.file_text(caption)}
 
 def test_caption_with_emoji_is_written(monkeypatch, tmp_path):
     post, path = _write(monkeypatch, tmp_path, "new set out now \U0001f525✨")

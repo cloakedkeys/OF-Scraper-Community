@@ -2,6 +2,7 @@ import asyncio
 import copy
 import html
 import itertools
+import locale
 import logging
 import pathlib
 import textwrap
@@ -52,12 +53,37 @@ def _older_file_text(text):
     return "\n".join(textwrap.wrap(text, width=of_env.getattr("MAX_TEXT_LENGTH")))
 
 
+def _run_together_text(text):
+    """What a version before #133 wrote for the same caption: the wrapped
+    lines run together with nothing between them, in the system's code page
+    rather than UTF-8. Where a line had a character the code page can't
+    encode (an emoji, on Windows), the write stopped before that line. A
+    file holding this is the post's own, and is rewritten where it is."""
+    encoding = locale.getpreferredencoding(False)
+    written = []
+    for line in textwrap.wrap(text, width=of_env.getattr("MAX_TEXT_LENGTH")):
+        try:
+            line.encode(encoding)
+        except UnicodeEncodeError:
+            break
+        written.append(line)
+    return "".join(written)
+
+
 def _holds(path, *contents):
-    """True when the text file at path holds exactly one of contents."""
+    """True when the text file at path holds exactly one of contents, read
+    as UTF-8 or, as versions before #133 wrote it, the system's code page."""
     try:
-        return pathlib.Path(path).read_text(encoding="utf-8") in contents
-    except (OSError, UnicodeError):
+        data = pathlib.Path(path).read_bytes()
+    except OSError:
         return False
+    for encoding in ("utf-8", locale.getpreferredencoding(False)):
+        try:
+            if data.decode(encoding).replace("\r\n", "\n") in contents:
+                return True
+        except (UnicodeError, LookupError):
+            pass
+    return False
 
 
 # {post_id} and its alias {postid}
@@ -120,8 +146,11 @@ async def _write_text(ele):
 
         placeholderObj = await placeholder.Textholders(new_ele, "txt").init()
 
-        older = _older_file_text(new_ele.text)
-        filepath = _own_path(placeholderObj.filepath, new_ele, content, older)
+        older = (
+            _older_file_text(new_ele.text),
+            _run_together_text(new_ele.text),
+        )
+        filepath = _own_path(placeholderObj.filepath, new_ele, content, *older)
 
         # Check for existing file BEFORE marking the attempt. A file at a
         # name with {post_id} in it is kept as it is, even with other
@@ -131,7 +160,7 @@ async def _write_text(ele):
         if (
             filepath.exists()
             and not dupe
-            and (_holds(filepath, content) or not _holds(filepath, older))
+            and (_holds(filepath, content) or not _holds(filepath, *older))
         ):
             # Returning without marking attempt will accurately log it as "skipped" in stats
             return
