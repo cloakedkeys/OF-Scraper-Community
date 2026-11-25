@@ -81,7 +81,12 @@ def _ts_crash(path: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         log.debug(f"Could not run the MPEG-TS check on '{path}'.", exc_info=True)
         return None
-    return stop_reason(result.returncode)
+    reason = stop_reason(result.returncode)
+    if reason and not reason.startswith("crashed"):
+        # killed from outside (out of memory, a shutdown): not a broken build
+        log.warning(f"The MPEG-TS check on '{path}' {reason}; not counted as a crash.")
+        return None
+    return reason
 
 
 def _same_binary(path: str) -> str:

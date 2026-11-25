@@ -217,6 +217,24 @@ def test_ts_crash_reports_a_crashing_binary(tmp_path, monkeypatch):
     assert ffmpeg._ts_crash("ffmpeg").startswith("crashed (")
 
 
+@pytest.mark.parametrize("code,name", [(-9, "SIGKILL"), (-15, "SIGTERM")])
+def test_a_killed_check_is_not_a_crashing_ffmpeg(monkeypatch, caplog, code, name):
+    """Killed from outside (out of memory, a shutdown) says nothing about the
+    build: it is reported as stopped, and the ffmpeg is kept."""
+    import subprocess
+
+    if not hasattr(ffmpeg.signal, name):
+        pytest.skip(f"no {name} here")
+    monkeypatch.setattr(
+        ffmpeg.subprocess, "run",
+        lambda cmd, **k: subprocess.CompletedProcess(cmd, code, b"", b""),
+    )
+    with caplog.at_level("DEBUG", logger="shared"):
+        assert ffmpeg._ts_crash("ffmpeg") is None
+    assert f"was stopped ({name})" in caplog.text
+    assert "crashed" not in caplog.text
+
+
 @pytest.fixture
 def lookup(monkeypatch):
     """get_ffmpeg with a settings path, no pyffmpeg, and fake binaries:
