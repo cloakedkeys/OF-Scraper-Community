@@ -227,6 +227,25 @@ def test_rescan_record_cleared_only_after_a_complete_saved_scan(
     assert cache.get(key) is None
 
 
+@pytest.mark.parametrize("failure", FAILURES)
+def test_run_whose_timeline_requests_all_fail_exits_partial(
+    monkeypatch, cache, explicit_after, failure
+):
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.main.open.run as run
+
+    entry = setup_area(monkeypatch, "timeline")
+    monkeypatch.setattr(run, "check_database", lambda: None)
+    monkeypatch.setattr(
+        run, "start_manager", lambda: scan(entry, FakeClient([FAILURES[failure]()]))
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+
+    assert exc.value.code == exit_status.PARTIAL
+
+
 def test_post_id_lookup_does_not_clear_the_record(monkeypatch, cache, explicit_after):
     key = incomplete._cache_key(MODEL_ID, messages.API)
     cache.set(key, AFTER)

@@ -95,6 +95,41 @@ def test_daemon_warning_allows_for_exclusion(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize("daemon", [False, True], ids=["interactive", "daemon"])
+def test_creator_not_found_exits_usage(monkeypatch, daemon):
+    # -u names a creator that isn't there: the run exits 2, not 0
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.main.open.run as run
+
+    mm = _manager(monkeypatch, _parsed("somecreator,nosuchcreator"), daemon, _fansly_models())
+    monkeypatch.setattr(run, "check_database", lambda: None)
+    monkeypatch.setattr(run, "start_manager", mm._select_models_scraper)
+
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+
+    assert exc.value.code == exit_status.USAGE
+
+
+def test_creator_removed_by_a_filter_is_not_a_usage_error(monkeypatch):
+    # -u SomeCreator -eu SomeCreator: found, then deliberately left out
+    import ofscraper.main.close.exit_status as exit_status
+    import ofscraper.main.open.run as run
+
+    models = _fansly_models()
+    mm = _manager(monkeypatch, _parsed("SomeCreator"), False, models)
+    monkeypatch.setattr(
+        mm, "_filter_and_prompt_for_selection", lambda: {m.name: m for m in models[1:]}
+    )
+    monkeypatch.setattr(run, "check_database", lambda: None)
+    monkeypatch.setattr(run, "start_manager", mm._select_models_scraper)
+
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+
+    assert exc.value.code == exit_status.OK
+
+
 def test_interactive_warning_allows_for_exclusion(monkeypatch):
     # -u SomeCreator -eu SomeCreator: found, then removed by the filters
     warnings = []
