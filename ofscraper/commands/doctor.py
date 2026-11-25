@@ -638,6 +638,11 @@ def check_keys(config, site, report, folder=None):
     if mode != "manual":
         report.add(PASS, "key files", f"key mode {mode}: no key files needed")
         return
+    if not str(client_id or "").strip() and not str(private_key or "").strip() and not _keys_in_auth_file(folder):
+        # the default on a fresh install: a run goes on without them (keys
+        # put in auth.json instead are a setup gone wrong, a FAIL below)
+        report.add(WARN, "key files", "no key files set up yet: protected (DRM) videos are skipped until client-id and private-key are set")
+        return
     problem = keyhelpers.cdm_key_problems(mode, client_id, private_key)
     if problem:
         hints = [_key_file_hint("client-id", client_id), _key_file_hint("private-key", private_key)]
@@ -684,6 +689,28 @@ def _check_path(save):
     return path
 
 
+# where Linux and macOS mount drives and shares; a missing save folder whose
+# nearest folder that is there is one of these is on a drive not mounted
+MOUNT_PARENTS = ("/", "/mnt", "/media", "/Volumes", "/net")
+# this holds a folder per user, which holds the mounts (/run/media/<user>)
+USER_MOUNT_PARENTS = ("/run/media",)
+
+
+def _windows():
+    return os.name == "nt"
+
+
+def _unmounted(save):
+    """The save folder isn't there and nothing is above it up to a place
+    drives are mounted: its drive or share likely isn't mounted."""
+    here = save.absolute()
+    while not here.exists() and here.parent != here:
+        here = here.parent
+    return here in {pathlib.Path(p) for p in MOUNT_PARENTS} or here.parent in {
+        pathlib.Path(p) for p in USER_MOUNT_PARENTS
+    }
+
+
 def check_folders(config, report):
     import ofscraper.utils.config.data as data
     import ofscraper.utils.paths.common as common_paths
@@ -691,6 +718,8 @@ def check_folders(config, report):
     save = pathlib.Path(os.path.expanduser(common_paths.get_save_location(_config(config))))
     if save.is_dir():
         report.add(PASS, "save folder", f"{save}, {_free(save)}")
+    elif not _windows() and _unmounted(save):
+        report.add(FAIL, "save folder", f"{save} isn't there: is the drive or share mounted?")
     elif pathlib.Path(save.anchor or ".").is_dir():
         # the download makes it, parents included
         report.add(WARN, "save folder", f"{save} isn't there yet: a run makes it")

@@ -158,10 +158,13 @@ def test_an_empty_home_gets_findings_and_nothing_is_created(home):
 def test_a_fresh_install_fails_only_what_a_run_cant_fix_itself(home):
     """No config, no auth file and no save folder are what a first run
     meets: it makes the config and the folder and asks for the login. In
-    the default manual key mode, the unset key files are still a finding."""
+    the default manual key mode, no key files yet is a warning: the run
+    goes on and skips the protected videos."""
     report = doctor.run()
     failed = {r["check"] for r in report.results if r["status"] == "FAIL"}
-    assert failed <= {"key files", "ffmpeg"}
+    assert failed <= {"ffmpeg"}
+    status, detail = result(report, "key files")
+    assert status == "WARN" and "videos are skipped until" in detail
     assert result(report, "save folder")[0] == "WARN"
     assert result(report, "OnlyFans auth")[0] == "WARN"
 
@@ -299,8 +302,13 @@ def test_ffmpeg_version_reads_the_version(monkeypatch):
 
 def test_key_files(home, tmp_path):
     write_config(home, {"cdm_options": {"key-mode-default": "manual"}})
-    assert result(doctor.run(), "key files") == ("FAIL", "client-id is not set; private-key is not set")
+    status, detail = result(doctor.run(), "key files")
+    assert status == "WARN" and detail.startswith("no key files set up yet")
     client, key = tmp_path / "client_id.bin", tmp_path / "private_key.pem"
+    # half set up is a mistake in what was configured, not the default
+    write_config(home, {"cdm_options": {"key-mode-default": "manual", "client-id": str(client)}})
+    status, detail = result(doctor.run(), "key files")
+    assert status == "FAIL" and "private-key is not set" in detail
     write_config(home, {"cdm_options": {"key-mode-default": "manual", "client-id": str(client), "private-key": str(key)}})
     status, detail = result(doctor.run(), "key files")
     assert status == "FAIL" and "file not found" in detail
@@ -369,6 +377,35 @@ def test_key_mode_cdrm_warns_without_contacting_it(home, tmp_path, monkeypatch):
     assert status == "WARN" and "already set, so that switch is the whole fix" in detail
 
 
+@pytest.mark.parametrize(
+    "windows,save,said",
+    [
+        # Linux and macOS: nothing there below a place drives are mounted
+        (False, ("mnt", "nas", "OF"), "FAIL"),
+        (False, ("run-media", "someone", "disk", "OF"), "FAIL"),
+        # a folder that isn't a mount place: a run makes the rest
+        (False, ("data", "new", "OF"), "WARN"),
+        # Windows: the drive is there, so a run makes the folder
+        (True, ("mnt", "nas", "OF"), "WARN"),
+    ],
+)
+def test_a_save_folder_on_a_drive_that_isnt_mounted_fails(home, tmp_path, monkeypatch, windows, save, said):
+    # tmp_path/mnt and tmp_path/run-media stand in for /mnt and /run/media
+    for folder in ("mnt", "run-media/someone", "data"):
+        (tmp_path / folder).mkdir(parents=True)
+    monkeypatch.setattr(doctor, "_windows", lambda: windows)
+    monkeypatch.setattr(doctor, "MOUNT_PARENTS", (str(tmp_path / "mnt"),))
+    monkeypatch.setattr(doctor, "USER_MOUNT_PARENTS", (str(tmp_path / "run-media"),))
+    save = tmp_path.joinpath(*save)
+    write_config(home, {"file_options": {"save_location": str(save)}})
+    status, detail = result(doctor.run(), "save folder")
+    assert status == said
+    if said == "FAIL":
+        assert detail.endswith("isn't there: is the drive or share mounted?")
+    else:
+        assert detail.endswith("isn't there yet: a run makes it")
+
+
 def test_folders_and_the_free_space_limit(home, tmp_path, monkeypatch):
     save = tmp_path / "library"
     write_config(home, {"file_options": {"save_location": str(save)}, "download_options": {"system_free_min": 1000}})
@@ -404,7 +441,8 @@ def test_database_setting_is_named_without_the_password(home, monkeypatch, capsy
     assert SECRET not in capsys.readouterr().out
 
 
-def test_routed_with_exit_status_and_json(home, capsys):
+def test_routed_with_exit_status_and_json(home, capsys, monkeypatch):
+    monkeypatch.setattr(ffmpeg, "find_ffmpeg", lambda configured: (None, None, None))
     assert entrypoint.main(["doctor", "--json"]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["ok"] is False
