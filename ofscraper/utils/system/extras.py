@@ -4,7 +4,7 @@
 browser; ``OFSC_DATABASE_URL`` needs the ``postgres`` extra (psycopg). Instead
 of stopping with an install command, the first run asks to install them into
 the Python running OF-Scraper, with pip, or with uv when that Python has no pip
-(``uv tool install``). ``OFSC_INSTALL_EXTRAS=False`` turns this off.
+(``uv pip install --python``). ``OFSC_INSTALL_EXTRAS=False`` turns this off.
 
 It only asks at a terminal. The daemon, cron, services and ``sudo`` runs
 get the install command to run themselves instead. The standalone download
