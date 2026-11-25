@@ -197,20 +197,24 @@ def test_a_clashing_name_gets_its_media_id_whole_only_with_original(
     assert got.suffix == ".jpg" and got.read_bytes() == b"this download"
 
 
-def test_settings_without_truncation_shorten_by_default(monkeypatch):
-    # settings built without the trunicate key (as some callers and tests
-    # have) shorten, as before, rather than fail
-    monkeypatch.setattr(placeholder.settings, "get_settings", lambda: SimpleNamespace())
+def _default_settings(naming, monkeypatch):
+    """Settings as a run builds them from an empty config.json and no
+    options: trunicate is the bool True, as get_truncation gives it."""
+    naming("{text}.{ext}", "short")
+    assert placeholder.settings.get_settings().trunicate is True
     monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Linux")
+
+
+def test_default_settings_shorten_a_long_path(naming, monkeypatch):
+    _default_settings(naming, monkeypatch)
     out = placeholder.final_path(f"/data/{'a' * 400}.jpg")
     assert out.suffix == ".jpg" and len(out.name) < 400
 
 
 @pytest.mark.parametrize("holder", ["Placeholders", "Textholders"])
-def test_settings_without_truncation_shorten_the_saved_path_by_default(monkeypatch, holder):
+def test_default_settings_shorten_the_saved_path(naming, monkeypatch, holder):
     # the path a download is saved at reads the flag the same way
-    monkeypatch.setattr(placeholder.settings, "get_settings", lambda: SimpleNamespace())
-    monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Linux")
+    _default_settings(naming, monkeypatch)
     obj = getattr(placeholder, holder).__new__(getattr(placeholder, holder))
     obj._filepath = f"/data/{'a' * 400}.jpg"
     out = obj.trunicated_filepath
