@@ -6,6 +6,7 @@ before downloads start, instead of failing or changing every file quietly.
 
 import json
 import logging
+import platform
 import re
 import string
 
@@ -45,9 +46,20 @@ def text_type(value):
     return None
 
 
+# outside Windows a name can hold all but "/" (it adds a folder) and NUL
+NOT_IN_A_POSIX_NAME = re.compile(r"[/\x00]")
+
+
+def on_windows():
+    return platform.system() == "Windows"
+
+
 def name_safe(text):
-    """text without the characters a file name can't hold"""
-    return NOT_IN_A_NAME.sub("", str(text))
+    """text without the characters a file name can't hold on this system:
+    on Windows NOT_IN_A_NAME; elsewhere only "/" and NUL, so a ":" from
+    HH:mm in the date setting stays, as in names made before"""
+    banned = NOT_IN_A_NAME if on_windows() else NOT_IN_A_POSIX_NAME
+    return banned.sub("", str(text))
 
 
 def folder_safe(text):

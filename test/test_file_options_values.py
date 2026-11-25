@@ -158,8 +158,9 @@ def test_a_profile_text_file_puts_in_a_space_replacer_once(config_json, names_en
     assert asyncio.run(placeholder.Textholders(post, "txt").createfilename()) == "good - luck.txt"
 
 
-def test_a_delete_character_is_not_put_in_a_name(config_json, logged):
+def test_a_delete_character_is_not_put_in_a_name(config_json, logged, monkeypatch):
     assert config_json(space_replacer="\x7f").space_replacer == " "
+    monkeypatch.setattr(naming_check, "on_windows", lambda: True)
     assert naming_check.name_safe("a\x7fb") == "ab"
 
 
@@ -251,6 +252,7 @@ def evening_post(url="https://example.invalid/a.jpg", text="hello"):
 def test_date_in_a_file_name_loses_what_a_name_cant_hold(
     config_json, names_env, monkeypatch, cls, date, folder, file_name
 ):
+    monkeypatch.setattr(naming_check, "on_windows", lambda: True)
     config_json(date=date, dir_format="{date}", file_format="{date}.{ext}")
     item = evening_post()
     item = item.all_media[0] if cls is placeholder.Placeholders else item
@@ -259,6 +261,48 @@ def test_date_in_a_file_name_loses_what_a_name_cant_hold(
     assert made.relative_to(names_env / "data") == folder
     assert asyncio.run(names.createfilename()) == file_name
 
+
+@pytest.mark.parametrize(
+    "date,folder,file_name",
+    [
+        # a "/" still adds a folder, and can't be in a file name
+        ("YYYY/MM/DD", pathlib.PurePosixPath("2024", "05", "01"), "20240501.jpg"),
+        # outside Windows a name can hold ":" and the rest: names made
+        # before stay as they were
+        (
+            "YYYY-MM-DD HH:mm:ss",
+            pathlib.PurePosixPath("2024-05-01 20:00:00"),
+            "2024-05-01 20:00:00.jpg",
+        ),
+        (
+            'YYYY/MM/DD "HH|mm?ss*"',
+            pathlib.PurePosixPath("2024", "05", '01 "20|00?00*"'),
+            '20240501 "20|00?00*".jpg',
+        ),
+    ],
+)
+@pytest.mark.parametrize("cls", [placeholder.Placeholders, placeholder.Textholders])
+def test_date_keeps_what_a_name_can_hold_outside_windows(
+    config_json, names_env, monkeypatch, cls, date, folder, file_name
+):
+    # Linux or macOS
+    monkeypatch.setattr(naming_check, "on_windows", lambda: False)
+    config_json(date=date, dir_format="{date}", file_format="{date}.{ext}")
+    item = evening_post()
+    item = item.all_media[0] if cls is placeholder.Placeholders else item
+    names = cls(item, "jpg")
+    made = str(asyncio.run(names.getmediadir(create=False))).replace("\\", "/")
+    root = str(names_env / "data").replace("\\", "/")
+    assert pathlib.PurePosixPath(made).relative_to(root) == folder
+    assert asyncio.run(names.createfilename()) == file_name
+
+
+@pytest.mark.parametrize(
+    "system, windows", [("Windows", True), ("Linux", False), ("Darwin", False)]
+)
+def test_on_windows_follows_the_system(monkeypatch, system, windows):
+    monkeypatch.setattr(naming_check.platform, "system", lambda: system)
+    assert naming_check.on_windows() is windows
 
 # ---------------------------------------------------------------- templates
 
