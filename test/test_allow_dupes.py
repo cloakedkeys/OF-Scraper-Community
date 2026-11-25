@@ -394,6 +394,39 @@ def test_skip_purchased_a_message_listed_in_purchased_is_not_a_copy(
     assert sorted((m.id, m.post_id) for m in picked) == [(7, 1), (7, 2)]
 
 
+HELD_BACK = "held back"
+
+
+def held_back_lines(caplog):
+    return [r.getMessage() for r in caplog.records if HELD_BACK in r.getMessage()]
+
+
+def test_skip_purchased_says_when_a_repost_waits_for_an_area_not_scanned(
+    skip_purchased, caplog
+):
+    # the purchase was downloaded first; this run scans Timeline but not
+    # Messages, so the purchase counts for the timeline repost for now
+    skip_purchased.stub.download_area = ["Purchased"]
+    assert scrape_and_download((3, "paid", 7, True)) == [(7, 3)]
+    skip_purchased.stub.download_area = ["Timeline", "Purchased"]
+    with caplog.at_level(logging.INFO, logger="shared"):
+        assert scrape_and_download((2, "timeline", 7, True), (3, "paid", 7, True)) == []
+    (line,) = held_back_lines(caplog)
+    assert "1 copy" in line and "Messages" in line and "Timeline" not in line.split("scan")[-1]
+
+
+def test_skip_purchased_says_nothing_when_every_area_was_scanned(skip_purchased, caplog):
+    skip_purchased.stub.download_area = ["Purchased"]
+    scrape_and_download((3, "paid", 7, True))
+    skip_purchased.stub.download_area = ["All"]
+    with caplog.at_level(logging.INFO, logger="shared"):
+        # the message is the copy the purchase counts for; the repost downloads
+        assert scrape_and_download(
+            (1, "message", 7, True), (2, "timeline", 7, True), (3, "paid", 7, True)
+        ) == [(7, 2)]
+    assert held_back_lines(caplog) == []
+
+
 def test_skip_purchased_leaves_the_metadata_list_alone(skip_purchased):
     # the flag picks downloads only: metadata sees the same copies without it
     posts = [(1, "message", 7, True), (2, "paid", 7, True), (3, "paid", 8, True)]
@@ -687,6 +720,33 @@ def test_fansly_skip_purchased_a_purchase_downloaded_first_still_leaves_reposts(
     got = downloads(harness)
     harness.run()
     assert got == [(101, 2)]
+
+
+@pytest.mark.parametrize("messages_scanned", [False, True])
+def test_fansly_skip_purchased_says_when_a_repost_waits_for_an_area_not_scanned(
+    harness, settings_stub, caplog, messages_scanned
+):
+    settings_stub.allow_dupe_downloads = True
+    settings_stub.skip_purchased_dupes = True
+    harness.downloaded = {(101, 3)}
+    harness.downloaded_purchased = harness.downloaded
+    harness.areas = ["Messages", "Timeline", "Purchased"]
+    if not messages_scanned:
+        harness.areas.remove("Messages")
+    harness.pages["Messages"] = [page(message(1, [101]))]
+    harness.pages["Timeline"] = [page(post_dict(2, [101]))]
+    harness.pages["Purchased"] = [page(post_dict(3, [101]))]
+    got = downloads(harness)
+    with caplog.at_level(logging.INFO, logger="shared"):
+        harness.run()
+    lines = held_back_lines(caplog)
+    if messages_scanned:
+        # the message is the copy the purchase counts for: nothing to say
+        assert got == [(101, 2)] and lines == []
+    else:
+        assert got == []
+        (line,) = lines
+        assert "1 copy" in line and "Messages" in line
 
 
 def test_fansly_skip_purchased_every_copy_gets_a_row(harness, settings_stub):

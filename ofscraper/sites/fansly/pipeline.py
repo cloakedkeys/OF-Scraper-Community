@@ -174,6 +174,7 @@ class Selector:
                 )
             }
         self.purchase_chosen = set()
+        self.held = 0  # copies left out for a Purchased copy downloaded before
 
     def _purchase_covers(self, item):
         """Whether --skip-purchased-dupes leaves this copy out. Purchased is
@@ -186,7 +187,10 @@ class Selector:
         first = item.id not in self.elsewhere
         self.elsewhere.add(item.id)
         # a Purchased copy downloaded before stands in for the first other copy
-        return first and item.id in self.purchase_saved
+        if first and item.id in self.purchase_saved:
+            self.held += filters.media_key(item) not in self.downloaded
+            return True
+        return False
 
     def select(self, posts):
         media = [m for post in posts for m in post.prepare_media_for_download()]
@@ -496,6 +500,12 @@ async def _produce(run):
             except Exception as E:
                 # pages already queued still download; the next area runs
                 post_area.log_area_failure(run.username, area, E)
+        # only areas downloaded from reach the selector
+        filters.log_held_back(
+            run.username,
+            run.selector.held,
+            [area for area in areas if area in download_area],
+        )
     finally:
         await _write_locked_rows(run)
 

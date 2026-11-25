@@ -6,6 +6,7 @@ from collections import defaultdict
 import arrow
 
 import ofscraper.db.operations_.wrapper as db_wrapper
+import ofscraper.sites as sites
 import ofscraper.utils.separate as separate
 import ofscraper.utils.settings as settings
 import ofscraper.utils.me as me_util
@@ -16,6 +17,7 @@ from ofscraper.db.operations_.media import (
 )
 import ofscraper.utils.of_env.of_env as of_env
 from ofscraper.scripts.skip_download_script import retry_permanent_skips
+from ofscraper.utils.args.accessors.areas import get_download_area
 
 log = logging.getLogger("shared")
 
@@ -107,7 +109,7 @@ def skip_purchased_copies(media, username=None, model_id=None):
         current = kept.get(item.id)
         if current is None or (item.canview and not current.canview):
             kept[item.id] = item
-    out, first_seen = [], set()
+    out, first_seen, held = [], set(), 0
     for item in media:
         if is_purchased_copy(item):
             if kept.get(item.id) is item:
@@ -116,9 +118,36 @@ def skip_purchased_copies(media, username=None, model_id=None):
         if item.id not in first_seen:
             first_seen.add(item.id)
             if item.id in purchase_saved:
+                held += (item.id, item.post_id) not in downloaded
                 continue
         out.append(item)
+    log_held_back(username, held, get_download_area())
     return out
+
+
+# the areas a bought file's own post can be in (a paid message or post)
+BOUGHT_IN = {
+    sites.ONLYFANS: ("Messages", "Timeline", "Archived", "Streams"),
+    sites.FANSLY: ("Messages", "Timeline"),
+}
+
+
+def log_held_back(username, held, scanned):
+    """--skip-purchased-dupes: a downloaded Purchased copy counts for the
+    first other copy a run finds. When a run didn't scan an area the bought
+    post can be in, that copy may be a repost of a post there; say so, as it
+    downloads only once a run includes that area."""
+    missing = [a for a in BOUGHT_IN[sites.current_site()] if a not in scanned]
+    if not held or not missing:
+        return
+    copies = "1 copy" if held == 1 else f"{held} copies"
+    they = "it downloads" if held == 1 else "they download"
+    log.info(
+        f"[{username}] --skip-purchased-dupes held back {copies} of media bought "
+        "earlier: the downloaded Purchased file counts for the first copy this "
+        f"run found. This run didn't scan {', '.join(missing)}; if an earlier "
+        f"copy is there, {they} once a run includes it"
+    )
 
 
 def dupefilterPost(post):
