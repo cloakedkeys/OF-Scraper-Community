@@ -31,7 +31,7 @@ The `live` extra also needs Playwright's Chromium browser, downloaded with `play
 | pipx | `pipx install --include-deps "ofscraper-community[live]"` | `playwright install chromium` |
 | pip | `pip install "ofscraper-community[live]"` | `playwright install chromium` |
 
-**Planned** ([#720](https://github.com/cloakedkeys/OF-Scraper-Community/pull/720), [#721](https://github.com/cloakedkeys/OF-Scraper-Community/pull/721), not released yet): the first `--live` run installs Playwright and Chromium itself, the first run with `OFSC_DATABASE_URL` set installs the PostgreSQL driver where it's missing, and the driver comes with the install on most systems, so the `live` and `postgres` extras are only needed where that automatic install is turned off (`OFSC_INSTALL_EXTRAS=False`) or fails. Until a release includes them, install the extras as above.
+**Planned** ([#720](https://github.com/cloakedkeys/OF-Scraper-Community/pull/720), [#721](https://github.com/cloakedkeys/OF-Scraper-Community/pull/721), not released yet): at a terminal, the first `--live` run offers to install Playwright and Chromium, and the first run with `OFSC_DATABASE_URL` set offers to install the PostgreSQL driver where it's missing (the daemon, cron and `sudo` runs print the install command instead). The driver also comes with the install on most systems. So the `live` and `postgres` extras are only needed where that offer is turned off (`OFSC_INSTALL_EXTRAS=False`), declined, not made, or fails. Until a release includes them, install the extras as above.
 
 Without Python, download a build for Windows, macOS or Linux from the [releases](https://github.com/cloakedkeys/OF-Scraper-Community/releases), or use the Docker image (`ghcr.io/cloakedkeys/of-scraper-community`).
 
@@ -67,7 +67,7 @@ Protected videos are decrypted with your own Widevine CDM files. Set these in `c
 }
 ```
 
-- **`key-mode-default`** should be `manual`. `cdrm` is deprecated, and each run that uses it warns you. Its default server, cdrm-project.com, no longer works and isn't contacted. With `cdrm`, protected videos are skipped when the `OFSC_CDRM_URL` environment variable is empty, left at that default, or not readable as an address. Only a server you run yourself, set in `OFSC_CDRM_URL`, still works, and it is sent your request headers, cookies included. A config that already says `cdrm` keeps it until you change it, so check this after setting up your CDM files.
+- **`key-mode-default`** should be `manual`. `cdrm` is deprecated, and each run that uses it warns you. Its default server, cdrm-project.com, no longer works and isn't contacted. With `cdrm`, protected videos are skipped when the `OFSC_CDRM_URL` environment variable is empty or left at that default. Only a server you run yourself, set in `OFSC_CDRM_URL` as an `http://` or `https://` address, still works, and it is sent your request headers, cookies included. A config that already says `cdrm` keeps it until you change it, so check this after setting up your CDM files.
 - **`client-id`** is the path to `client_id.bin`, and **`private-key`** the path to `private_key.pem`.
 
 See the [CDM guide](https://cloakedkeys.gitbook.io/ofsc/setup/cdm-options) for getting these files.
