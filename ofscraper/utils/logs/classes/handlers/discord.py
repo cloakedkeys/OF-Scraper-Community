@@ -54,6 +54,9 @@ class DiscordHandler(logging.Handler):
             self.queue.task_done()
 
     def emit(self, record):
+        # a line whose text is sent with send_message() already (an alert)
+        if getattr(record, "skip_discord", False):
+            return
         log_entry = self.format(record)
         if not log_entry or not log_entry.strip():
             return

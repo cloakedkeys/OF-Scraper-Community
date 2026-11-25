@@ -48,6 +48,42 @@ def test_alert_reaches_discord_and_the_script(sent):
     }]
 
 
+@pytest.mark.parametrize("level", ["LOW", "NORMAL", "DEBUG"])
+def test_alert_reaches_discord_once(monkeypatch, level):
+    # the alert's log line goes through the same Discord handler as the alert
+    import logging
+    import queue
+
+    import ofscraper.utils.logs.utils.level as log_level
+    import ofscraper.utils.profiles.data as profile_data
+    from ofscraper.utils.logs.classes.classes import DiscordFormatter
+    from ofscraper.utils.logs.classes.handlers.discord import DiscordHandler
+
+    s = SimpleNamespace(discord_level=level, alert_script=None, site="onlyfans")
+    monkeypatch.setattr(alerts.settings, "get_settings", lambda: s)
+    monkeypatch.setattr(profile_data, "get_active_profile", lambda: "main_profile")
+    handler = DiscordHandler.__new__(DiscordHandler)
+    logging.Handler.__init__(handler)
+    handler.close = lambda: logging.Handler.close(handler)
+    handler.queue = queue.Queue()
+    handler.setFormatter(DiscordFormatter("%(message)s"))
+    handler.setLevel(log_level.getLevel(level))
+    monkeypatch.setattr(handler, "_tasks", [], raising=False)
+    shared = logging.getLogger("shared")
+    shared.addHandler(handler)
+    alerts.reset()
+    try:
+        alerts.failing(alerts.LOGIN, "OnlyFans rejected the login; update the auth")
+    finally:
+        shared.removeHandler(handler)
+        alerts.reset()
+    messages = []
+    while not handler.queue.empty():
+        messages.append(handler.queue.get())
+    assert len(messages) == 1
+    assert "rejected the login" in messages[0]
+
+
 def test_no_discord_when_off_and_no_script_when_unset(sent):
     sent.settings.discord_level = "OFF"
     sent.settings.alert_script = None
