@@ -80,7 +80,7 @@ def test_installs_the_extra_into_the_running_python_once(runs, monkeypatch):
     monkeypatch.setattr(extras, "pip_command", lambda reqs: [sys.executable, "-m", "pip", "install", *reqs])
     assert extras.install("postgres") is True
     assert extras.install("postgres") is True
-    assert runs.calls == [[sys.executable, "-m", "pip", "install", "psycopg[binary,pool]>=3.3.9,<3.4"]]
+    assert runs.calls == [[sys.executable, "-m", "pip", "install", "psycopg[binary,pool]>=3.3.9"]]
 
 
 def test_uses_uv_when_this_python_has_no_pip(monkeypatch, tmp_path):
@@ -158,8 +158,8 @@ def test_without_a_terminal_it_says_the_command_instead(runs, monkeypatch, caplo
         assert extras.install("postgres") is False
         assert extras.install_chromium() is False
     assert runs.calls == [] and runs.answer["prompts"] == []
-    assert "pip install 'psycopg[binary,pool]>=3.3.9,<3.4'" in caplog.text or (
-        'pip install "psycopg[binary,pool]>=3.3.9,<3.4"' in caplog.text
+    assert "pip install 'psycopg[binary,pool]>=3.3.9'" in caplog.text or (
+        'pip install "psycopg[binary,pool]>=3.3.9"' in caplog.text
     )
     assert "playwright install chromium" in caplog.text
 
