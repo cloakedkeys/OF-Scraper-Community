@@ -360,8 +360,40 @@ def read_failing_alerts():
     return {k for k in items if isinstance(k, str)}
 
 
-def set_failing_alerts(kinds):
-    """Persist the set of currently failing alert kinds to the status file."""
+def read_profile_alerts():
+    """The multi-profile parent's failing alert kinds, per profile, from the
+    ``failing_alerts`` of each entry under ``profiles``."""
+    target = status_path()
+    existing = _read_existing(target) if target is not None else None
+    profiles = existing.get("profiles") if existing else None
+    if not isinstance(profiles, dict):
+        return {}
+    found = {}
+    for name, entry in profiles.items():
+        items = entry.get("failing_alerts") if isinstance(entry, dict) else None
+        if isinstance(items, list):
+            found[name] = {k for k in items if isinstance(k, str)}
+    return found
+
+
+def with_profile_alerts(profiles, by_profile):
+    """profiles (name -> run result) with each profile's failing alert kinds
+    in its entry, profiles that only have alerts included."""
+    merged = {}
+    for name in [*profiles, *(p for p in by_profile if p not in profiles)]:
+        entry = {k: v for k, v in (profiles.get(name) or {}).items() if k != "failing_alerts"}
+        kinds = sorted(by_profile.get(name) or ())
+        if kinds:
+            entry["failing_alerts"] = kinds
+        if entry:
+            merged[name] = entry
+    return merged
+
+
+def set_failing_alerts(kinds, by_profile=None):
+    """Persist the set of currently failing alert kinds to the status file;
+    by_profile, the multi-profile parent's per profile, goes in its file's
+    profile entries."""
     global _failing_alerts
     with _lock:
         target = status_path()
@@ -374,6 +406,7 @@ def set_failing_alerts(kinds):
             payload = {k: v for k, v in _custom[1].items() if k != "failing_alerts"}
             if _failing_alerts:
                 payload["failing_alerts"] = list(_failing_alerts)
+            payload["profiles"] = with_profile_alerts(payload.get("profiles") or {}, by_profile or {})
             custom = _custom
         else:
             return _write_locked(path=target)

@@ -50,45 +50,58 @@ def validate_multi_profile_args(params):
     return None
 
 
-# short flags whose value can be attached (-d30, -rfoo)
-_ATTACHED_VALUE_FLAGS = ("-d", "-r")
-
-
 def _known_options():
-    """Every option name the main command has, such as -dc and -rd, so an
-    attached value isn't confused with one."""
+    """Every option name of the main command, and how many values it takes
+    (0 for a flag)."""
     try:
+        import click
+
         from ofscraper.utils.args.parse.commands.main import program
-
-        return {opt for param in program.params for opt in (*param.opts, *param.secondary_opts)}
     except Exception:
-        return set()
+        return {}
+    known = {}
+    for param in program.params:
+        if not isinstance(param, click.Option):
+            continue
+        takes = 0 if (param.is_flag or param.count) else param.nargs
+        for opt in param.opts:
+            known[opt] = takes
+        for opt in param.secondary_opts:
+            known[opt] = 0
+    return known
 
 
-def _strip_parent_flags(raw_argv):
-    """Remove daemon/profile flags from ``raw_argv`` so a child runs once for one profile."""
+def _strip_parent_flags(raw_argv, known=None):
+    """Remove the daemon/profile options from ``raw_argv`` so a child runs
+    once for one profile, reading it the way click does: an option's value is
+    copied as it is, even when it starts with a dash (-u -draft), and
+    -dc=LOW is the option -dc, not -d with the value c=LOW."""
+    known = _known_options() if known is None else known
     cleaned = []
-    i = 0
     items = list(raw_argv)
-    known = None
+    i = 0
     while i < len(items):
         arg = items[i]
-        if arg == "--":
+        if arg == "--" or not arg.startswith("-") or arg == "-":
+            # the main command has no arguments or subcommands: click stops
+            # reading options here, so neither does this
             cleaned.extend(items[i:])
             break
-        if arg in _STRIP_VALUE_FLAGS:
-            i += 2
-            continue
-        if any(arg.startswith(f"{flag}=") for flag in _STRIP_VALUE_FLAGS):
-            i += 1
-            continue
-        if len(arg) > 2 and arg[:2] in _ATTACHED_VALUE_FLAGS and not arg.startswith("--"):
-            known = _known_options() if known is None else known
-            if arg not in known:
-                i += 1
-                continue
-        cleaned.append(arg)
-        i += 1
+        name = arg.split("=", 1)[0] if "=" in arg else arg
+        if name in known:
+            # --opt value, --opt=value, -dc=LOW
+            width = 1 if name != arg else 1 + known[name]
+        elif not arg.startswith("--") and arg[:2] in known:
+            # a short option with its value attached (-d30, -rfoo), or
+            # short flags run together
+            name, width = arg[:2], 1
+        else:
+            # not an option the parent knows: leave it to the child to reject
+            name, width = None, 1
+        chunk = items[i : i + width]
+        if name not in _STRIP_VALUE_FLAGS:
+            cleaned.extend(chunk)
+        i += width
     return cleaned
 
 
@@ -177,13 +190,14 @@ def daemon_status_path():
     return common_paths.get_config_home() / "status.json"
 
 
-def _failing_alerts():
+def _failing_alerts(profiles=()):
+    """The parent's own failing alert kinds, and each profile's."""
     try:
         import ofscraper.main.close.alerts as alerts
 
-        return sorted(alerts.current())
+        return sorted(alerts.current()), {p: alerts.current(profile=p) for p in profiles}
     except Exception:
-        return []
+        return [], {}
 
 
 def _parse_iso(value):
@@ -216,10 +230,10 @@ def _write_daemon_status(state, results, next_pass_at=None, last_success=None, h
         "heartbeat": heartbeat or _now_iso(),
         "next_pass_at": next_pass_at,
         "auth": _overall_auth(results),
-        "profiles": dict(results),
         "last_success": last_success,
     }
-    failing = _failing_alerts()
+    failing, by_profile = _failing_alerts(results)
+    payload["profiles"] = status_file.with_profile_alerts(results, by_profile)
     if failing:
         payload["failing_alerts"] = failing
     status_file.write_custom(payload, path=daemon_status_path())
@@ -251,7 +265,9 @@ def run_profiles_pass(
         _write_daemon_status(
             "running", state_results, next_pass_at=None, last_success=last_success, heartbeat=progress
         )
-        proc = popen(cmd, env=_child_env())
+        # no terminal input: a child that needs an answer (a rejected login's
+        # Auth Menu) fails instead of waiting while the other profiles do
+        proc = popen(cmd, env=_child_env(), stdin=subprocess.DEVNULL)
         try:
             while True:
                 try:
@@ -307,18 +323,12 @@ def run_profiles_pass(
     return state_results, last_success
 
 
-def _pass_outcome(profiles, results):
-    """The worst exit code of this pass's children, for the daemon_pass alert."""
-    worst = exit_status.OK
-    for profile in profiles:
-        code = (results.get(profile) or {}).get("status")
-        try:
-            code = exit_status.ExitCode(code)
-        except ValueError:
-            code = exit_status.ERROR
-        if exit_status._SEVERITY[code] > exit_status._SEVERITY[worst]:
-            worst = code
-    return worst
+def _profile_outcome(results, profile):
+    """A profile's child's exit code this pass, for its daemon_pass alert."""
+    try:
+        return exit_status.ExitCode((results.get(profile) or {}).get("status"))
+    except ValueError:
+        return exit_status.ERROR
 
 
 def _sleep_until(target_dt, wakeup=None, sleep_fn=time.sleep):
@@ -370,7 +380,8 @@ def run_multi_profile_daemon(
                 last_success=last_success,
             )
             passes += 1
-            alerts.after_pass(_pass_outcome(profiles, results))
+            for profile in profiles:
+                alerts.after_pass(_profile_outcome(results, profile), profile=profile)
             if max_passes is not None and passes >= max_passes:
                 return results
 

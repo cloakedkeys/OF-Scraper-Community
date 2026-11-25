@@ -16,6 +16,7 @@ import sys
 
 DEFAULT_MAX_QUIET_MINUTES = 60
 AUTH_EXIT_CODE = 3
+OK_EXIT_CODES = (0, 4)  # ok, partial
 
 
 def _parse_iso(value):
@@ -102,6 +103,19 @@ def _login_failed(data):
     return False
 
 
+def _failed_profile(data):
+    """(name, label) of a multi-profile daemon's profile whose last run
+    ended neither ok nor partial, or None."""
+    profiles = data.get("profiles")
+    if not isinstance(profiles, dict):
+        return None
+    for name, entry in profiles.items():
+        status = entry.get("status") if isinstance(entry, dict) else None
+        if isinstance(status, int) and not isinstance(status, bool) and status not in OK_EXIT_CODES:
+            return name, entry.get("status_label") or f"exit {status}"
+    return None
+
+
 def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
     """Return ``(healthy: bool, reason: str)`` for a parsed status dict."""
     if not isinstance(data, dict):
@@ -113,6 +127,10 @@ def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
 
     if _login_failed(data):
         return False, "unhealthy: last pass recorded a failed login"
+
+    failed = _failed_profile(data)
+    if failed:
+        return False, f"unhealthy: the last run of profile {failed[0]} failed ({failed[1]})"
 
     now_utc = (
         datetime.now(timezone.utc)

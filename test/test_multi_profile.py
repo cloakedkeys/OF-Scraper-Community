@@ -75,7 +75,7 @@ def test_children_run_in_order_and_failure_does_not_stop_next(tmp_path, monkeypa
     codes = {"first": int(exit_status.ERROR), "second": int(exit_status.OK), "third": int(exit_status.AUTH)}
 
     class FakeProc:
-        def __init__(self, cmd, env=None):
+        def __init__(self, cmd, env=None, stdin=None):
             self.cmd = cmd
             self.env = env
             self.profile = cmd[cmd.index("--profile") + 1]
@@ -123,7 +123,7 @@ def test_stop_signal_reaches_running_child(tmp_path, monkeypatch):
     received = []
 
     class FakeProc:
-        def __init__(self, cmd, env=None):
+        def __init__(self, cmd, env=None, stdin=None):
             self.cmd = cmd
             self._done = False
 
@@ -230,7 +230,7 @@ def test_heartbeat_is_refreshed_while_a_long_child_runs(tmp_path, monkeypatch):
         lambda payload, path=None: beats.append(payload["state"]) or real_write(payload, path=path),
     )
     proc = _Proc(code=0, waits=4)  # three heartbeat intervals before it exits
-    multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, env=None: proc)
+    multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, **kw: proc)
     # before the child, at its start, three while it ran, and after it
     assert beats.count("running") == 6
 
@@ -282,7 +282,7 @@ def _health_while_waiting(tmp_path, monkeypatch, progress):
             raise subprocess.TimeoutExpired("ofscraper", timeout)
 
     proc = Child(code=0)
-    multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, env=None: proc)
+    multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, **kw: proc)
     return verdicts
 
 
@@ -310,7 +310,7 @@ def test_parent_status_file_is_not_a_profile_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(common_paths, "get_config_home", lambda: tmp_path)
     monkeypatch.setattr(common_paths, "get_profile_path", lambda *a: tmp_path / "main_profile")
     multi_profile.run_profiles_pass(
-        ["main_profile"], raw_argv=[], popen=lambda cmd, env=None: _Proc(code=0)
+        ["main_profile"], raw_argv=[], popen=lambda cmd, **kw: _Proc(code=0)
     )
     data = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
     assert data["mode"] == "daemon"
@@ -324,11 +324,11 @@ def test_parent_status_file_is_not_a_profile_folder(tmp_path, monkeypatch):
 def test_a_failed_login_isnt_forgotten_after_a_later_error(tmp_path, monkeypatch):
     monkeypatch.setenv("OFSC_STATUS_FILE", str(tmp_path / "status.json"))
     results, _ = multi_profile.run_profiles_pass(
-        ["first"], raw_argv=[], popen=lambda cmd, env=None: _Proc(code=int(exit_status.AUTH))
+        ["first"], raw_argv=[], popen=lambda cmd, **kw: _Proc(code=int(exit_status.AUTH))
     )
     results, _ = multi_profile.run_profiles_pass(
         ["first"], raw_argv=[], results=results,
-        popen=lambda cmd, env=None: _Proc(code=int(exit_status.UNAVAILABLE)),
+        popen=lambda cmd, **kw: _Proc(code=int(exit_status.UNAVAILABLE)),
     )
     assert results["first"]["auth"] == "failed"
     assert health.check_file(tmp_path / "status.json")[0] is False
@@ -342,7 +342,7 @@ def test_ctrl_c_from_the_terminal_isnt_sent_to_the_child_again(tmp_path, monkeyp
     monkeypatch.setattr(multi_profile, "_terminal_ctrl_c_reached_child", lambda: terminal)
     proc = _Proc(code=130, interrupt=KeyboardInterrupt())
     with pytest.raises(KeyboardInterrupt):
-        multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, env=None: proc)
+        multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, **kw: proc)
     forwarded = "terminate" if sys.platform == "win32" else signal.SIGINT
     assert proc.signals == ([] if terminal else [forwarded])
 
@@ -354,7 +354,7 @@ def test_sigterm_is_always_passed_on(tmp_path, monkeypatch):
     monkeypatch.setattr(multi_profile, "_terminal_ctrl_c_reached_child", lambda: True)
     proc = _Proc(code=130, interrupt=exit_context.SigtermInterrupt())
     with pytest.raises(KeyboardInterrupt):
-        multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, env=None: proc)
+        multi_profile.run_profiles_pass(["first"], raw_argv=[], popen=lambda cmd, **kw: proc)
     assert proc.signals == ["terminate" if sys.platform == "win32" else signal.SIGINT]
 
 
@@ -364,13 +364,13 @@ def test_daemon_pass_alert_from_the_children_results(tmp_path, monkeypatch):
     monkeypatch.setenv("OFSC_STATUS_FILE", str(tmp_path / "status.json"))
     monkeypatch.setattr(multi_profile.exit_context, "sigterm_as_keyboard_interrupt", lambda: None)
     outcomes = []
-    monkeypatch.setattr(alerts, "after_pass", outcomes.append)
+    monkeypatch.setattr(alerts, "after_pass", lambda outcome, profile=None: outcomes.append((profile, outcome)))
     codes = iter([int(exit_status.PARTIAL), int(exit_status.ERROR)])
     args = SimpleNamespace(daemon=10, daemon_jitter=0, profiles=["a", "b"], live_watch=False, profile=None)
     multi_profile.run_multi_profile_daemon(
-        args, raw_argv=[], popen=lambda cmd, env=None: _Proc(code=next(codes)), max_passes=1
+        args, raw_argv=[], popen=lambda cmd, **kw: _Proc(code=next(codes)), max_passes=1
     )
-    assert outcomes == [exit_status.ERROR]
+    assert outcomes == [("a", exit_status.PARTIAL), ("b", exit_status.ERROR)]
 
 
 def test_multi_profile_daemon_shuts_down_like_a_run(monkeypatch):
@@ -384,6 +384,107 @@ def test_multi_profile_daemon_shuts_down_like_a_run(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         run.main()
     assert exc.value.code == 0 and shutdowns == [1]
+
+
+def test_children_never_wait_at_a_prompt(tmp_path, monkeypatch):
+    # a rejected login in one profile's child would wait at the Auth Menu for
+    # an answer no one gives and hold up the other profiles: the child gets
+    # no terminal input, so it fails instead of asking
+    monkeypatch.setenv("OFSC_STATUS_FILE", str(tmp_path / "status.json"))
+    launched = []
+
+    def popen(cmd, **kwargs):
+        launched.append(kwargs)
+        return _Proc(code=0)
+
+    multi_profile.run_profiles_pass(["a", "b"], raw_argv=[], popen=popen)
+    assert [kw.get("stdin") for kw in launched] == [subprocess.DEVNULL] * 2
+
+
+def test_health_is_unhealthy_when_a_profiles_last_run_failed(tmp_path, monkeypatch):
+    # without a terminal a rejected login ends the child with exit 1
+    status_path = tmp_path / "status.json"
+    monkeypatch.setenv("OFSC_STATUS_FILE", str(status_path))
+    codes = {"a": int(exit_status.OK), "b": int(exit_status.ERROR)}
+    multi_profile.run_profiles_pass(
+        ["a", "b"], raw_argv=[],
+        popen=lambda cmd, **kw: _Proc(code=codes[cmd[cmd.index("--profile") + 1]]),
+    )
+    healthy, reason = health.check_file(status_path)
+    assert healthy is False
+    assert "b" in reason
+    # and healthy again once that profile's next run works
+    codes["b"] = int(exit_status.PARTIAL)
+    data = json.loads(status_path.read_text(encoding="utf-8"))
+    multi_profile.run_profiles_pass(
+        ["a", "b"], raw_argv=[], results=data["profiles"],
+        popen=lambda cmd, **kw: _Proc(code=codes[cmd[cmd.index("--profile") + 1]]),
+    )
+    assert health.check_file(status_path)[0] is True
+
+
+def test_daemon_pass_alerts_are_kept_per_profile(tmp_path, monkeypatch):
+    import ofscraper.main.close.alerts as alerts
+    import ofscraper.main.close.status_file as status_file
+
+    status_path = tmp_path / "status.json"
+    monkeypatch.setenv("OFSC_STATUS_FILE", str(status_path))
+    monkeypatch.setattr(multi_profile.exit_context, "sigterm_as_keyboard_interrupt", lambda: None)
+    sent = []
+    monkeypatch.setattr(
+        alerts, "_send", lambda kind, message, profile=None: sent.append((kind, profile, "again" in message))
+    )
+    E, O = int(exit_status.ERROR), int(exit_status.OK)
+
+    def run(passes):
+        status_file.reset()
+        alerts.reset(reload=True)
+        codes = iter(code for one_pass in passes for code in one_pass)
+        args = SimpleNamespace(daemon=10, daemon_jitter=0, profiles=["a", "b"], live_watch=False, profile=None)
+        try:
+            multi_profile.run_multi_profile_daemon(
+                args, raw_argv=[], popen=lambda cmd, **kw: _Proc(code=next(codes)),
+                max_passes=len(passes), sleep_fn=lambda s: None,
+            )
+        finally:
+            status_file.reset()
+            alerts.reset()
+
+    monkeypatch.setattr(multi_profile.daemon_schedule, "next_wait_minutes", lambda *a: 0)
+    # a fails; then b fails too while a still does; then a works again
+    run([(E, O), (E, E), (O, E)])
+    assert sent == [
+        ("daemon_pass", "a", False),
+        ("daemon_pass", "b", False),
+        ("daemon_pass", "a", True),
+    ]
+    data = json.loads(status_path.read_text(encoding="utf-8"))
+    assert data["profiles"]["b"]["failing_alerts"] == ["daemon_pass"]
+    assert "failing_alerts" not in data["profiles"]["a"]
+    # a restarted daemon remembers b is failing, and a's failure is news
+    sent.clear()
+    run([(E, E)])
+    assert sent == [("daemon_pass", "a", False)]
+
+
+@pytest.mark.parametrize(
+    "raw, kept",
+    [
+        # option=value forms of options that stay
+        (["-dc=LOW", "-a", "download"], ["-dc=LOW", "-a", "download"]),
+        (["--discord=LOW"], ["--discord=LOW"]),
+        # a value that starts with a dash is a value, not an option
+        (["-u", "-draft", "-a", "download"], ["-u", "-draft", "-a", "download"]),
+        (["--usernames", "-rfoo"], ["--usernames", "-rfoo"]),
+        (["-u", "--profiles"], ["-u", "--profiles"]),
+        # the profile-selection options go in every form
+        (["-r", "x", "--profile=x", "-rx", "-d", "5", "-d5", "--daemon=5", "--daemon-jitter", "2",
+          "--profiles", "a,b", "--profiles=a,b", "-dc", "LOW"], ["-dc", "LOW"]),
+    ],
+)
+def test_child_keeps_the_parents_other_arguments(raw, kept):
+    cmd = multi_profile.build_child_command("beta", raw_argv=raw, executable="/opt/ofscraper", frozen=True)
+    assert cmd == ["/opt/ofscraper", "--profile", "beta", *kept]
 
 
 def test_attached_short_option_values_are_stripped():
