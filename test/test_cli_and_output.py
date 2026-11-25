@@ -146,12 +146,12 @@ def test_exit_status_most_severe_wins_regardless_of_order():
 
     ordered = [
         exit_status.OK,
+        exit_status.USAGE,
         exit_status.PARTIAL,
         exit_status.UNAVAILABLE,
         exit_status.AUTH,
         exit_status.CONFIG,
         exit_status.ERROR,
-        exit_status.USAGE,
         exit_status.INTERRUPTED,
     ]
     try:
