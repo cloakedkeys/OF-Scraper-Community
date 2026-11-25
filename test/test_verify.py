@@ -638,6 +638,60 @@ def test_a_missing_file_whose_folder_is_gone_leaves_the_creator_alone(tmp_path, 
     assert creator["media_reset"] == 3
 
 
+def two_drive_library(tmp_path):
+    """Creator 5's files on two drives mounted under tmp_path/mnt: eight
+    posts on disk1, two on disk2. Each post has its own folder."""
+    db = tmp_path / ".data" / "5" / "user_data.db"
+    db.parent.mkdir(parents=True)
+    mnt = tmp_path / "mnt"
+    with closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute(mediaCreate)
+        for media_id in range(1, 11):
+            disk = "disk1" if media_id <= 8 else "disk2"
+            folder = mnt / disk / "creator" / "Posts" / str(100 + media_id)
+            folder.mkdir(parents=True)
+            (folder / f"{media_id}.jpg").write_bytes(b"abc")
+            conn.execute(
+                "INSERT INTO medias (media_id, post_id, directory, filename, size, api_type, media_type,"
+                " downloaded, model_id, unlocked) VALUES (?, ?, ?, ?, 3, 'Timeline', 'Images', 1, 5, 1)",
+                (media_id, 100 + media_id, str(folder), f"{media_id}.jpg"),
+            )
+    return db, mnt
+
+
+def test_an_unplugged_drive_that_leaves_its_empty_mount_folder_leaves_the_creator_alone(tmp_path, monkeypatch):
+    # on Linux an unmounted drive usually leaves its empty mount folder
+    # (fstab, Docker bind mounts): disk2 is there but empty, and only two of
+    # ten files are on it, so the percentage alone wouldn't stop it
+    import shutil
+
+    monkeypatch.setattr(verify, "MOUNT_PARENTS", (str(tmp_path),))
+    db, mnt = two_drive_library(tmp_path)
+    shutil.rmtree(mnt / "disk2")
+    (mnt / "disk2").mkdir()
+    before = downloaded(db)
+
+    (creator,) = verify.verify([db], apply=True)["creators"]
+
+    assert str(mnt / "disk2") in creator["left_alone"] and creator["media_reset"] == 0
+    assert downloaded(db) == before
+    (creator,) = verify.verify([db], apply=True, allow_missing=True)["creators"]
+    assert creator["media_reset"] == 2
+
+
+def test_a_deleted_post_folder_on_one_of_two_drives_is_reset(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setattr(verify, "MOUNT_PARENTS", (str(tmp_path),))
+    db, mnt = two_drive_library(tmp_path)
+    shutil.rmtree(mnt / "disk2" / "creator" / "Posts" / "110")
+
+    (creator,) = verify.verify([db], apply=True)["creators"]
+
+    assert "left_alone" not in creator and creator["media_reset"] == 1
+    assert by_media_id(db)[10] == 0
+
+
 def test_creators_sharing_one_database_are_guarded_and_reset_each_on_their_own(tmp_path):
     # creator 5: one file of four missing, in a folder that is there
     rows = [(i, 100 + i, f"{i}.jpg", 3, b"abc", "Timeline", {}) for i in range(1, 4)]

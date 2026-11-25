@@ -186,14 +186,15 @@ def _unreachable(folder, creator_folder, seen):
     """Why the folder of a missing file says its drive or share may not be
     connected, or None. Walks up to the nearest folder that is there: a
     missing folder inside the creator's folder (a post's, say) is gone; the
-    creator's folder itself missing, a folder that can't be read, or nothing
-    there above a place drives are mounted, is a drive not connected."""
+    creator's folder itself missing, a folder that can't be read, nothing
+    there above a place drives are mounted, or the nearest folder there
+    empty, is a drive not connected."""
     if folder in seen:
         return seen[folder]
-    here, why = folder, None
+    here, why, entries = folder, None, None
     while True:
         try:
-            os.listdir(here)
+            entries = os.listdir(here)
             break
         except (FileNotFoundError, NotADirectoryError):
             parent = os.path.dirname(here)
@@ -210,6 +211,9 @@ def _unreachable(folder, creator_folder, seen):
             why = f"the creator's folder {creator_folder} isn't there"
         elif _mount_parent(here):
             why = f"the folder {folder} of a missing file isn't there, and {here} above it is where drives are mounted"
+        elif not entries:
+            # an unmounted drive usually leaves its empty mount folder behind
+            why = f"the folder {folder} of a missing file isn't there, and {here} above it is empty (a drive not mounted?)"
     seen[folder] = why
     return why
 
