@@ -248,18 +248,31 @@ def get_ffmpeg_key(key):
 
 
 CDRM_UNREADABLE = (
-    "OFSC_CDRM_URL can't be read as an address, so nothing is sent to it. "
-    "Check its value, or use key mode manual."
+    "OFSC_CDRM_URL can't be read as an http or https address, so nothing is "
+    "sent to it. Check its value, or use key mode manual."
 )
+
+# the full stops IDNA treats as ".": httpx and yarl send
+# cdrm-project。com to cdrm-project.com
+_DOTS = str.maketrans({"。": ".", "．": ".", "｡": "."})
 
 
 def _cdrm_host(url):
-    """The host of url, lower-cased; None when url can't be read as an
-    address (urlsplit raises on an unclosed IPv6 bracket, #819)."""
+    """The host of url, lower-cased with IDNA's full stops as "."; "" when
+    url is empty; None when it isn't an http(s) address with a host: urlsplit
+    raises (an unclosed IPv6 bracket, #819), or there's no scheme
+    (localhost:8080/api), no host (https:/host) or another scheme (ftp://)."""
+    text = str(url or "")
+    if not text.strip():
+        return ""
     try:
-        return (urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
+        parts = urlsplit(text.strip())
+        host = parts.hostname
     except ValueError:
         return None
+    if parts.scheme.lower() not in ("http", "https") or not host:
+        return None
+    return host.translate(_DOTS).lower().rstrip(".")
 
 
 def cdrm_retired(url):

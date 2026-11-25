@@ -304,3 +304,66 @@ def test_an_unreadable_cdrm_url_sends_nothing_in_key_helper(monkeypatch):
     message = log.error.call_args.args[0]
     assert "OFSC_CDRM_URL" in message and "can't be read" in message
     assert "secret" not in message and "::1" not in message
+
+
+# addresses urlsplit() reads without an error, but that no http client can
+# send to: no scheme, no host, or not http(s)
+NOT_HTTP = ["localhost:8080/api", "https:/host/api", "ftp://host/api"]
+
+
+@pytest.mark.parametrize("url", NOT_HTTP)
+def test_a_cdrm_url_that_is_not_an_http_address_is_no_server(monkeypatch, url):
+    monkeypatch.setattr(keyhelpers.settings, "get_settings", lambda: SimpleNamespace(key_mode="cdrm"))
+    use_cdrm_url(monkeypatch, url)
+    assert keyhelpers.cdrm_unreadable(url) is True
+    assert keyhelpers.cdrm_unavailable() is True
+
+
+@pytest.mark.parametrize("url", NOT_HTTP)
+def test_a_cdrm_url_that_is_not_an_http_address_skips_drm_before_download(monkeypatch, url):
+    # before, the video was downloaded and then failed to get a key
+    use_cdrm_url(monkeypatch, url)
+
+    result, ele, log, placeholders, session = _run_drm_item(monkeypatch)
+
+    assert result == ("forced_skipped", 0)
+    placeholders.assert_not_called()
+    assert session.calls == []
+
+
+@pytest.mark.parametrize(
+    "url", ["https://cdrm.example.test/api", "http://127.0.0.1:8080/api", "HTTP://[::1]:8080/api"]
+)
+def test_an_http_cdrm_url_is_readable(url):
+    assert keyhelpers.cdrm_unreadable(url) is False
+
+
+# full-width dots: httpx and yarl read them as "."
+FULL_WIDTH = [
+    "https://cdrm-project。com/api/decrypt",
+    "https://cdrm-project．com/api/decrypt",
+    "https://cdrm-project｡com/api/decrypt",
+    "https://x。CDRM-project．COM。/api/decrypt",
+]
+
+
+@pytest.mark.parametrize("url", FULL_WIDTH)
+def test_the_retired_host_with_full_width_dots_is_retired(url):
+    import httpx
+
+    assert httpx.URL(url).host.rstrip(".").endswith("cdrm-project.com")
+    assert keyhelpers.cdrm_retired(url) is True
+
+
+@pytest.mark.parametrize("url", FULL_WIDTH)
+def test_the_retired_host_with_full_width_dots_is_sent_nothing(monkeypatch, url):
+    use_cdrm_url(monkeypatch, url)
+    monkeypatch.setattr(keyhelpers, "_cdrm_retired_logged", False, raising=False)
+    make_headers = Mock(return_value={})
+    monkeypatch.setattr(keyhelpers.auth_requests, "make_headers", make_headers)
+    monkeypatch.setattr(keyhelpers, "log", Mock())
+    session = _Session()
+
+    assert asyncio.run(keyhelpers.key_helper_cdrm(session, "pssh", "https://lic", 1)) is None
+    assert session.calls == []
+    make_headers.assert_not_called()
