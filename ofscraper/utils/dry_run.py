@@ -29,6 +29,8 @@ _copies = {}
 # per creator: {(area, type): {"count": n, "protected": n}} and sample paths
 _counts = {}
 _samples = {}
+# per creator: the media ids already counted
+_seen = {}
 SAMPLES_PER_CREATOR = 3
 
 
@@ -186,6 +188,18 @@ async def record(username, media):
     type, and work out a few expected paths."""
     media = list(media or [])
     with _lock:
+        # --scrape-paid passes purchased media again after the creator's
+        # own areas: count each media id once
+        seen = _seen.setdefault(username, set())
+        fresh = []
+        for ele in media:
+            media_id = getattr(ele, "id", None)
+            if media_id is not None:
+                if media_id in seen:
+                    continue
+                seen.add(media_id)
+            fresh.append(ele)
+        media = fresh
         areas = _counts.setdefault(username, {})
         for ele in media:
             key = (str(getattr(ele, "responsetype", "") or "unknown").lower(),
@@ -222,6 +236,7 @@ def reset():
     with _lock:
         _counts.clear()
         _samples.clear()
+        _seen.clear()
 
 
 def finish():

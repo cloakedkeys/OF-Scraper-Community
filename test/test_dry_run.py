@@ -377,6 +377,38 @@ def test_samples_stop_at_three_per_creator(report_env):
     assert dry_run.data()["to_download"] == 11
 
 
+def test_media_seen_twice_is_counted_once(report_env):
+    """--scrape-paid passes purchased media again after the creator's own
+    areas: one file, one count."""
+    asyncio.run(dry_run.record("a creator", [
+        media("Messages", "Videos", 7, url="https://x/7.mp4"),
+        media("Timeline", "Images", 8, url="https://x/8.jpg"),
+    ]))
+    asyncio.run(dry_run.record("a creator", [media("Messages", "Videos", 7, url="https://x/7.mp4")]))
+    d = dry_run.data()
+    assert d["to_download"] == 2
+    assert len(d["creators"][0]["sample_paths"]) == 2
+
+
+@pytest.mark.parametrize("dry", [True, False])
+def test_expired_logs_are_deleted_only_outside_a_dry_run(monkeypatch, library, tmp_path, dry):
+    import ofscraper.utils.paths.manage as manage
+
+    logs = tmp_path / "logs"
+    old = logs / "main_profile_2020-01-01" / "old.log"
+    old.parent.mkdir(parents=True)
+    old.write_text("old", encoding="utf-8")
+    os.utime(old, (1_000_000_000, 1_000_000_000))
+    monkeypatch.setattr(manage.common_paths, "get_log_folder", lambda: logs)
+    monkeypatch.setitem(library.settings, "logs_expire_time", 1)
+    monkeypatch.setitem(library.settings, "rotate_logs", True)
+    monkeypatch.setitem(library.settings, "dry_run", dry)
+
+    manage.cleanup_logs()
+
+    assert old.exists() is dry
+
+
 def test_json_report(report_env, tmp_path):
     import json
 
