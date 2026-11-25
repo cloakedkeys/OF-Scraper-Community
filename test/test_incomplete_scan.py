@@ -276,7 +276,7 @@ def test_run_whose_timeline_requests_all_fail_exits_partial(
 def _undated_scans():
     """Areas scanned without a start date: each fetches with a client and
     returns what it found."""
-    from ofscraper.data.api import highlights, paid, pinned
+    from ofscraper.data.api import highlights, labels, paid, pinned
 
     async def all_purchases(c):
         return await paid.process_tasks_all_paid(await paid.create_tasks_scrape_paid(c))
@@ -296,6 +296,28 @@ def _undated_scans():
         "purchased": (lambda c: paid.get_paid_posts("a creator", MODEL_ID, c=c), []),
         "all purchased": (all_purchases, []),
         "fansly purchased": (fansly_purchases, []),
+        "label list": (lambda c: labels.get_labels(MODEL_ID, c=c), []),
+        # the list came back, the label's posts didn't
+        "label": (
+            lambda c: labels.get_labels(MODEL_ID, c=c),
+            [{"list": [{"id": 5, "name": "a label"}], "hasMore": False}],
+        ),
+        "fansly wall list": (lambda c: labels.get_labels(MODEL_ID, c=c), []),
+        "fansly wall": (
+            lambda c: labels.get_labels(MODEL_ID, c=c),
+            [
+                {
+                    "success": True,
+                    "response": [
+                        {
+                            "id": str(MODEL_ID),
+                            "hasMainWall": False,
+                            "walls": [{"id": "5", "name": "a wall", "pos": 1}],
+                        }
+                    ],
+                }
+            ],
+        ),
     }
 
 
@@ -303,12 +325,12 @@ def _undated_scans():
 @pytest.mark.parametrize(
     "area",
     ["pinned", "stories", "highlight list", "highlight", "purchased", "all purchased",
-     "fansly purchased"],
+     "fansly purchased", "label list", "label", "fansly wall list", "fansly wall"],
 )
 def test_run_whose_undated_scan_fails_exits_partial(monkeypatch, cache, area, failure):
     import ofscraper.main.close.exit_status as exit_status
     import ofscraper.main.open.run as run
-    from ofscraper.data.api import paid
+    from ofscraper.data.api import labels, paid
     import ofscraper.utils.live.updater as progress_utils
 
     fetch, pages_before = _undated_scans()[area]
@@ -329,6 +351,12 @@ def test_run_whose_undated_scan_fails_exits_partial(monkeypatch, cache, area, fa
     )
     monkeypatch.setattr(paid, "update_check", Mock())
     monkeypatch.setattr(paid, "cache", cache)
+    monkeypatch.setattr(labels, "update_check", Mock())
+    monkeypatch.setattr(
+        labels,
+        "settings",
+        SimpleNamespace(get_settings=lambda: SimpleNamespace(label=None)),
+    )
     monkeypatch.setattr(post.free, "check_free_size", lambda: True)
     monkeypatch.setattr(post.sites, "is_fansly", lambda: area.startswith("fansly"))
     monkeypatch.setattr(post.operations, "make_post_table_changes", AsyncMock())
@@ -344,6 +372,7 @@ def test_run_whose_undated_scan_fails_exits_partial(monkeypatch, cache, area, fa
         run.main()
 
     assert exc.value.code == exit_status.PARTIAL
+    assert client.pages == []  # the failing request was made
 
 
 def test_post_id_lookup_does_not_clear_the_record(monkeypatch, cache, explicit_after):
