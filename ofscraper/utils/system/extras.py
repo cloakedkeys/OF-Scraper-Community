@@ -58,11 +58,12 @@ def enabled() -> bool:
     return bool(of_env.getattr("INSTALL_EXTRAS"))
 
 
-# This Python, ignoring PYTHON* variables (-E) and not importing modules from
-# the working directory (-P): a pip.py there would otherwise run as pip. Not
-# -I, which also hides the user site, where pip installs (and may itself be)
-# when site-packages isn't writable.
-PYTHON = [sys.executable, "-E", "-P"]
+# This Python, not importing modules from the working directory (-P): a pip.py
+# there would otherwise run as pip. Not -E, which drops PYTHONPATH, so the pip
+# this run found could be missing there. Not -I, which also hides the user
+# site, where pip installs (and may itself be) when site-packages isn't
+# writable.
+PYTHON = [sys.executable, "-P"]
 
 
 def _which_uv() -> str | None:

@@ -119,6 +119,37 @@ def test_pip_in_the_working_directory_is_not_run(monkeypatch, tmp_path):
     assert not marker.exists()
 
 
+def test_the_install_keeps_pythonuserbase(monkeypatch, tmp_path):
+    # pip --user installs under PYTHONUSERBASE, and this run imports from
+    # there, so the install has to see the same value
+    monkeypatch.setenv("PYTHONUSERBASE", str(tmp_path))
+    r = subprocess.run(
+        [*extras.PYTHON, "-c", "import site; print(site.getuserbase())"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=extras._env(),
+    )
+    assert os.path.normcase(r.stdout.strip()) == os.path.normcase(str(tmp_path))
+
+
+def test_the_install_sees_what_pythonpath_adds(monkeypatch, tmp_path):
+    # pip_command checks for pip in this run, which reads PYTHONPATH; the
+    # install has to find the same pip
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "ofs_pythonpath_probe.py").write_text("")
+    monkeypatch.setenv("PYTHONPATH", str(lib))
+    r = subprocess.run(
+        [*extras.PYTHON, "-c", "import ofs_pythonpath_probe"],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=extras._env(),
+    )
+    assert r.returncode == 0, r.stderr
+
+
 def test_the_install_runs_from_an_empty_directory(runs, monkeypatch, tmp_path):
     (tmp_path / "uv.toml").write_text('index-url = "http://127.0.0.1:9/"\n')
     monkeypatch.chdir(tmp_path)
@@ -139,7 +170,7 @@ def test_the_install_runs_from_an_empty_directory(runs, monkeypatch, tmp_path):
 
 def test_the_chromium_download_does_not_read_the_working_directory(runs):
     assert extras.install_chromium() is True
-    assert runs.calls[0][:3] == [sys.executable, "-E", "-P"]
+    assert runs.calls[0][:2] == [sys.executable, "-P"]
 
 
 def test_asks_before_installing(runs):
@@ -253,7 +284,7 @@ def test_a_install_that_cannot_start_is_a_failure(runs, monkeypatch):
 def test_chromium_is_downloaded_with_this_pythons_playwright(runs):
     assert extras.install_chromium() is True
     assert extras.install_chromium() is True
-    assert runs.calls == [[sys.executable, "-E", "-P", "-m", "playwright", "install", "chromium"]]
+    assert runs.calls == [[sys.executable, "-P", "-m", "playwright", "install", "chromium"]]
 
 
 @pytest.mark.parametrize("value, on", [(" True ", True), ("1\n", True), (" false", False), ("0", False)])
