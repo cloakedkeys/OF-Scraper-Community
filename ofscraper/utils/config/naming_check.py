@@ -62,10 +62,9 @@ def name_safe(text):
     return banned.sub("", str(text))
 
 
-def folder_safe(text):
-    """text without the characters a folder name can't hold: "/" is kept, as
-    it adds a folder"""
-    return "/".join(name_safe(part) for part in str(text).split("/"))
+# "/x", "\x", "C:", "C:/x" or "~/x": dir_format is placed under save_location
+# anyway, so such a path doesn't choose where downloads go
+FULL_PATH = re.compile(r"[/\\~]|[A-Za-z]:")
 
 
 def space_replacer_ok(value):
@@ -139,6 +138,13 @@ def problems():
         problem = template_problem(str(template), known)
         if problem:
             out.append(f"file_options.{key} {json.dumps(template)} {problem}")
+    dir_format = data.get_dirformat()
+    if isinstance(dir_format, str) and FULL_PATH.match(dir_format):
+        out.append(
+            f"file_options.dir_format {json.dumps(dir_format)} is a full path, but"
+            " dir_format is always placed under save_location. Set save_location"
+            " to choose where downloads go"
+        )
     return out
 
 

@@ -241,10 +241,11 @@ def evening_post(url="https://example.invalid/a.jpg", text="hello"):
 @pytest.mark.parametrize(
     "date,folder,file_name",
     [
-        ("YYYY/MM/DD", pathlib.Path("2024", "05", "01"), "20240501.jpg"),
+        # a date fills one folder: its "/" makes no folders
+        ("YYYY/MM/DD", pathlib.Path("20240501"), "20240501.jpg"),
         # ":" can't be in a folder name on Windows either
         ("YYYY-MM-DD HH:mm:ss", pathlib.Path("2024-05-01 200000"), "2024-05-01 200000.jpg"),
-        ('YYYY/MM/DD "HH|mm?ss*"', pathlib.Path("2024", "05", "01 200000"), "20240501 200000.jpg"),
+        ('YYYY/MM/DD "HH|mm?ss*"', pathlib.Path("20240501 200000"), "20240501 200000.jpg"),
         ("MM-DD-YYYY", pathlib.Path("05-01-2024"), "05-01-2024.jpg"),
     ],
 )
@@ -265,8 +266,8 @@ def test_date_in_a_file_name_loses_what_a_name_cant_hold(
 @pytest.mark.parametrize(
     "date,folder,file_name",
     [
-        # a "/" still adds a folder, and can't be in a file name
-        ("YYYY/MM/DD", pathlib.PurePosixPath("2024", "05", "01"), "20240501.jpg"),
+        # a date fills one folder: its "/" makes no folders
+        ("YYYY/MM/DD", pathlib.PurePosixPath("20240501"), "20240501.jpg"),
         # outside Windows a name can hold ":" and the rest: names made
         # before stay as they were
         (
@@ -276,7 +277,7 @@ def test_date_in_a_file_name_loses_what_a_name_cant_hold(
         ),
         (
             'YYYY/MM/DD "HH|mm?ss*"',
-            pathlib.PurePosixPath("2024", "05", '01 "20|00?00*"'),
+            pathlib.PurePosixPath('20240501 "20|00?00*"'),
             '20240501 "20|00?00*".jpg',
         ),
     ],
@@ -340,6 +341,36 @@ def test_two_unknown_placeholders_are_reported_together(config_json, logged):
         'file_options.file_format "{foo}_{bar}.{ext}" has unknown placeholders:'
         " {foo}, {bar}. Each file will fail to download until it's fixed"
     ]
+
+
+@pytest.mark.parametrize(
+    "dir_format",
+    [
+        "/mnt/media/{model_username}",
+        "\\media\\{model_username}",
+        "C:/media/{model_username}",
+        "C:\\media\\{model_username}",
+        "D:{model_username}",
+        "~/media/{model_username}",
+    ],
+)
+def test_a_full_path_in_dir_format_is_reported(config_json, logged, dir_format):
+    config_json(dir_format=dir_format)
+    load.checkFileOptions()
+    assert warnings(logged) == [
+        f"file_options.dir_format {json.dumps(dir_format)} is a full path, but"
+        " dir_format is always placed under save_location. Set save_location"
+        " to choose where downloads go"
+    ]
+
+
+@pytest.mark.parametrize(
+    "dir_format", ["{model_username}/media", "{save_location}/{model_username}", "media/~x"]
+)
+def test_a_relative_dir_format_is_not_reported_as_a_full_path(config_json, logged, dir_format):
+    config_json(dir_format=dir_format)
+    load.checkFileOptions()
+    assert warnings(logged) == []
 
 
 def test_ext_is_only_known_in_file_names(config_json, logged):

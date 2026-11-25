@@ -16,7 +16,7 @@ import ofscraper.utils.paths.paths as paths
 import ofscraper.utils.profiles.data as profile_data
 import ofscraper.utils.settings as settings
 from ofscraper.utils.string import parse_safe
-from ofscraper.utils.config.naming_check import folder_safe, name_safe
+from ofscraper.utils.config.naming_check import name_safe
 import ofscraper.managers.manager as manager
 from ofscraper.scripts.naming_script import naming_script
 
@@ -350,9 +350,9 @@ class Placeholders(basePlaceholder):
         root = pathlib.Path(root or default_media_root())
         await self.add_common_variables(ele, username, model_id)
         # the date setting can hold ":" or "*", which a folder name can't on
-        # Windows; a "/" adds a folder
+        # Windows; a date fills one folder, so its "/" adds none
         if "date" in self._variables:
-            self._variables["date"] = folder_safe(self._variables["date"])
+            self._variables["date"] = name_safe(self._variables["date"])
         globals().update(self._variables)
         log.trace(
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
@@ -567,9 +567,9 @@ class Textholders(basePlaceholder):
         root = pathlib.Path(root or default_media_root())
         await self.add_common_variables(ele, username, model_id)
         # the date setting can hold ":" or "*", which a folder name can't on
-        # Windows; a "/" adds a folder
+        # Windows; a date fills one folder, so its "/" adds none
         if "date" in self._variables:
-            self._variables["date"] = folder_safe(self._variables["date"])
+            self._variables["date"] = name_safe(self._variables["date"])
         globals().update(self._variables)
         log.trace(
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"

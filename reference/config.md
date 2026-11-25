@@ -139,7 +139,7 @@ The character that replaces spaces in post text used for file and folder names. 
 
 **Default:** `"MM-DD-YYYY"` · **Env default:** [`DATE_DEFAULT`](env.md#date_default) · **Read by:** `get_date()` in `ofscraper/utils/config/data.py`
 
-An arrow date-format string (for example `MM-DD-YYYY`). It formats the `{date}` placeholder in `dir_format`, `file_format` and naming-script payloads. In `file_format`, a `/` is removed from the date, and on Windows so are the other characters a file name can't hold there (such as `\`, `:` or `?`); in `dir_format` a `/` makes folders, and on Windows the others are removed too.
+An arrow date-format string (for example `MM-DD-YYYY`). It formats the `{date}` placeholder in `dir_format`, `file_format` and naming-script payloads. A `/` is removed from the date, and on Windows so are the other characters a name can't hold there (such as `\`, `:` or `?`). This is the same in `dir_format`, so a date always fills one folder: a `/` in the date format no longer makes folders, and a config that used one (such as `YYYY/MM/DD`) gets one date folder (`20240501`) in place of the old nested ones. A `/` typed in `dir_format` itself still separates folders.
 
 ### `file_options.text_type_default`
 
