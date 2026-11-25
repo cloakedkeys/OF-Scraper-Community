@@ -25,7 +25,8 @@ with no login and no download. See RENAMING_FILES.md.
 - An undo file, beside the database, lists every rename and row change
   before the first one is made. --undo FILE puts back what is still as this
   left it. A run that stops part way (an error, Ctrl+C) gives the files it
-  renamed their old names back, saves no row and keeps the undo file.
+  renamed their old names back and saves no row. It removes the undo file
+  when every file is back at its old name, and keeps it otherwise.
 - While PostgreSQL is on, --apply (and --undo with --apply) is refused: the
   changes would reach only the user_data.db.
 - The rows of the database are locked for the whole run and their changes
@@ -792,13 +793,21 @@ def _roll_back(conn):
 
 def _apply_rolled_back(conn, moved, undo_file, error):
     """--apply stopped before its rows were saved: give the renamed files
-    their old names back. The undo file is kept whatever happens (a second
-    stop can land while they are put back); an undo with it changes only
-    what is still as this run left it."""
+    their old names back. The undo file is removed only when every file is
+    seen back at its old name (no row was saved); otherwise, or when a
+    second stop lands while they are put back, it is kept, and an undo with
+    it changes only what is still as this run left it."""
     _roll_back(conn)
     left = _move_back(moved)
     if left:
         print(f"Files that could not be given their old names back: {len(left)}.", file=sys.stderr)
+    elif all(os.path.lexists(old) for old, _new in moved):
+        try:
+            undo_file.unlink()
+        except OSError:
+            pass
+        else:
+            return
     print(f"The undo file is kept: {undo_file}", file=sys.stderr)
 
 

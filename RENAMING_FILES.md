@@ -72,7 +72,7 @@ ofscraper rename_to_format --undo "<...>.json" --apply
 
 The undo file lists every rename and row change, and is written before the first one is made. The first line previews; `--apply` does it. A file still at its new name, with nothing at its old one, gets the old name back, and the rows that still record the new name get the old one. Anything changed since is listed and left alone, so running it twice changes nothing the second time.
 
-If a run is stopped part way (an error, or Ctrl-C), the files renamed so far get their old names back, no row changes, and the undo file is kept. Running `--undo` with it then changes nothing that was already put back. If a file can't be renamed (a permissions error, say), it's listed and the rest go on.
+If a run is stopped part way (an error, or Ctrl-C), the files renamed so far get their old names back and no row changes. When every file is back at its old name, the undo file is removed, as there is nothing to undo. It is kept when a file couldn't be put back, or a second stop landed while they were; running `--undo` with it then puts back only what is still renamed. If a file can't be renamed (a permissions error, say), it's listed and the rest go on.
 
 ## Other environments and options
 

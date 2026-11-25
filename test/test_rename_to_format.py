@@ -258,11 +258,11 @@ def test_an_apply_whose_commit_fails_gives_the_files_their_old_names_back(tmp_pa
     with read_lock(library.db), pytest.raises(sqlite3.OperationalError, match="locked"):
         library.run(apply=True)
 
-    # nothing was saved: the files are where their rows say; the undo file
-    # is kept, as on any stop
+    # nothing was saved: the files are where their rows say, so the undo
+    # file has nothing to put back and is removed
     assert library.rows() == rows
     assert library.files() == ["alice/Posts/Images/abcdef.jpg", "alice/Posts/Images/other.jpg"]
-    assert len(list(Path(library.db).parent.glob("*.rename-undo-*"))) == 1
+    assert list(Path(library.db).parent.glob("*.rename-undo-*")) == []
 
     assert library.run(apply=True)["rows_changed"] == 2
     assert library.files() == ["alice/All/1.jpg", "alice/All/2.jpg"]
@@ -296,13 +296,14 @@ def test_an_apply_stopped_after_its_commit_keeps_the_new_names(tmp_path, monkeyp
     library = Library(tmp_path)
     library.post(501)
     library.add("abcdef.jpg", post_id=501)
+    library.add("other.jpg", post_id=501)
     library.formats("{model_username}/All/", "{media_id}.{ext}")
     interrupt_after_commit(monkeypatch)
 
     with pytest.raises(postgres.Unconfirmed):
         library.run(apply=True)
 
-    assert library.files() == ["alice/All/1.jpg"]
+    assert library.files() == ["alice/All/1.jpg", "alice/All/2.jpg"]
     assert [row[1:3] for row in library.rows()][0][1] == "1.jpg"
     assert list(Path(library.db).parent.glob("*.rename-undo-*"))  # kept, to undo with
 
@@ -580,24 +581,54 @@ def test_a_stop_part_way_puts_the_files_back_and_changes_no_row(tmp_path, monkey
     monkeypatch.setattr(tool, "rename_file", real)
     assert library.files() == ["alice/Posts/Images/a.jpg", "alice/Posts/Images/b.jpg"]
     assert library.rows() == rows
-    # kept on any stop: it costs nothing, and the next run writes its own
+    # everything was put back: there is nothing to undo
+    assert list(library.db.parent.glob("*.rename-undo-*.json")) == []
+
+
+def test_a_put_back_that_fails_keeps_the_undo_file(tmp_path, monkeypatch, capsys):
+    library = Library(tmp_path)
+    library.add("a.jpg")
+    library.add("b.jpg")
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    real = tool.rename_file
+    calls = []
+
+    def stopped_then_stuck(old, new):
+        calls.append(old)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        if len(calls) > 2:
+            # the file renamed first can't be given its old name back
+            raise PermissionError(13, "Permission denied")
+        real(old, new)
+
+    monkeypatch.setattr(tool, "rename_file", stopped_then_stuck)
+    with pytest.raises(KeyboardInterrupt):
+        library.run(apply=True)
+
+    monkeypatch.setattr(tool, "rename_file", real)
+    assert library.files() == ["alice/Posts/Images/1.jpg", "alice/Posts/Images/b.jpg"]
     assert len(list(library.db.parent.glob("*.rename-undo-*.json"))) == 1
+    assert "The undo file is kept" in capsys.readouterr().err
 
 
 def renamed_then_stopped(monkeypatch):
     """A Ctrl+C that lands just after a rename is made, before the code
-    after it runs."""
+    after it runs (once: renames after it, putting it back, go through)."""
     real = tool.rename_file
+    stopped_once = []
 
     def stopped(old, new):
         real(old, new)
-        raise KeyboardInterrupt
+        if not stopped_once:
+            stopped_once.append(old)
+            raise KeyboardInterrupt
 
     monkeypatch.setattr(tool, "rename_file", stopped)
     return real
 
 
-def test_a_stop_just_after_a_rename_puts_that_file_back_and_keeps_the_undo_file(tmp_path, monkeypatch):
+def test_a_stop_just_after_a_rename_puts_that_file_back_and_removes_the_undo_file(tmp_path, monkeypatch):
     library = Library(tmp_path)
     library.add("a.jpg")
     rows = library.rows()
@@ -610,6 +641,29 @@ def test_a_stop_just_after_a_rename_puts_that_file_back_and_keeps_the_undo_file(
     monkeypatch.setattr(tool, "rename_file", real)
     assert library.files() == ["alice/Posts/Images/a.jpg"]
     assert library.rows() == rows
+    assert list(library.db.parent.glob("*.rename-undo-*.json")) == []
+
+
+def test_a_stop_while_files_are_put_back_keeps_the_undo_file(tmp_path, monkeypatch):
+    library = Library(tmp_path)
+    library.add("a.jpg")
+    library.add("b.jpg")
+    library.formats(OLD_DIRS, "{media_id}.{ext}")
+    real = tool.rename_file
+    calls = []
+
+    def stopped_twice(old, new):
+        calls.append(old)
+        real(old, new)
+        if len(calls) in (2, 3):
+            # the second rename, then the first put-back
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(tool, "rename_file", stopped_twice)
+    with pytest.raises(KeyboardInterrupt):
+        library.run(apply=True)
+
+    monkeypatch.setattr(tool, "rename_file", real)
     assert len(list(library.db.parent.glob("*.rename-undo-*.json"))) == 1
 
 
