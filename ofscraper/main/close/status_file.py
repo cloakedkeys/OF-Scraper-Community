@@ -177,6 +177,12 @@ def _live_daemon_owns(existing):
         return False
 
 
+def owned_by_live_daemon():
+    """Whether this run's status file belongs to a daemon running beside it."""
+    target = status_path()
+    return target is not None and _live_daemon_owns(_read_existing(target))
+
+
 def _write_locked(path=None, extra=None):
     target = pathlib.Path(path) if path is not None else status_path()
     if target is None:

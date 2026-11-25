@@ -24,6 +24,8 @@ _failing = set()
 # the multi-profile parent's alerts, one set per profile it runs
 _failing_by_profile = {}
 _loaded = False
+# kinds this process reported failing, announced or already open
+_raised = set()
 
 
 def _ensure_loaded_locked():
@@ -122,6 +124,8 @@ def failing(kind, message, profile=None):
     profile: the multi-profile parent's alert for that profile's runs."""
     with _lock:
         _ensure_loaded_locked()
+        if profile is None:
+            _raised.add(kind)
         kinds = _kinds_locked(profile)
         if kind in kinds:
             return False
@@ -164,6 +168,22 @@ def after_pass(outcome, profile=None):
         )
 
 
+def after_run():
+    """A one-off run ended well, a --profiles child's included: the
+    free-space alert an earlier run of this profile raised is announced as
+    recovered once this run didn't reach the limit and there's room again.
+    Left to a daemon that owns the status file (a run beside it)."""
+    import ofscraper.main.close.status_file as status_file
+
+    if (
+        DISK_FULL in current()
+        and DISK_FULL not in _raised
+        and not status_file.owned_by_live_daemon()
+        and _has_free_space()
+    ):
+        recovered(DISK_FULL, "Downloads are running again after the free-space limit")
+
+
 def _disk_alert_open():
     with _lock:
         return DISK_FULL in _failing
@@ -191,4 +211,5 @@ def reset(reload=False):
     with _lock:
         _failing.clear()
         _failing_by_profile.clear()
+        _raised.clear()
         _loaded = not reload
