@@ -17,6 +17,8 @@ from contextlib import contextmanager
 
 import arrow
 
+import ofscraper.main.close.final.run_record as run_record
+
 log = logging.getLogger("shared")
 
 
@@ -25,12 +27,24 @@ def scrape_context_manager():
     # reset stream if needed
     # Before yield as the enter method
     start = datetime.now()
+    run_record.start()
+    from ofscraper.utils.checkers import new_pass
+
+    new_pass()
     log.info("""
-==============================                            
+==============================
 [bold] starting script [/bold]
 ==============================
 """)
-    yield
+    try:
+        yield
+    except BaseException as e:
+        # a pass that raises still reports (post_script isn't run for it)
+        from ofscraper.commands.scraper.actions.download import stop
+
+        stopped = isinstance(e, (KeyboardInterrupt, SystemExit, stop.DownloadsStopped))
+        run_record.finish("stopped" if stopped else "failed", None if stopped else str(e) or type(e).__name__)
+        raise
     end = datetime.now()
     log.warning(f"""
 ===========================

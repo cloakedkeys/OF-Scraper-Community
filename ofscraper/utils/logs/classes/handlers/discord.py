@@ -68,6 +68,14 @@ class DiscordHandler(logging.Handler):
             # Put the log message on the queue instead of sending it directly
             self.queue.put(log_entry_with_newlines)
 
+    def send_message(self, text):
+        """Send text as one message whatever this handler's level, redacted
+        like a log line (the run summary at --discord SUMMARY)."""
+        record = logging.makeLogRecord({"msg": text, "levelno": logging.CRITICAL, "levelname": "CRITICAL"})
+        message = self.format(record)
+        if message and message.strip():
+            self.queue.put(message)
+
     def close(self) -> None:
         # Signal the worker thread to exit
         self.queue.put(None)
