@@ -263,6 +263,10 @@ def check_keys(config, site, report):
         return
     client_id = _get(data.get_client_id, config) if config else None
     private_key = _get(data.get_private_key, config) if config else None
+    if not str(client_id or "").strip() and not str(private_key or "").strip():
+        # the default on a fresh install: a run goes on without them
+        report.add(WARN, "key files", "no key files set up yet: protected (DRM) videos are skipped until client-id and private-key are set")
+        return
     problem = keyhelpers.cdm_key_problems(mode, client_id, private_key)
     if problem:
         report.add(FAIL, "key files", problem)

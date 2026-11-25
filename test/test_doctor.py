@@ -66,10 +66,13 @@ def test_an_empty_home_gets_findings_and_nothing_is_created(home):
 def test_a_fresh_install_fails_only_what_a_run_cant_fix_itself(home):
     """No config, no auth file and no save folder are what a first run
     meets: it makes the config and the folder and asks for the login. In
-    the default manual key mode, the unset key files are still a finding."""
+    the default manual key mode, no key files yet is a warning: the run
+    goes on and skips the protected videos."""
     report = doctor.run()
     failed = {r["check"] for r in report.results if r["status"] == "FAIL"}
-    assert failed <= {"key files", "ffmpeg"}
+    assert failed <= {"ffmpeg"}
+    status, detail = result(report, "key files")
+    assert status == "WARN" and "videos are skipped until" in detail
     assert result(report, "save folder")[0] == "WARN"
     assert result(report, "OnlyFans auth")[0] == "WARN"
 
@@ -172,8 +175,13 @@ def test_ffmpeg_version_reads_the_version(monkeypatch):
 
 def test_key_files(home, tmp_path):
     write_config(home, {"cdm_options": {"key-mode-default": "manual"}})
-    assert result(doctor.run(), "key files") == ("FAIL", "client-id is not set; private-key is not set")
+    status, detail = result(doctor.run(), "key files")
+    assert status == "WARN" and detail.startswith("no key files set up yet")
     client, key = tmp_path / "client_id.bin", tmp_path / "private_key.pem"
+    # half set up is a mistake in what was configured, not the default
+    write_config(home, {"cdm_options": {"key-mode-default": "manual", "client-id": str(client)}})
+    status, detail = result(doctor.run(), "key files")
+    assert status == "FAIL" and "private-key is not set" in detail
     write_config(home, {"cdm_options": {"key-mode-default": "manual", "client-id": str(client), "private-key": str(key)}})
     status, detail = result(doctor.run(), "key files")
     assert status == "FAIL" and "file not found" in detail
@@ -220,7 +228,8 @@ def test_database_setting_is_named_without_the_password(home, monkeypatch, capsy
     assert SECRET not in capsys.readouterr().out
 
 
-def test_routed_with_exit_status_and_json(home, capsys):
+def test_routed_with_exit_status_and_json(home, capsys, monkeypatch):
+    monkeypatch.setattr(ffmpeg, "find_ffmpeg", lambda configured: (None, None, None))
     assert entrypoint.main(["doctor", "--json"]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["ok"] is False
