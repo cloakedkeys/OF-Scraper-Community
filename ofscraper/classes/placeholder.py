@@ -1,6 +1,7 @@
 import logging
 import os
 import pathlib
+import platform
 import re
 import string
 import arrow
@@ -247,11 +248,15 @@ class databasePlaceholder(basePlaceholder):
 _WINDOWS_DEVICE = re.compile(r"(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?=\s*(\.|$))")
 
 
+def _on_windows():
+    return platform.system() == "Windows"
+
+
 def _safe_parts(path, literal=None):
     """path with no folder or file name that is only dots ("." or ".." would
     be this folder or the one above; Windows drops trailing spaces and dots,
-    so ". " is "." and " ." nothing) or a Windows device name ("CON" gets
-    "CON_"): a caption or a name can be either. literal marks each character the template itself wrote: a
+    so ". " is "." and " ." nothing) or, on Windows, a device name ("CON"
+    gets "CON_"): a caption or a name can be either. literal marks each character the template itself wrote: a
     name made only of those (dir_format ".", to save in save_location) is
     kept."""
     path = str(path)
@@ -264,7 +269,8 @@ def _safe_parts(path, literal=None):
             pass
         elif re.fullmatch(r"\s*\.[.\s]*", part) and not own:
             part = "_"
-        else:
+        elif _on_windows():
+            # only Windows has device names: elsewhere "aux" is a name
             part = _WINDOWS_DEVICE.sub(r"\1_", part)
         out.append(part)
     return "".join(out)

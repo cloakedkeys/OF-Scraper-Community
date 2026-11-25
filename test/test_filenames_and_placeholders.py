@@ -247,13 +247,36 @@ def test_a_caption_of_dots_does_not_name_another_save_folder(naming, monkeypatch
 
 @pytest.mark.parametrize("caption", ["CON", "nul", "Aux", "PRN", "COM1", "lpt9", "con.backup"])
 @pytest.mark.parametrize("file_format", ["{text}.{ext}", "{filename}.{ext}", "{text}/{date}.{ext}"])
-def test_a_windows_device_name_is_not_a_file_name(naming, caption, file_format):
+def test_a_windows_device_name_is_not_a_file_name(naming, monkeypatch, caption, file_format):
+    monkeypatch.setattr(placeholder, "_on_windows", lambda: True)
     text, (media,) = naming(file_format, caption)
     names = [text] if file_format == "{filename}.{ext}" else [text, media]
     for name in names:
         for part in re.split(r"[/\\]", name):
             stem = part.split(".")[0].rstrip(" ")
             assert stem.upper() not in WINDOWS_DEVICES, name
+
+
+@pytest.mark.parametrize("cls", ["Placeholders", "Textholders"])
+def test_a_device_name_is_kept_outside_windows(naming, monkeypatch, tmp_path, cls):
+    # Linux and macOS have no device names: a creator folder named "aux" or
+    # a caption "CON" keeps the name it had
+    monkeypatch.setattr(placeholder, "_on_windows", lambda: False)
+    monkeypatch.setattr(placeholder.data, "get_dirformat", lambda *a, **k: "aux/{text}")
+    text, (media,) = naming("{text}.{ext}", "CON")
+    assert (text, media) == ("CON.txt", "CON.jpg")
+    post = make_post("CON")
+    ele = post.all_media[0] if cls == "Placeholders" else post
+    path = asyncio.run(getattr(placeholder, cls)(ele, "jpg").getmediadir(create=False))
+    assert path == tmp_path / "data" / "aux" / "CON"
+
+
+@pytest.mark.parametrize(
+    "system, windows", [("Windows", True), ("Linux", False), ("Darwin", False)]
+)
+def test_on_windows_follows_the_system(monkeypatch, system, windows):
+    monkeypatch.setattr(placeholder.platform, "system", lambda: system)
+    assert placeholder._on_windows() is windows
 
 
 def test_a_name_that_only_starts_like_a_device_is_unchanged(naming):
