@@ -114,6 +114,26 @@ def test_failed_login_is_unhealthy():
         assert "login" in reason
 
 
+def test_failed_last_pass_of_the_daemon_is_unhealthy(tmp_path, capsys):
+    path = tmp_path / "status.json"
+    base = {
+        "version": 1,
+        "mode": "daemon",
+        "state": "idle",
+        "heartbeat": datetime.now(timezone.utc).isoformat(),
+        "next_pass_at": (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat(),
+        "auth": "ok",
+    }
+    for status, label, healthy in ((1, "error", False), (5, "unavailable", False),
+                                   (0, "ok", True), (4, "partial", True)):
+        last_pass = {"status": status, "status_label": label, "outcome": "ok"}
+        path.write_text(json.dumps({**base, "last_pass": last_pass}), encoding="utf-8")
+        assert health.main([str(path)]) == (0 if healthy else 1)
+        out = capsys.readouterr().out
+        if not healthy:
+            assert "last pass failed" in out and label in out
+
+
 def test_unknown_extra_keys_are_ignored():
     data = {
         "version": 99,

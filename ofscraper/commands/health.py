@@ -103,6 +103,21 @@ def _login_failed(data):
     return False
 
 
+def _failed_last_pass(data):
+    """The label of the daemon's last pass when it ended neither ok nor
+    partial, or None. A failed login is _login_failed's: a later login
+    check can clear it."""
+    last_pass = data.get("last_pass")
+    status = last_pass.get("status") if isinstance(last_pass, dict) else None
+    if (
+        isinstance(status, int)
+        and not isinstance(status, bool)
+        and status not in (*OK_EXIT_CODES, AUTH_EXIT_CODE)
+    ):
+        return last_pass.get("status_label") or f"exit {status}"
+    return None
+
+
 def _failed_profile(data):
     """(name, label) of a multi-profile daemon's profile whose last run
     ended neither ok nor partial, or None."""
@@ -127,6 +142,10 @@ def evaluate(data, max_quiet_minutes=DEFAULT_MAX_QUIET_MINUTES, now=None):
 
     if _login_failed(data):
         return False, "unhealthy: last pass recorded a failed login"
+
+    failed = _failed_last_pass(data)
+    if failed:
+        return False, f"unhealthy: the daemon's last pass failed ({failed})"
 
     failed = _failed_profile(data)
     if failed:
