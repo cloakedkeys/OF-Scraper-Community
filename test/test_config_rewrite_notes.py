@@ -86,10 +86,12 @@ def test_keys_nothing_reads_are_named_without_their_values(config_path, logged):
     assert "sess" not in saved and "filtre" not in saved["download_options"]
 
 
-def test_values_replaced_by_the_default_are_named_with_both(config_path, logged):
+def test_values_replaced_by_the_default_are_named_by_type_not_value(config_path, logged):
+    """The old value isn't repeated: an auth value pasted into the wrong key
+    would end up in the log people send when asking for help."""
     config = defaults()
     config["cdm_options"]["key-mode-default"] = "manaul"
-    config["performance_options"]["download_sems"] = "lots"
+    config["performance_options"]["download_sems"] = "s3cr3t-cookie-value"
     config["content_filter_options"]["file_size_max"] = "ten GB"
     config["file_options"]["text_type_default"] = "words"
 
@@ -97,13 +99,16 @@ def test_values_replaced_by_the_default_are_named_with_both(config_path, logged)
 
     said = notes(logged)
     assert len(said) == 4
-    for path, old, new in (
-        ("cdm_options.key-mode-default", '"manaul"', '"manual"'),
-        ("performance_options.download_sems", '"lots"', "6"),
-        ("content_filter_options.file_size_max", '"ten GB"', "0"),
-        ("file_options.text_type_default", '"words"', '"letter"'),
+    for path, new in (
+        ("cdm_options.key-mode-default", '"manual"'),
+        ("performance_options.download_sems", "6"),
+        ("content_filter_options.file_size_max", "0"),
+        ("file_options.text_type_default", '"letter"'),
     ):
-        assert any(f'"{path}"' in line and old in line and new in line for line in said), path
+        assert any(f'"{path}"' in line and "a string" in line and new in line for line in said), path
+    joined = " ".join(said)
+    for old in ("manaul", "s3cr3t", "ten GB", "words"):
+        assert old not in joined
     assert saved["cdm_options"]["key-mode-default"] == "manual"
 
 

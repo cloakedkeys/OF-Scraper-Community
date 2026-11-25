@@ -169,8 +169,8 @@ def _leaves(config):
 def rewrite_notes(old, new, defaults, reads):
     """
     One line for each key of old that the rewrite to new drops without any
-    getter reading it, and each value it replaces with the default. Values of
-    dropped keys aren't repeated: they can be auth values pasted in.
+    getter reading it, and each value it replaces with the default. The old
+    values aren't repeated, only their type: they can be auth values pasted in.
     """
     notes = []
     new_leaves, default_leaves = _leaves(new), _leaves(defaults)
@@ -200,8 +200,9 @@ def rewrite_notes(old, new, defaults, reads):
             )
         elif _replaced(value, new_leaves[path], default_leaves.get(path)):
             notes.append(
-                f'config.json: "{path}" was {json.dumps(value)}, which it doesn\'t'
-                f" take, so the default {json.dumps(new_leaves[path])} is used and saved"
+                # the type, not the value: it can be an auth value pasted in
+                f'config.json: "{path}" held {_json_type(value)} it doesn\'t take,'
+                f" so the default {json.dumps(new_leaves[path])} is used and saved"
             )
     return notes
 
