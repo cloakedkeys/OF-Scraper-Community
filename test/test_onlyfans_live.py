@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import ofscraper.managers.manager as manager
+import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.paths.common as common_paths
 import ofscraper.utils.settings as settings
 import ofscraper.utils.system.ffmpeg as ffmpeg_finder
@@ -111,6 +112,13 @@ def test_recording_path_mirrors_the_fansly_layout(tmp_path):
     assert live.recording_path(tmp_path, "creator_a", when) == (
         tmp_path / "OnlyFans" / "creator_a" / "Livestreams" / "creator_a_20261123_080509_live.webm"
     )
+
+
+def test_recording_path_stays_in_the_save_folder(tmp_path):
+    when = datetime.datetime(2026, 11, 23, 8, 5, 9, tzinfo=datetime.timezone.utc)
+    out = live.recording_path(tmp_path, "../creator_a.", when)
+    assert out.resolve().is_relative_to((tmp_path / "OnlyFans").resolve())
+    assert ".." not in out.parts
 
 
 # ------------------------------------------------------------------ the browser login
@@ -273,15 +281,46 @@ def test_cancelling_lets_the_recording_save_first():
     assert saved.is_set()
 
 
+def test_cancelling_waits_for_the_recording_to_save():
+    saved = threading.Event()
+
+    def capture(halt):
+        halt.wait(10)
+        threading.Event().wait(0.5)  # the browser writing out the file
+        saved.set()
+
+    async def main():
+        task = asyncio.ensure_future(live.record_in_thread(capture, asyncio.Event()))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return saved.is_set()
+
+    assert asyncio.run(main())  # saved before record_in_thread gave up, not after
+
+
 @pytest.fixture
 def onlyfans_settings(monkeypatch, tmp_path):
     def apply(**values):
         real = settings.get_settings()
-        stub = SimpleNamespace(**{**dict(real), "site": "onlyfans", "usernames": None,
-                                  "excluded_username": None, "live": False, "live_watch": False,
-                                  "live_interval": None, "live_max": None, "live_chat": False,
-                                  **values})
+        stub = SimpleNamespace(**{
+            **dict(real),
+            "site": "onlyfans",
+            "usernames": None,
+            "excluded_username": None,
+            "live": False,
+            "live_watch": False,
+            "live_interval": None,
+            "live_max": None,
+            "live_chat": False,
+            "username_search": None,
+            "userlist": None,
+            "blacklist": None,
+            **values,
+        })
         monkeypatch.setattr(settings, "get_settings", lambda: stub)
+        monkeypatch.setattr(settings, "get_args", lambda copy=False: stub)
         return stub
 
     import ofscraper.utils.auth.file as auth_file
@@ -291,21 +330,26 @@ def onlyfans_settings(monkeypatch, tmp_path):
     monkeypatch.setattr(ffmpeg_finder, "get_ffmpeg", lambda: "ffmpeg")
     return apply
 
-
-def install_session(monkeypatch, client):
+def install_session(monkeypatch, client, model_manager=None):
     @contextlib.asynccontextmanager
     async def aget_ofsession(*args, **kwargs):
         yield client
 
-    monkeypatch.setattr(manager, "Manager",
-                        SimpleNamespace(session=SimpleNamespace(aget_ofsession=aget_ofsession)))
+    monkeypatch.setattr(
+        manager,
+        "Manager",
+        SimpleNamespace(
+            session=SimpleNamespace(aget_ofsession=aget_ofsession),
+            model_manager=model_manager,
+        ),
+    )
 
 
 def test_live_records_each_selected_live_creator_once(monkeypatch, onlyfans_settings, tmp_path):
     onlyfans_settings(live=True, usernames=["creator_a", "creator_d"])
     install_session(monkeypatch, Client(Response(200, {"isActive": False})))
 
-    async def online(c):
+    async def online(c, checks=None):
         return live.live_subscriptions([[
             {"id": 1, "username": "creator_a", "hasStream": True},
             {"id": 2, "username": "creator_b", "hasStream": True},
@@ -334,11 +378,32 @@ def test_live_records_each_selected_live_creator_once(monkeypatch, onlyfans_sett
     assert len(reads) == 2  # auth.json is read for each recording
 
 
+def test_the_browser_gets_the_sessions_proxy(monkeypatch, onlyfans_settings):
+    from ofscraper.managers.sessionmanager.sessionmanager import sessionManager
+
+    onlyfans_settings(live=True)
+    install_session(monkeypatch, sessionManager(proxy="http://proxy.invalid:8080"))
+
+    async def online(c, checks=None):
+        return [{"accountId": 1, "username": "creator_a"}]
+
+    proxies = []
+
+    def capture(halt, username, out, auth, still_live, ffmpeg, proxy):
+        proxies.append(proxy)
+
+    monkeypatch.setattr(live, "get_online_streams", online)
+    monkeypatch.setattr(live_capture, "playwright_ready", lambda: True)
+    monkeypatch.setattr(live_capture, "capture", capture)
+    asyncio.run(live.run(False, asyncio.Event()))
+    assert proxies == ["http://proxy.invalid:8080"]
+
+
 def test_a_missing_chromium_says_how_to_install_it(monkeypatch, onlyfans_settings, caplog):
     onlyfans_settings(live=True)
     install_session(monkeypatch, Client(Response(404)))
 
-    async def online(c):
+    async def online(c, checks=None):
         return [{"accountId": 1, "username": "creator_a"}, {"accountId": 2, "username": "creator_b"}]
 
     def capture(**kwargs):
@@ -379,3 +444,475 @@ def test_live_chat_is_fansly_only(monkeypatch, onlyfans_settings, caplog):
     with caplog.at_level("WARNING", logger="shared"):
         asyncio.run(live.run(False, asyncio.Event()))
     assert "--live-chat only applies to Fansly" in caplog.text
+
+
+def test_the_install_hint_is_logged_once(monkeypatch, onlyfans_settings, caplog):
+    onlyfans_settings(live=True)
+
+    def not_ready():  # as playwright_ready: it logs the hint itself
+        live_capture.log.warning("install it with: playwright install chromium")
+        return False
+
+    monkeypatch.setattr(live_capture, "playwright_ready", not_ready)
+    with caplog.at_level("WARNING", logger="shared"):
+        asyncio.run(live.run(False, asyncio.Event()))
+    assert caplog.text.count("playwright install chromium") == 1
+
+
+# ------------------------------------------------------------------ search, caching & logging
+
+def test_without_username_and_filters_it_scans_active_subscriptions(monkeypatch, onlyfans_settings):
+    import ofscraper.data.api.subscriptions.subscriptions as subs
+    import ofscraper.data.models.utils.retriver as retriver
+
+    onlyfans_settings(live=True, usernames=None, excluded_username=None)
+    used = []
+
+    async def fake_active(c):
+        used.append("active_subs")
+        yield [
+            {"id": 1, "username": "creator_a", "hasStream": True},
+            {"id": 2, "username": "creator_b", "hasStream": False},
+        ]
+
+    async def fail_retriver():
+        pytest.fail("retriver.get_models() must not run when --username is omitted without filters")
+
+    monkeypatch.setattr(subs, "scrape_subscriptions_active", fake_active)
+    monkeypatch.setattr(retriver, "get_models", fail_retriver)
+
+    result = asyncio.run(live.get_online_streams(Client(Response(200, {}))))
+    assert used == ["active_subs"]
+    assert result == [{"accountId": 1, "username": "creator_a"}]
+
+
+@pytest.mark.parametrize("search_mode", ["individual", None])
+def test_with_username_individual_uses_retriver_and_checks_session(
+    monkeypatch, onlyfans_settings, search_mode
+):
+    import ofscraper.data.models.utils.retriver as retriver
+    from ofscraper.classes.of.models import Model
+
+    onlyfans_settings(
+        live=True,
+        usernames=["creator_a"],
+        excluded_username=None,
+        username_search=search_mode,
+    )
+    seen_modes = []
+
+    async def fake_get_models():
+        seen_modes.append(settings.get_settings().username_search)
+        return [
+            Model({"id": 1, "username": "creator_a", "hasStream": False}),
+            Model({"id": 2, "username": "creator_b", "hasStream": True}),
+        ]
+
+    monkeypatch.setattr(retriver, "get_models", fake_get_models)
+    main_client = Client(Response(200, {}))
+    checks_client = Client(Response(200, {"isActive": True, "isFinished": False}))
+
+    result = asyncio.run(live.get_online_streams(main_client, checks=checks_client))
+    assert seen_modes == [search_mode]
+    assert result == [{"accountId": 1, "username": "creator_a"}]
+    assert main_client.urls == []
+    assert checks_client.urls == [
+        "https://onlyfans.com/api2/v2/users/creator_a/streams/active?view=full_with_check"
+    ]
+
+
+def test_with_username_list_search_uses_batch_subscriptions_across_polls(
+    monkeypatch, onlyfans_settings
+):
+    import ofscraper.data.api.subscriptions.subscriptions as subs
+    import ofscraper.data.models.utils.retriver as retriver
+    from ofscraper.classes.of.models import Model
+
+    onlyfans_settings(
+        live_watch=True,
+        usernames=["creator_a"],
+        excluded_username=None,
+        username_search="list",
+    )
+    retriver_calls = []
+    batch_calls = []
+
+    async def fake_get_models():
+        retriver_calls.append(1)
+        return [
+            Model({"id": 1, "username": "creator_a", "hasStream": False}),
+            Model({"id": 2, "username": "creator_b", "hasStream": True}),
+        ]
+
+    async def fake_active(c):
+        batch_calls.append(1)
+        yield [
+            {"id": 1, "username": "creator_a", "hasStream": True},
+            {"id": 2, "username": "creator_b", "hasStream": True},
+        ]
+
+    monkeypatch.setattr(retriver, "get_models", fake_get_models)
+    monkeypatch.setattr(subs, "scrape_subscriptions_active", fake_active)
+    main_client = Client(Response(200, {}))
+    checks_client = Client(Response(200, {}))
+
+    token = live._TARGET_CACHE.set({})
+    try:
+        assert asyncio.run(live.get_online_streams(main_client, checks=checks_client)) == []
+        assert asyncio.run(live.get_online_streams(main_client, checks=checks_client)) == [
+            {"accountId": 1, "username": "creator_a"}
+        ]
+    finally:
+        live._TARGET_CACHE.reset(token)
+
+    assert len(retriver_calls) == 1
+    assert len(batch_calls) == 1
+    assert checks_client.urls == []
+
+
+@pytest.mark.parametrize("search_mode", ["individual", "list"])
+def test_a_renamed_creator_is_found_by_the_old_name(monkeypatch, onlyfans_settings, search_mode):
+    import ofscraper.data.models.utils.retriver as retriver
+    from ofscraper.classes.of.models import Model
+
+    onlyfans_settings(live=True, usernames=["creator_old"], username_search=search_mode)
+
+    async def fake_get_models():
+        return [
+            Model({"id": 1, "username": "creator_new", "hasStream": True,
+                   "looked_up_as": ["creator_old"]}),
+            Model({"id": 2, "username": "creator_b", "hasStream": True}),
+        ]
+
+    recorded = []
+
+    def capture(halt, username, out, auth, still_live, ffmpeg, proxy):
+        recorded.append(username)
+
+    monkeypatch.setattr(retriver, "get_models", fake_get_models)
+    install_session(monkeypatch, Client(Response(200, {"isActive": True})))
+    monkeypatch.setattr(live_capture, "playwright_ready", lambda: True)
+    monkeypatch.setattr(live_capture, "capture", capture)
+    asyncio.run(live.run(False, asyncio.Event()))
+    assert recorded == ["creator_new"]
+
+
+def test_target_creators_are_resolved_once_across_watch_polls(monkeypatch, onlyfans_settings):
+    import ofscraper.data.models.utils.retriver as retriver
+    from ofscraper.classes.of.models import Model
+
+    onlyfans_settings(
+        live_watch=True,
+        usernames=["creator_a"],
+        excluded_username=None,
+        username_search="individual",
+    )
+    retriver_calls = []
+
+    async def fake_get_models():
+        retriver_calls.append(1)
+        return [Model({"id": 1, "username": "creator_a", "hasStream": False})]
+
+    monkeypatch.setattr(retriver, "get_models", fake_get_models)
+    main_client = Client(Response(200, {}))
+    checks_client = Client(Response(200, {"isActive": False}))
+
+    token = live._TARGET_CACHE.set({})
+    try:
+        assert asyncio.run(live.get_online_streams(main_client, checks=checks_client)) == []
+        assert asyncio.run(live.get_online_streams(main_client, checks=checks_client)) == []
+        assert asyncio.run(live.get_online_streams(main_client, checks=checks_client)) == []
+    finally:
+        live._TARGET_CACHE.reset(token)
+
+    assert len(retriver_calls) == 1
+    assert main_client.urls == []
+    assert len(checks_client.urls) == 3
+
+
+def test_all_with_user_filters_caches_targets_and_uses_batch_subscriptions(
+    monkeypatch, onlyfans_settings
+):
+    import ofscraper.data.api.subscriptions.subscriptions as subs
+    import ofscraper.data.models.utils.retriver as retriver
+    from ofscraper.classes.of.models import Model
+    from ofscraper.managers.model import ModelManager
+
+    onlyfans_settings(live_watch=True, usernames=None, excluded_username=[], userlist=["vip"])
+    retriver_calls = []
+    batch_calls = []
+
+    async def fake_get_models():
+        retriver_calls.append(1)
+        return [
+            Model({"id": 1, "username": "creator_a", "hasStream": False}),
+            Model({"id": 2, "username": "creator_b", "hasStream": False}),
+        ]
+
+    def fake_filter_models(self, models):
+        return [m for m in models if m.id == 1]
+
+    async def fake_active(c):
+        batch_calls.append(1)
+        yield [
+            {"id": 1, "username": "creator_a", "hasStream": True},
+            {"id": 2, "username": "creator_b", "hasStream": True},
+        ]
+
+    monkeypatch.setattr(retriver, "get_models", fake_get_models)
+    monkeypatch.setattr(ModelManager, "filter_models", fake_filter_models)
+    monkeypatch.setattr(subs, "scrape_subscriptions_active", fake_active)
+    main_client = Client(Response(200, {}))
+    checks_client = Client(Response(200, {}))
+
+    token = live._TARGET_CACHE.set({})
+    try:
+        assert asyncio.run(live.get_online_streams(main_client, checks=checks_client)) == []
+        assert asyncio.run(live.get_online_streams(main_client, checks=checks_client)) == [
+            {"accountId": 1, "username": "creator_a"}
+        ]
+        assert asyncio.run(live.get_online_streams(main_client, checks=checks_client)) == [
+            {"accountId": 1, "username": "creator_a"}
+        ]
+    finally:
+        live._TARGET_CACHE.reset(token)
+
+    assert len(retriver_calls) == 1
+    assert len(batch_calls) == 2
+    assert checks_client.urls == []
+
+
+def test_concurrent_individual_checks_respect_env_concurrency_and_stream_url(
+    monkeypatch, onlyfans_settings
+):
+    import ofscraper.data.models.utils.retriver as retriver
+    from ofscraper.classes.of.models import Model
+
+    monkeypatch.setenv("OFSC_LIVE_CHECK_CONCURRENCY", "2")
+    monkeypatch.setenv("OFSC_STREAM_ACTIVE_URL", "https://example.invalid/custom/{}/live")
+    of_env.get_all_configs(forced=True)
+
+    try:
+        onlyfans_settings(
+            live=True,
+            usernames=["u1", "u2", "u3", "u4"],
+            username_search="individual",
+        )
+
+        async def fake_get_models():
+            return [
+                Model({"id": idx, "username": f"u{idx}", "hasStream": False})
+                for idx in range(1, 5)
+            ]
+
+        monkeypatch.setattr(retriver, "get_models", fake_get_models)
+
+        in_flight = 0
+        max_seen = 0
+        seen_urls = []
+
+        class TrackingClient:
+            @contextlib.asynccontextmanager
+            async def requests_async(self, url=None, **kwargs):
+                nonlocal in_flight, max_seen
+                seen_urls.append(url)
+                in_flight += 1
+                max_seen = max(max_seen, in_flight)
+                try:
+                    await asyncio.sleep(0.02)
+                    yield Response(200, {"isActive": url.endswith("/u2/live")})
+                finally:
+                    in_flight -= 1
+
+        result = asyncio.run(
+            live.get_online_streams(Client(Response(200, {})), checks=TrackingClient())
+        )
+        assert result == [{"accountId": 2, "username": "u2"}]
+        assert max_seen == 2
+        assert sorted(seen_urls) == [
+            f"https://example.invalid/custom/u{idx}/live" for idx in range(1, 5)
+        ]
+    finally:
+        monkeypatch.delenv("OFSC_LIVE_CHECK_CONCURRENCY", raising=False)
+        monkeypatch.delenv("OFSC_STREAM_ACTIVE_URL", raising=False)
+        of_env.get_all_configs(forced=True)
+
+
+def test_idle_and_live_status_logs_announce_transitions_once(monkeypatch, onlyfans_settings, caplog):
+    onlyfans_settings(live_watch=True, live_interval=10, usernames=["creator_a"])
+    install_session(monkeypatch, Client(Response(404)))
+
+    polls = iter([
+        [],
+        [],
+        [{"accountId": 1, "username": "creator_a"}],
+        [{"accountId": 1, "username": "creator_a"}],
+        [],
+        [],
+    ])
+    stop = asyncio.Event()
+    recording_started = threading.Event()
+    finish_recording = threading.Event()
+
+    async def fake_online(c, checks=None):
+        try:
+            return next(polls)
+        except StopIteration:
+            stop.set()
+            return []
+
+    def fake_capture(halt, username, out, auth, still_live, ffmpeg, proxy):
+        recording_started.set()
+        finish_recording.wait(5)
+        return out
+
+    monkeypatch.setattr(live, "get_online_streams", fake_online)
+    monkeypatch.setattr(live_capture, "playwright_ready", lambda: True)
+    monkeypatch.setattr(live_capture, "capture", fake_capture)
+
+    class FastWatcher(shared.LiveWatcher):
+        def __init__(self, fetch_online, record, **kwargs):
+            super().__init__(
+                fetch_online,
+                record,
+                max_concurrent=kwargs.get("max_concurrent", 2),
+                interval=0.01,
+                jitter=0,
+                once=kwargs.get("once", False),
+            )
+
+    monkeypatch.setattr(shared, "LiveWatcher", FastWatcher)
+
+    async def run_watch():
+        task = asyncio.ensure_future(live.run(True, stop))
+        await asyncio.to_thread(recording_started.wait, 5)
+        await asyncio.sleep(0.05)
+        finish_recording.set()
+        await asyncio.wait_for(task, 5)
+
+    with caplog.at_level("INFO", logger="shared"):
+        asyncio.run(run_watch())
+
+    info_messages = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+    idle_logs = [m for m in info_messages if "No active OnlyFans livestreams" in m]
+    live_logs = [m for m in info_messages if "Live now (1): creator_a" in m]
+
+    # Once before stream starts, once after stream ends (not repeated on consecutive empty polls)
+    assert len(idle_logs) == 2
+    # Once when creator_a goes live (not repeated while still recording)
+    assert len(live_logs) == 1
+
+
+def test_live_now_does_not_repeat_when_queued_or_capture_missing(
+    monkeypatch, onlyfans_settings, caplog
+):
+    onlyfans_settings(live_watch=True, live_interval=10, live_max=1)
+    install_session(monkeypatch, Client(Response(404)))
+
+    streams = [
+        {"accountId": 1, "username": "creator_a"},
+        {"accountId": 2, "username": "creator_b"},
+    ]
+    polls = iter([streams, streams, streams])
+    stop = asyncio.Event()
+    started = threading.Event()
+    finish = threading.Event()
+
+    async def fake_online(c, checks=None):
+        try:
+            return next(polls)
+        except StopIteration:
+            stop.set()
+            return []
+
+    def fake_capture(halt, username, out, auth, still_live, ffmpeg, proxy):
+        started.set()
+        finish.wait(5)
+        return out
+
+    monkeypatch.setattr(live, "get_online_streams", fake_online)
+    monkeypatch.setattr(live_capture, "playwright_ready", lambda: True)
+    monkeypatch.setattr(live_capture, "capture", fake_capture)
+
+    class FastWatcher(shared.LiveWatcher):
+        def __init__(self, fetch_online, record, **kwargs):
+            super().__init__(
+                fetch_online,
+                record,
+                max_concurrent=kwargs.get("max_concurrent", 2),
+                interval=0.01,
+                jitter=0,
+                once=kwargs.get("once", False),
+            )
+
+    monkeypatch.setattr(shared, "LiveWatcher", FastWatcher)
+
+    async def run_watch():
+        task = asyncio.ensure_future(live.run(True, stop))
+        await asyncio.to_thread(started.wait, 5)
+        await asyncio.sleep(0.05)
+        finish.set()
+        await asyncio.wait_for(task, 5)
+
+    with caplog.at_level("INFO", logger="shared"):
+        asyncio.run(run_watch())
+
+    live_logs = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelname == "INFO" and r.getMessage().startswith("Live now")
+    ]
+    # creator_b waited in queue because live_max=1, yet "Live now" logged only once
+    assert live_logs == ["Live now (2): creator_a, creator_b"]
+
+
+def test_failed_polls_warn_once_per_failure_streak(monkeypatch, onlyfans_settings, caplog):
+    onlyfans_settings(live_watch=True, live_interval=10)
+    install_session(monkeypatch, Client(Response(404)))
+
+    outcomes = iter([
+        RuntimeError("network down"),
+        RuntimeError("network down"),
+        [],
+        RuntimeError("network down again"),
+    ])
+    stop = asyncio.Event()
+
+    async def fake_online(c, checks=None):
+        try:
+            item = next(outcomes)
+        except StopIteration:
+            stop.set()
+            return []
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(live, "get_online_streams", fake_online)
+    monkeypatch.setattr(live_capture, "playwright_ready", lambda: True)
+
+    class FastWatcher(shared.LiveWatcher):
+        def __init__(self, fetch_online, record, **kwargs):
+            super().__init__(
+                fetch_online,
+                record,
+                max_concurrent=kwargs.get("max_concurrent", 2),
+                interval=0.01,
+                jitter=0,
+                once=kwargs.get("once", False),
+            )
+
+    monkeypatch.setattr(shared, "LiveWatcher", FastWatcher)
+
+    with caplog.at_level("WARNING", logger="shared"):
+        asyncio.run(asyncio.wait_for(live.run(True, stop), timeout=5))
+
+    warnings = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelname == "WARNING" and "OnlyFans livestream check failed:" in r.getMessage()
+    ]
+    assert warnings == [
+        "OnlyFans livestream check failed: network down",
+        "OnlyFans livestream check failed: network down again",
+    ]
