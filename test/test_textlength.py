@@ -13,6 +13,11 @@ from ofscraper.utils.args.parse.arguments.file import text_type_option
 
 @pytest.fixture
 def fake_settings(monkeypatch):
+    import ofscraper.classes.of.base as base_module
+
+    # the cut is logged once per run: start each test with a fresh run
+    monkeypatch.setattr(base_module, "_cut_logged", set(), raising=False)
+
     def apply(**kw):
         ns = SimpleNamespace(text_length=0, text_type="letter", space_replacer=" ")
         ns.__dict__.update(kw)
@@ -96,6 +101,16 @@ def test_a_cut_logs_the_unit(fake_settings, caplog, text_type, text, length, uni
     with caplog.at_level("DEBUG", logger="shared"):
         base().text_trunicate(text)
     assert f"{{text}} cut to {length} {unit} (text_type_default: {text_type})" in caplog.text
+
+
+def test_the_cut_is_logged_once_per_run(fake_settings, caplog):
+    """text_trunicate runs for each placeholder of each media: the line is
+    about the setting, so it is said once."""
+    fake_settings(text_length=2, text_type="word")
+    with caplog.at_level("DEBUG", logger="shared"):
+        for text in ("one two three", "four five six", "one two three"):
+            base().text_trunicate(text)
+    assert caplog.text.count("cut to 2 words") == 1
 
 
 def test_text_that_fits_logs_no_cut(fake_settings, caplog):
