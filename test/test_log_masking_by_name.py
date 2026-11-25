@@ -141,6 +141,12 @@ LEAKS = [
         [PROXY_USER, PROXY_PASS],
         ["http://{hidden}@proxy.example.invalid:3128", "'https://{hidden}@proxy.example.invalid'"],
     ),
+    # a raw "@" in the password: the login ends at the last "@" before the host
+    (
+        "proxy http://user:p@ss@host:8080 refused",
+        ["user", "p@ss", "ss@"],
+        ["http://{hidden}@host:8080"],
+    ),
 ]
 
 

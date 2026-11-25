@@ -1237,6 +1237,12 @@ def test_a_login_is_hidden_whatever_the_scheme(scheme):
     assert out == f"Error opening input: {scheme}://{{hidden}}@127.0.0.1:3128"
 
 
+def test_a_password_with_an_at_sign_is_hidden_whole():
+    # the login ends at the last "@" before the host, as a URL parser reads it
+    out = live.strip_queries("Error opening input: http://user:p@ss@host:8080/live.m3u8")
+    assert out == "Error opening input: http://{hidden}@host:8080/live.m3u8"
+
+
 def test_without_a_proxy_ffmpeg_keeps_the_environment_it_had(tmp_path, monkeypatch):
     import sys
 

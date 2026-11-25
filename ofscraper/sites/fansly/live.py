@@ -94,8 +94,9 @@ def mask_url_secrets(url):
 
 
 _QUERY_IN_TEXT = re.compile(r"(\w+://[^\s?'\"]+)\?[^\s'\"]*")
-# the login in a link (http://user:password@host), as an OFSC_PROXY has it
-_LOGIN_IN_TEXT = re.compile(r"([a-zA-Z][\w+.-]*://)[^\s/@'\"]+@")
+# the login in a link (http://user:password@host), as an OFSC_PROXY has it;
+# it ends at the last "@" before the host, so a raw "@" in the password is kept in
+_LOGIN_IN_TEXT = re.compile(r"([a-zA-Z][\w+.-]*://)[^\s/'\"]+@")
 
 
 def strip_queries(text: str) -> str:
