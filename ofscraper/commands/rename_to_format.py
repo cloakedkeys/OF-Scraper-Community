@@ -333,15 +333,15 @@ async def _new_paths(media, username, model_id, posts, labelled, counts, site, r
     """Each media row with the path a download would now give it, or why
     it can't be made: {rowid: (path or None, why)}."""
     import ofscraper.utils.config.data as config_data
-    from ofscraper.utils.config.naming_check import LIVE_TYPE_KEYS, MEDIA_TYPES, type_name
+    from ofscraper.utils.config.naming_check import MEDIA_TYPES, area_type_names, type_name
 
     placeholder, RecordedPost, RecordedMedia, RenamePlaceholders = _classes()
     out = {}
     names = {type_name(name) for name in config_data.get_type_options()}
     # "text" is the caption files', which have no row here
     by_media_type = bool(names & (MEDIA_TYPES - {"text"}))
-    # an entry for an area (or its folder name)
-    by_area = bool(names - MEDIA_TYPES - set(LIVE_TYPE_KEYS))
+    # Include the Unknown fallback RecordedPost uses for a missing area.
+    by_area = bool(names and names & (area_type_names() | {"unknown"}))
     with _offline(placeholder):
         for row in media:
             post_id = str(row["post_id"])
@@ -384,7 +384,7 @@ async def _new_paths(media, username, model_id, posts, labelled, counts, site, r
                 out[row["rowid"]] = (None, f"the new name can't be made ({type(error).__name__}: {error})")
                 continue
             missing = sorted(set(MARKED.findall(built)))
-            # with no media type or area, an entry for one can't be matched,
+            # with no media type or area, an entry for one can't be matched reliably,
             # so which folder the file belongs in isn't known
             if not row["media_type"] and by_media_type:
                 missing = sorted(set(missing) | {"mediatype"})
@@ -463,7 +463,6 @@ def plan(conn, settings, username=None, path_root=None):
     for row in recorded:
         old = mover._full(Path(row["directory"], row["filename"]), path_root)
         files[key(old)].append((old, row))
-    taken_by_rows = set(files)
     planned = []
     folders = {}
     for found in sorted(files.values(), key=lambda found: min(old for old, _row in found)):
@@ -500,9 +499,10 @@ def plan(conn, settings, username=None, path_root=None):
     to_do = []
     for old, new, changes in planned:
         at_old, at_new = _where(old, new)
-        if targets[key(new)] > 1:
+        old_key, new_key = key(old), key(new)
+        if targets[new_key] > 1:
             result["left"].append({"file": old, "why": SAME_TARGET, "new_place": new})
-        elif key(new) in taken_by_rows and key(new) != key(old):
+        elif new_key in files and new_key != old_key:
             result["left"].append({"file": old, "why": RECORDED, "new_place": new})
         elif at_old and not _is_file(old):
             # a folder (on a disk that doesn't tell case apart, perhaps one

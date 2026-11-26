@@ -899,8 +899,8 @@ def test_a_part_taken_by_another_process_is_never_used(tmp_path, monkeypatch, ot
     taken = folder / f"creator_a_{STAMP}_live.mp4"
     real_next = live.next_part_number
 
-    def racing_next(base):
-        n = real_next(base)
+    def racing_next(base, *, started_at=None):
+        n = real_next(base, started_at=started_at)
         folder.mkdir(parents=True, exist_ok=True)
         if not taken.exists():
             taken.write_bytes(other_bytes)
@@ -2147,21 +2147,76 @@ def test_live_path_uses_stream_account_id_without_cached_models(monkeypatch, tmp
     assert recorder.base.parent == tmp_path / "Fansly" / "123"
 
 
-def test_a_shortened_name_leaves_room_for_later_parts_and_the_sidecars(tmp_path, monkeypatch):
-    """The name was shortened to fit "<name>.mp4" only, so a reconnect's
-    "_part2.mp4" or the "_chat.jsonl" sidecar went over the limit"""
-    import ofscraper.classes.placeholder as placeholder
+@pytest.mark.parametrize("system", ["Linux", "Darwin"])
+@pytest.mark.parametrize("file_format", [
+    "a" * 300 + "_{date}", "a" * 229 + "{date}", "a" * 228 + "{date}x",
+], ids=["shortened-base", "shortened-part", "text-after-date"])
+def test_a_shortened_name_leaves_room_for_later_parts_and_the_sidecars(
+    tmp_path, monkeypatch, fansly_settings, system, file_format,
+):
+    import ofscraper.utils.config.file as config_file
+    import ofscraper.utils.paths.paths as paths
 
-    limit = 60
+    fansly_settings(trunicate=True)
+    config = {"live_options": {"dir_format": "recordings", "file_format": file_format}}
+    monkeypatch.setattr(config_file, "open_config", lambda: config)
+    # Exercise both production truncators on every test host.
+    limit = 255
+    real_getenv = paths.of_env.getattr
+    overrides = {"LINUX_MAX_FILE_NAME_BYTES": limit, "MAC_MAX_PATH": limit, "UTF": "utf-8"}
+    monkeypatch.setattr(paths.platform, "system", lambda: system)
+    monkeypatch.setattr(paths.of_env, "getattr", lambda key, *a, **kw:
+                        overrides[key] if key in overrides else real_getenv(key, *a, **kw))
+    first_start = live.utc_start(STARTED_MS)
+    later_start = live.utc_start(STARTED_MS + 1_000)
+    base = live.recording_base(tmp_path, "test_creator", first_start)
+    later = live.recording_base(tmp_path, "test_creator", later_start)
+    assert live.sidecar_path(base) != live.sidecar_path(later)
+    assert live.chat_path(base) != live.chat_path(later)
+    assert len(live.chat_path(base).name.encode("utf-8")) == limit
+    for n in (1, 99, 100, 1000, 10_000):
+        part = live.part_path(base, n, started_at=first_start)
+        assert part.name.endswith(".mp4" if n == 1 else f"_part{n}.mp4")
+        assert len(part.name.encode("utf-8")) <= limit, part.name
+        assert part != live.part_path(later, n, started_at=later_start)
+        if file_format.endswith("{date}x"):
+            assert STAMP + "x" in part.name
+    for sidecar in (live.sidecar_path(base), live.chat_path(base)):
+        assert len(sidecar.name.encode("utf-8")) <= limit, sidecar.name
+    if file_format.endswith("{date}x"):
+        monkeypatch.setattr(live, "next_part_number", lambda base, *, started_at: 1000)
+        for started_ms, expected in (
+            (STARTED_MS, live.part_path(base, 1000, started_at=first_start)),
+            (STARTED_MS + 1_000, live.part_path(later, 1000, started_at=later_start)),
+        ):
+            recorder, _ = one_part_recorder(tmp_path)
+            recorder.stream["startedAt"] = started_ms
+            sidecar = asyncio.run(recorder.run())
+            assert sidecar["parts"] == [expected.name]
 
-    def final_path(path):  # a system whose names hold 60 characters
-        path = pathlib.Path(path)
-        if len(path.name) <= limit:
-            return path
-        stem, ext = (path.name[:-11], path.name[-11:]) if path.name.endswith("_000000.mp4") else (path.stem, path.suffix)
-        return path.with_name(stem[: limit - len(ext)] + ext)
 
-    monkeypatch.setattr(placeholder, "final_path", final_path)
-    base = live.recording_base(tmp_path, "a" * 80, STARTED_MS)
-    for made in (live.part_path(base, 1), live.part_path(base, 99), live.sidecar_path(base), live.chat_path(base)):
-        assert len(made.name) <= limit, made.name
+@pytest.mark.parametrize("system", ["Linux", "Darwin"])
+def test_a_shortened_default_name_keeps_one_start_time_and_live(
+    tmp_path, monkeypatch, fansly_settings, system,
+):
+    """The default file name ends in "_live", after the start time: a cut
+    for the chat file's room keeps both, once each."""
+    import ofscraper.utils.config.file as config_file
+    import ofscraper.utils.paths.paths as paths
+
+    fansly_settings(trunicate=True)
+    config = {"live_options": {"dir_format": "recordings"}}
+    monkeypatch.setattr(config_file, "open_config", lambda: config)
+    limit = 255
+    real_getenv = paths.of_env.getattr
+    overrides = {"LINUX_MAX_FILE_NAME_BYTES": limit, "MAC_MAX_PATH": limit, "UTF": "utf-8"}
+    monkeypatch.setattr(paths.platform, "system", lambda: system)
+    monkeypatch.setattr(paths.of_env, "getattr", lambda key, *a, **kw:
+                        overrides[key] if key in overrides else real_getenv(key, *a, **kw))
+    start = live.utc_start(STARTED_MS)
+
+    base = live.recording_base(tmp_path, "a" * 240, start)
+
+    assert base.name.count(STAMP) == 1, base.name
+    assert base.name.endswith(f"{STAMP}_live"), base.name
+    assert len(live.chat_path(base).name.encode("utf-8")) <= limit

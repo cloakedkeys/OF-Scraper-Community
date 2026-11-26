@@ -617,6 +617,17 @@ def test_temp_root_falls_back_only_when_empty(path_options, tmp_path, temp_root)
     assert result == root / "test_creator"
 
 
+@pytest.mark.parametrize("kind", ["media", "caption"])
+def test_absolute_media_and_caption_folders_normalize_under_the_save_root(path_options, tmp_path, kind):
+    config, save = path_options
+    config["file_options"]["dir_format"] = "/../streams"
+    save()
+    post = _two_media_post()
+    holder = (placeholder.Placeholders(post.all_media[0], "jpg") if kind == "media"
+              else placeholder.Textholders(post, "txt"))
+    assert asyncio.run(holder.getmediadir(create=False)) == tmp_path / "downloads" / "Fansly" / "streams"
+
+
 @pytest.mark.parametrize("global_format,type_format,expected", [
     ("{filename}.{ext}", "{post_id}.{ext}", ["7_1.jpg", "7_2.jpg"]),
     ("{post_id}.{ext}", "{media_id}.{ext}", ["101.jpg", "102.jpg"]),
@@ -724,6 +735,29 @@ def test_a_live_template_that_cannot_be_filled_in_falls_back(path_options, monke
     )
     assert result == tmp_path.joinpath(*_DEFAULT_LIVE)
     assert len(warnings) == 1 and "test_creator's recording uses the default name" in warnings[0]
+
+
+@pytest.mark.parametrize("template", ["/tmp/sibling/{date}", "../{date}"])
+def test_a_live_file_template_with_a_path_keeps_the_recording_folder(path_options, tmp_path, template):
+    config, save = path_options
+    config["live_options"] = {"dir_format": "{sitename}/recordings", "file_format": template}
+    save()
+    result = placeholder.live_recording_path(
+        tmp_path, "test_creator", _STARTED, site_name="OnlyFans", ext="webm"
+    )
+    assert result == tmp_path / "OnlyFans" / "recordings" / _DEFAULT_LIVE[-1]
+
+
+def test_an_overlong_live_directory_component_uses_the_default_folder(path_options, monkeypatch, tmp_path):
+    config, save = path_options
+    config["live_options"] = {"dir_format": "recordings/" + "é" * 128 + "/{username}"}
+    save()
+    monkeypatch.setattr(placeholder.paths.platform, "system", lambda: "Linux")
+    result = placeholder.live_recording_path(
+        tmp_path, "test_creator", _STARTED, site_name="OnlyFans", ext="webm"
+    )
+    assert result == tmp_path.joinpath(*_DEFAULT_LIVE)
+    result.parent.mkdir(parents=True)
 
 
 def test_live_path_values_cannot_climb_folders(path_options, tmp_path):
@@ -898,26 +932,41 @@ def test_type_options_names_for_the_same_type_are_named(path_options):
     assert placeholder.media_templates(("Messages", "Messages", "Images"))[1] == "b"
 
 
-@pytest.mark.parametrize("dir_format", ["/elsewhere/{model_username}", "C:/elsewhere/{model_username}"])
-def test_a_full_path_live_folder_stays_under_the_save_location(path_options, tmp_path, dir_format):
+@pytest.mark.parametrize("dir_format", [
+    "/streams/{username}", "D:/streams/{username}", "D:/../streams/{username}",
+    "D:../streams/{username}",
+])
+def test_a_full_path_live_folder_stays_under_the_save_location(path_options, tmp_path, monkeypatch, dir_format):
     import datetime
+    import os
     import pathlib
 
     config, save = path_options
-    config["live_options"] = {"dir_format": dir_format}
+    config["live_options"] = {"save_location": "C:/library", "dir_format": dir_format}
     save()
+    if os.name != "nt":
+        # Exercise the Windows join on CI hosts that don't have Windows paths.
+        monkeypatch.setattr(placeholder, "os", SimpleNamespace(path=ntpath))
+        monkeypatch.setattr(placeholder, "pathlib", SimpleNamespace(Path=pathlib.PureWindowsPath))
+        monkeypatch.setattr(placeholder, "final_path", lambda path: path)
     result = placeholder.live_recording_path(
         tmp_path, "test_creator", datetime.datetime(2024, 5, 1), site_name="OnlyFans", ext="webm")
-    assert pathlib.Path(result).is_relative_to(tmp_path)
+    assert result == pathlib.PureWindowsPath("C:/library/streams/test_creator/test_creator_20240501_000000_live.webm")
 
 
-def test_a_broken_live_template_doesnt_hide_the_other_warnings(path_options):
+@pytest.mark.parametrize("site", ["onlyfans", "fansly"])
+def test_a_broken_live_template_doesnt_hide_the_other_warnings(path_options, monkeypatch, site):
     from ofscraper.utils.config import naming_check
 
     config, save = path_options
     config["file_options"]["dir_format"] = "{nope}/x"
-    config["live_options"] = {"file_format": "{date"}
+    config["live_options"] = {"dir_format": "streams", "file_format": "{date"}
     save()
-    lines = naming_check.problems()
-    assert any(line.startswith('file_options.dir_format "{nope}/x"') for line in lines)
+    current_settings = placeholder.settings.get_settings()
+    current_settings.site = site
+    monkeypatch.setattr(placeholder.settings, "get_settings", lambda: current_settings)
+    lines = []
+    monkeypatch.setattr(naming_check.log, "warning", lines.append)
+    naming_check.report()
+    assert any(line.startswith('file_options.dir_format "{nope}/x"') for line in lines), lines
     assert any(line.startswith('live_options.file_format "{date"') for line in lines)

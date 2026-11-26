@@ -19,7 +19,9 @@ import ofscraper.utils.profiles.data as profile_data
 import ofscraper.utils.settings as settings
 import ofscraper.utils.dry_run as dry_run
 from ofscraper.utils.string import parse_safe
-from ofscraper.utils.config.naming_check import LIVE_TIME_FIELDS, LIVE_TYPE_KEYS, name_safe, type_name
+from ofscraper.utils.config.naming_check import (
+    LIVE_TIME_FIELDS, LIVE_TYPE_KEYS, name_safe, type_name, used_type_options,
+)
 import ofscraper.managers.manager as manager
 from ofscraper.scripts.naming_script import naming_script
 
@@ -124,6 +126,11 @@ def _type_settings(type_keys):
     return found
 
 
+def type_save_location(type_keys):
+    """The save_location a type_options entry sets for these types, or None"""
+    return _type_settings(type_keys).get("save_location")
+
+
 def media_templates(type_keys, *, save_location=None, dir_format=None, file_format=None, site_name=None):
     """(root, dir_format, file_format) for these types: type_options first,
     then the values given, then file_options."""
@@ -147,7 +154,7 @@ def media_roots():
     type_options entry's but the livestream one."""
     roots = [default_media_root()]
     roots.extend(
-        media_templates((name,))[0] for name in data.get_type_options()
+        media_templates((name,))[0] for name in used_type_options()
         if type_name(name) not in LIVE_TYPE_KEYS
     )
     return list(dict.fromkeys(roots))
@@ -179,6 +186,21 @@ DEFAULT_LIVE_DIR_FORMAT = "{sitename}/{model_username}/Livestreams"
 DEFAULT_LIVE_FILE_FORMAT = "{model_username}_{date}_live"
 
 
+def _relative_folder(folder):
+    folder = pathlib.Path(folder)
+    if folder.anchor:
+        # A drive-relative path needs a root before normalizing its parent components.
+        if not folder.root:
+            folder = pathlib.Path(f"{folder.drive}/", *folder.parts[1:])
+        folder = pathlib.Path(os.path.normpath(folder))
+        return pathlib.Path(*folder.parts[1:])
+    return folder
+
+
+def _template_folder(root, folder):
+    return pathlib.Path(os.path.normpath(root / _relative_folder(folder)))
+
+
 def live_recording_path(
     save_location,
     username: str,
@@ -187,6 +209,7 @@ def live_recording_path(
     site_name: str,
     ext: str,
     model_id=None,
+    reserve_suffix="",
 ) -> pathlib.Path:
     """A livestream's file: type_options.livestreams, then live_options, then
     ``{sitename}/{model_username}/Livestreams/{model_username}_{date}_live``
@@ -195,27 +218,66 @@ def live_recording_path(
     location, with a warning, so the stream is still recorded."""
     context = dict(username=username, started_at=started_at, site_name=site_name,
                    model_id=model_id, ext=ext)
-    save = _type_settings(LIVE_TYPE_KEYS).get("save_location") or data.get_live_save_location() or save_location
     try:
-        path = _live_path(*live_templates(save, site_name), **context)
+        path = _live_path(*live_templates(save_location, site_name), **context)
     except (KeyError, AttributeError, IndexError, TypeError, ValueError) as E:
         log.warning(
             f"The livestream folder or file name template can't be filled in ({E!r}),"
             f" so {username}'s recording uses the default name"
         )
+        # the default names, but still the save location the settings choose
         default = media_templates(
-            (), save_location=save, dir_format=DEFAULT_LIVE_DIR_FORMAT,
+            (), save_location=live_save_location(save_location), dir_format=DEFAULT_LIVE_DIR_FORMAT,
             file_format=DEFAULT_LIVE_FILE_FORMAT, site_name=site_name,
         )
         path = _live_path(*default, **context)
-    return final_path(path)
+    if not reserve_suffix:
+        return final_path(path)
+    base = fit_with_suffix(path.with_suffix(""), reserve_suffix, started_at)
+    return base.with_name(base.name + path.suffix)
+
+
+def fit_with_suffix(base, suffix, started_at):
+    """``base`` (a recording's name without its extension) shortened so that
+    ``base`` + ``suffix`` fits. A cut keeps the stream's start time and what
+    follows it ("_live"), so two recordings' names stay apart."""
+    base = pathlib.Path(base)
+    stamp = re.search(r"_?\d{8}_\d{6}$", base.name)
+    keep = (stamp.group() if stamp else "") + suffix
+    candidate = base.with_name(base.name + suffix)
+    fitted = final_path(candidate, keep_suffix=keep)
+    if started_at is not None and fitted.name != candidate.name:
+        timestamp = started_at.strftime("%Y%m%d_%H%M%S")
+        prefix, matched, tail = base.name.rpartition(timestamp)
+        if not matched:
+            prefix, timestamp, tail = base.name, f"_{timestamp}", ""
+        keep = timestamp + tail + suffix
+        if not fitted.name.endswith(keep):
+            try:
+                fitted = final_path(base.with_name(prefix + keep), keep_suffix=keep)
+            except ValueError:
+                if not tail:
+                    raise
+                keep = timestamp + suffix
+                fitted = final_path(base.with_name(prefix + keep), keep_suffix=keep)
+    return fitted.with_name(fitted.name.removesuffix(suffix))
+
+
+def live_save_location(save_location=None):
+    """Where livestreams are saved: type_options.livestreams, then
+    live_options, then ``save_location``"""
+    return (
+        type_save_location(LIVE_TYPE_KEYS)
+        or data.get_live_save_location()
+        or save_location
+    )
 
 
 def live_templates(save_location=None, site_name=None):
     """(root, dir_format, file_format) livestreams are saved with"""
     return media_templates(
         LIVE_TYPE_KEYS,
-        save_location=data.get_live_save_location() or save_location,
+        save_location=live_save_location(save_location),
         dir_format=data.get_live_dirformat() or DEFAULT_LIVE_DIR_FORMAT,
         file_format=data.get_live_fileformat() or DEFAULT_LIVE_FILE_FORMAT,
         site_name=site_name,
@@ -253,21 +315,27 @@ def _live_path(root, dir_fmt, file_fmt, *, username, started_at, site_name, mode
         "args": settings.get_args(),
     })
     _add_aliases(variables)
-    folder = _safe_format(dir_fmt, variables)
+    folder = _relative_folder(_safe_format(dir_fmt, variables))
+    paths.validate_directory_parts(folder.parts)
     stem = _safe_format(file_fmt, variables)
     if stem.lower().endswith(f".{ext.lower()}"):
         stem = stem[: -(len(ext) + 1)]
+    if not stem or pathlib.Path(stem).name != stem or stem in (".", ".."):
+        log.warning("The livestream file name must be a single path component, "
+                    f"so {username}'s recording uses the default name")
+        file_fmt = DEFAULT_LIVE_FILE_FORMAT
+        stem = _safe_format(file_fmt, dict(variables, model_username=name_safe(username)))
     if not live_names_apart(dir_fmt, file_fmt):
         stem = f"{stem}_{stamp}"
-    # joined as Placeholders.getmediadir joins: a folder that's a full path
-    # stays under the root, as the startup check says
-    return pathlib.Path(os.path.normpath(f"{root}/{folder}"), f"{stem}.{ext}")
+    return pathlib.Path(os.path.normpath(root / folder), f"{stem}.{ext}")
 
 
-def final_path(path):
+def final_path(path, *, keep_suffix=""):
     """The path a file is saved at: shortened to what the system allows,
     unless --original or truncation_default: false turns that off."""
     if getattr(settings.get_settings(), "trunicate", True):
+        if keep_suffix:
+            return paths.truncate(pathlib.Path(path), keep_suffix=keep_suffix)
         return paths.truncate(pathlib.Path(path))
     return pathlib.Path(os.path.normpath(path))
 
@@ -631,10 +699,7 @@ class Placeholders(basePlaceholder):
         log.trace(
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
         )
-        downloadDir = pathlib.Path(_safe_format(dir_fmt, self._variables))
-        final_path = pathlib.Path(
-            os.path.normpath(f"{str(root)}/{str(pathlib.Path(downloadDir))}")
-        )
+        final_path = _template_folder(root, _safe_format(dir_fmt, self._variables))
         log.trace(f"final mediadir path {final_path}")
         self._mediadir = final_path
         self._mediadir.mkdir(parents=True, exist_ok=True) if create else None
@@ -921,10 +986,7 @@ class Textholders(basePlaceholder):
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
         )
 
-        downloadDir = pathlib.Path(_safe_format(dir_fmt, self._variables))
-        final_path = pathlib.Path(
-            os.path.normpath(f"{str(root)}/{str(pathlib.Path(downloadDir))}")
-        )
+        final_path = _template_folder(root, _safe_format(dir_fmt, self._variables))
         log.trace(f"final mediadir path {final_path}")
         self._mediadir = final_path
         self._mediadir.mkdir(parents=True, exist_ok=True) if create else None

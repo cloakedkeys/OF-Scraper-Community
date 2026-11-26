@@ -45,6 +45,9 @@ LIVE_TYPE_KEYS = ("livestreams", "live")
 # timeline's default folder name, which pinned posts are saved under too, so
 # a "posts" entry matches both, and a "timeline" one only the timeline
 TYPE_ALIASES = {"post": "timeline", "message": "messages"}
+# an area's key in the responsetype section: "timeline" for post or posts,
+# "message" for messages (the other way round from TYPE_ALIASES)
+RESPONSETYPE_KEYS = {"post": "timeline", "posts": "timeline", "messages": "message"}
 # the live placeholders that hold the start time, which keep one creator's
 # recordings apart
 LIVE_TIME_FIELDS = {"date", "timestamp"}
@@ -212,16 +215,16 @@ def problems():
             " in dir_format now fills one folder, so dates no longer nest. Use"
             " {year}/{month}/{day} in dir_format for nested date folders"
         )
-    names = _type_names()
-    same = {}
-    for name in data.get_type_options():
-        same.setdefault(type_name(name), []).append(name)
-        if type_name(name) not in names:
-            out.append(
+    known = known_type_names()
+    spelt = type_spellings()
+    for key, spellings in spelt.items():
+        if key not in known:
+            out.extend(
                 f"type_options.{name} isn't a post area, media type or livestreams,"
                 " so it's never used"
+                for name in spellings
             )
-    for spellings in same.values():
+    for spellings in spelt.values():
         if len(spellings) > 1:
             # _type_settings keeps the last one
             out.append(
@@ -231,8 +234,8 @@ def problems():
             )
     import ofscraper.classes.placeholder as placeholder
 
-    _root, dir_fmt, file_fmt = placeholder.live_templates()
     try:
+        _root, dir_fmt, file_fmt = placeholder.live_templates()
         apart = placeholder.live_names_apart(dir_fmt, file_fmt)
     except ValueError:
         # a template that isn't valid ("{date"): named above already, and
@@ -256,17 +259,50 @@ POST_AREAS = {
 MEDIA_TYPES = {"images", "videos", "audios", "text"}
 
 
-def _type_names():
-    """the names a type_options entry can match, lowercased: also the folder
-    names the responsetype section gives each area"""
-    import ofscraper.utils.config.file as config_file
-    import ofscraper.utils.config.schema as schema
+def area_type_names(config=None):
+    """Names a type_options entry can match by post area or by the folder a
+    download saves the area's posts under (the names Post.modified_responsetype
+    gives, so media_type_keys can match them)."""
+    from ofscraper.classes.of.posts import archived_folder, responsetype_folder
 
-    folders = schema.get_current_config_schema(config_file.open_config())["responsetype"]
-    return (
-        POST_AREAS | MEDIA_TYPES | set(LIVE_TYPE_KEYS)
-        | {type_name(folder) for folder in folders.values() if folder}
-    )
+    if config is None:
+        import ofscraper.utils.config.file as config_file
+
+        config = config_file.open_config()
+    folders = {responsetype_folder(area, config=config) for area in POST_AREAS}
+    folders.add(archived_folder(config=config))
+    return POST_AREAS | {type_name(folder) for folder in folders}
+
+
+def known_type_names(config=None):
+    """Every name a type_options entry can be used under: a post area, its
+    folder, a media type or livestreams"""
+    return area_type_names(config) | MEDIA_TYPES | set(LIVE_TYPE_KEYS)
+
+
+def type_spellings(config=None):
+    """{type: [type_options names that mean it, in file order]}. Of two
+    spellings, placeholder._type_settings uses the last."""
+    import ofscraper.utils.config.data as data
+
+    out = {}
+    for name in data.get_type_options(config=config):
+        out.setdefault(type_name(name), []).append(name)
+    return out
+
+
+def used_type_options(config=None):
+    """{name as written: section} for the type_options entries downloads
+    use: of a known type, and of two spellings of one type only the last"""
+    import ofscraper.utils.config.data as data
+
+    options = data.get_type_options(config=config)
+    known = known_type_names(config)
+    return {
+        spellings[-1]: options[spellings[-1]]
+        for key, spellings in type_spellings(config).items()
+        if key in known
+    }
 
 
 def report():
