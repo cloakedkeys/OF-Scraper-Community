@@ -512,6 +512,10 @@ SEPARATE_COMMANDS = {
         "[--all | --find NAME | --add MODEL_ID NAME [--seen DATE] [--force] | --csv FILE] [--data-dir DIR | --postgres [--site SITE]]",
         "List and record the usernames each creator account has had.",
     ),
+    "doctor": (
+        "[--config PATH] [--profile NAME] [--site SITE] [--json] [--online]",
+        "Check the setup without running a scrape.",
+    ),
     "move_creator_files": (
         "(DATABASE | --postgres --creator NAME) [OPTIONS]",
         "Move a creator's downloaded files to match new path settings and update recorded paths.",
@@ -528,9 +532,17 @@ SEPARATE_COMMANDS = {
         "(DATABASE | --postgres --creator NAME) [OPTIONS]",
         "Find recorded paths shared by different media and reset downloaded flags to re-download.",
     ),
+    "rename_to_format": (
+        "(DATABASE | --undo FILE) [OPTIONS]",
+        "Rename a creator's downloaded files to the current file_format and dir_format, offline.",
+    ),
     "stash_sync": (
         "(PATH... | --postgres) [OPTIONS]",
         "Sync downloaded media metadata from OF-Scraper databases into Stash.",
+    ),
+    "verify": (
+        "(PATH... | --postgres --creator NAME) [OPTIONS]",
+        "Check downloaded files against the database, offline.",
     ),
 }
 

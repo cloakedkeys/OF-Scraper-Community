@@ -7,13 +7,12 @@ Optionally, you can store every creator's rows in one PostgreSQL database instea
 ## What you need
 
 - **PostgreSQL 15 or newer**, with a database where the scraper's login can create tables.
-- **The PostgreSQL driver**, depending on how you installed the scraper:
-  - **pip:** install the `postgres` extra:
-    ```bash
-    pip install "ofscraper-community[postgres]"
-    ```
-  - **Docker:** already included in the image.
-  - **Standalone downloads** (the `.exe` and other single-file builds): not included. Use the pip or Docker install instead.
+- **The PostgreSQL driver** (psycopg). It comes with the scraper on Windows (x64), macOS and 64-bit Linux (x86_64, aarch64, ppc64le, riscv64), whether installed with pip, Docker or a standalone download.
+
+  On other systems, such as Windows on ARM or Android, the first run with `OFSC_DATABASE_URL` set offers to install it when it runs at a terminal (the daemon, cron and `sudo` runs print the command instead). If that install is declined, fails or is turned off (`OFSC_INSTALL_EXTRAS=False`), install it yourself:
+  ```bash
+  pip install "ofscraper-community[postgres]"
+  ```
 
 ## Turning it on
 
@@ -59,6 +58,16 @@ Turning PostgreSQL on does not migrate your existing `user_data.db` files. Use `
 | `--apply` | Writes the imported rows to PostgreSQL. Without it, the command only previews and reports. |
 | `--staging <folder>` | Sets where temporary working copies are placed. Working copies need as much free space as the source files. |
 | `--skip-bad-files` | Imports the files that can be imported and skips (and lists) the ones that cannot. Exits with code `1` if any file was skipped, or `0` only if every file came in. |
+
+### In one step, after merging
+
+If you merged your databases into one file with the menu's **Merge Databases**, bring that file in with one command:
+
+```bash
+ofscraper --migrate-sqlite-to-postgres <path to the merged user_data.db>
+```
+
+It does what `postgres_import --apply` does, for that file, then exits. It also takes a folder of `user_data.db` files. It writes everything or nothing: if a value can't be stored, or a creator is already in PostgreSQL, it says why and writes nothing. Once a merge is done with PostgreSQL turned on, the merge screen prints this command with the merged file's path.
 
 ### How import works
 
