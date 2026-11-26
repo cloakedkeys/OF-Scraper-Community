@@ -263,6 +263,12 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
 
 - **Alerts when something needs you:** when the login is rejected, the free-space limit is reached, or a daemon pass fails, a short alert goes to Discord (at any `--discord` level except `OFF`) and to `alert_script` (`--alert-script`), which gets `kind`, `message`, `site` and `profile` as JSON. Each is sent when it starts and again when it's fixed, not on every pass. A login rejected partway through a run stops that pass with exit code 3.
 
+- **See what a run would download first:** `--dry-run` with `--action download` scans as usual and reports, per creator and area, how many photos, videos and audio files a download would attempt, with a few of the paths they would be saved to. It downloads nothing and doesn't change the database, the cache or your files. It's handy for trying a filter, a new `dir_format` or `file_format`, or checking a new creator. `--dry-run-json FILE` also writes the report to a file as JSON. It doesn't work with PostgreSQL yet, with `--daemon`, `--live` or `--live-watch`, or with a subcommand such as `metadata` or `db`. A run that fails or is stopped part-way prints no report.
+
+  ```sh
+  ofscraper --action download -u modelname --dry-run
+  ```
+
 - **Move a creator's files after a rename:** move the files saved under a creator's old name to their current name's folder, and update the database to match. See [Moving files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/MOVING_FILES.md).
 - **Rename files after changing `file_format` or `dir_format`:** give the files already downloaded the names the new formats give, offline, and update the database to match. See [Renaming files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/RENAMING_FILES.md).
 
