@@ -2,12 +2,14 @@ import cloup as click
 
 from ofscraper.utils.args.parse.arguments.automatic import (
     action_option,
+    daemon_jitter_option,
     daemon_option,
     live_chat_option,
     live_interval_option,
     live_max_option,
     live_option,
     live_watch_option,
+    profiles_option,
 )
 
 # Create the option group
@@ -18,6 +20,8 @@ automatic_options_help = (
 automatic_options_tuple = (
     action_option,
     daemon_option,
+    daemon_jitter_option,
+    profiles_option,
     live_option,
     live_watch_option,
     live_interval_option,
