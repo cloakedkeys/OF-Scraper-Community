@@ -440,7 +440,12 @@ Values below 1024 bytes per second are raised to 1024. All downloads in the run 
 
 Download media that is in several posts once for each post, instead of once (default: ALLOW_DUPE_MEDIA, off)
 
-Without this option, `ALLOW_DUPE_MEDIA` decides (`merged_settings`); `--no-allow-dupes` turns it off for the run. When on, media appearing in several posts is downloaded once per post, and each copy is tracked per `(media_id, post_id)` (`downloaded_media_ids`), so later runs still download copies from posts not yet saved. Applies to OnlyFans and Fansly. Each copy gets its own file (see `file_options.filename_collision`) and its own `medias` row update. A Purchased copy is downloaded like any other post's copy, even if the media is also in Messages or another post. However, a message listed in Purchased under the same ID counts as one post and is downloaded once. The `metadata` command and the Fansly silent-video check read each post's own record. Copies already marked downloaded by a run without this option still count as downloaded.
+Without this option, `ALLOW_DUPE_MEDIA` decides (`merged_settings`); `--no-allow-dupes` turns it off for the run. Applies to OnlyFans and Fansly.
+
+- When on, media appearing in several posts is downloaded once per post and tracked per `(media_id, post_id)` (`downloaded_media_ids`), so later runs still download copies from posts not yet saved.
+- Each copy gets its own file (see `file_options.filename_collision`) and its own `medias` row update.
+- A Purchased copy is downloaded like any other post's copy, even if the media is also in Messages or another post; however, a message listed in Purchased under the same ID counts as one post and is downloaded once.
+- The `metadata` command and the Fansly silent-video check read each post's own record. Copies already marked downloaded by a run without this option still count as downloaded.
 
 **Dest:** `allow_dupe_downloads` · **Defined in:** `ofscraper/utils/args/parse/arguments/download.py`
 
@@ -450,7 +455,12 @@ Without this option, `ALLOW_DUPE_MEDIA` decides (`merged_settings`); `--no-allow
 
 With --allow-dupes, skip a Purchased copy of media that's in another post or was downloaded from one. Media only in Purchased still downloads. Matches by media ID before download; remove_hash_match removes copies with different IDs
 
-Only with `--allow-dupes`. A Purchased copy of media that is also in another post in the run (Messages, Timeline and so on), or was downloaded from one, is skipped: OnlyFans gives a purchased message a different post id in Purchased, so `--allow-dupes` alone downloads it twice. It works the other way round too: when a Purchased copy was downloaded first (with `--scrape-paid`, say), the oldest other copy of the media is not downloaded again. A run that doesn't scan Messages may give that credit to a repost of a bought message instead; when it holds a copy back that way, an info line says how many and that Messages wasn't scanned, and the copy downloads once a run includes Messages. Media found only in Purchased still downloads (one viewable copy), and other posts still get a copy each. A post listed in Purchased under the same id as a post in another area counts as that post, whichever area was scanned first; saved copies count as Purchased by their row's `api_type`. Every copy still gets its own `medias` row, and the `metadata` command is unaffected; only the download selection leaves copies out (`skip_purchased_copies` in `ofscraper/filters/media/filters.py`; the Fansly selector in `ofscraper/sites/fansly/pipeline.py`). `manual` downloads every copy of the URLs it is given. Without `--allow-dupes` it changes nothing. Matches by media ID before download; `advanced_options.remove_hash_match` removes copies with different IDs (`_remove_copies` in `ofscraper/utils/hash.py`).
+Only with `--allow-dupes` (without it, this flag changes nothing). Matches by media ID before download; `advanced_options.remove_hash_match` removes copies with different IDs (`_remove_copies` in `ofscraper/utils/hash.py`).
+
+- **Purchased vs. other areas:** A Purchased copy of media that is also in another post in the run (Messages, Timeline and so on), or was downloaded from one, is skipped (OnlyFans gives a purchased message a different post ID in Purchased, so `--allow-dupes` alone downloads it twice). It works the other way round too: when a Purchased copy was downloaded first (for example with `--scrape-paid`), the oldest other copy of the media is not downloaded again.
+- **When Messages isn't scanned:** A run that doesn't scan Messages may give that credit to a repost of a bought message instead; when it holds a copy back that way, an info line says how many and that Messages wasn't scanned, and the copy downloads once a run includes Messages.
+- **Edge cases:** Media found only in Purchased still downloads (one viewable copy), and other posts still get a copy each. A post listed in Purchased under the same ID as a post in another area counts as that post, whichever area was scanned first; saved copies count as Purchased by their row's `api_type`.
+- **Scope:** Every copy still gets its own `medias` row, and `metadata` is unaffected; only download selection leaves copies out (`skip_purchased_copies` in `ofscraper/filters/media/filters.py`; the Fansly selector in `ofscraper/sites/fansly/pipeline.py`). `manual` downloads every copy of the URLs it is given.
 
 **Dest:** `skip_purchased_dupes` · **Defined in:** `ofscraper/utils/args/parse/arguments/download.py`
 
