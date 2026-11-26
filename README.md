@@ -248,6 +248,7 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
 - **Record OnlyFans livestreams:** `--live` records the selected creators who are live now, and `--live-watch` keeps checking and records them as they go live. OnlyFans streams are recorded in a Chromium browser, which the first `--live` run at a terminal offers to install for you (about 200 MB; turn this off with `OFSC_INSTALL_EXTRAS=False` and install it yourself: `pip install "ofscraper-community[live]"`, then `playwright install chromium`). Recordings are saved as `.webm` under `OnlyFans/{username}/Livestreams/`. Based on [cjb900](https://github.com/cjb900)'s Live Stream Monitor plugin.
 - **Check your library against the database:** find files the database says are downloaded but that are missing, empty or the wrong size, offline, and mark them to be downloaded again. See [Verify](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/VERIFY.md).
 - **Move a creator's files after a rename:** move the files saved under a creator's old name to their current name's folder, and update the database to match. See [Moving files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/MOVING_FILES.md).
+- **Rename files after changing `file_format` or `dir_format`:** give the files already downloaded the names the new formats give, offline, and update the database to match. See [Renaming files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/RENAMING_FILES.md).
 
 ## Reporting a problem
 
