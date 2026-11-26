@@ -1,4 +1,5 @@
 import cloup as click
+from click import UsageError
 
 import ofscraper.commands.tools as tools
 from ofscraper.utils.args.parse.group_bundles.advanced_common import advanced_args
@@ -22,7 +23,5 @@ def program(ctx, *args, **kwargs):
 
     error = validate_multi_profile_args(ctx.params)
     if error:
-        from click import UsageError
-
         raise UsageError(error, ctx=ctx)
     return ctx.params, ctx.info_name
