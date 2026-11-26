@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 import pathlib
@@ -18,7 +19,7 @@ import ofscraper.utils.profiles.data as profile_data
 import ofscraper.utils.settings as settings
 import ofscraper.utils.dry_run as dry_run
 from ofscraper.utils.string import parse_safe
-from ofscraper.utils.config.naming_check import name_safe
+from ofscraper.utils.config.naming_check import LIVE_TYPE_KEYS, name_safe
 import ofscraper.managers.manager as manager
 from ofscraper.scripts.naming_script import naming_script
 
@@ -74,36 +75,168 @@ _SITE_SPECIFIC_FIELDS = {
 }
 
 
-def _is_site_specific(fmt):
-    """True when ``fmt`` resolves to a different path for each site."""
-    fields = {
+def _template_fields(*formats):
+    return {
         name.split(".")[0].split("[")[0]
-        for _, name, _, _ in string.Formatter().parse(fmt)
+        for fmt in formats
+        for _, name, _, _ in string.Formatter().parse(fmt or "")
         if name
     }
-    return bool(fields & _SITE_SPECIFIC_FIELDS)
+
+
+def _is_site_specific(fmt):
+    """True when ``fmt`` resolves to a different path for each site."""
+    return bool(_template_fields(fmt) & _SITE_SPECIFIC_FIELDS)
 
 
 def _names_site(fmt):
     """True when ``fmt`` uses {site_name} (or {sitename})."""
-    return any(
-        name and name.split(".")[0].split("[")[0] in {"site_name", "sitename"}
-        for _, name, _, _ in string.Formatter().parse(fmt or "")
-    )
+    return bool(_template_fields(fmt) & {"site_name", "sitename"})
 
 
-def default_media_root():
-    """Save location; Fansly profiles save under ``<save location>/Fansly``,
+def default_media_root(save_location=None, dir_format=None, file_format=None, *, site_name=None):
+    """The folder ``dir_format`` is placed under: ``save_location`` (the
+    file_options one when not given). Fansly gets a ``Fansly`` folder in it,
     unless ``dir_format`` or ``file_format`` already names the site with
     {site_name}: then each site's folder comes from the template, and Fansly
     files don't get a second ``Fansly`` folder. Only the media folder: the
     database path and the {save_location} and {root} values keep the
     ``Fansly`` folder either way."""
-    if sites.is_fansly() and (
-        _names_site(data.get_dirformat()) or _names_site(data.get_fileformat())
-    ):
-        return pathlib.Path(common_paths.get_save_location())
-    return pathlib.Path(site_save_location())
+    base = save_location or common_paths.get_save_location()
+    dir_fmt = dir_format if dir_format is not None else data.get_dirformat()
+    file_fmt = file_format if file_format is not None else data.get_fileformat()
+    site = site_name or sites.site_name()
+    if site.lower() == sites.FANSLY and not (_names_site(dir_fmt) or _names_site(file_fmt)):
+        return pathlib.Path(base, site)
+    return pathlib.Path(base)
+
+
+def _type_settings(type_keys):
+    """The type_options values for these types (names matched without regard
+    to case); when two types set a value, the first type's wins."""
+    by_name = {name.strip().lower(): section for name, section in data.get_type_options().items()}
+    found = {}
+    for key in type_keys:
+        for field, value in by_name.get(str(key or "").strip().lower(), {}).items():
+            if isinstance(value, str) and value.strip():
+                found.setdefault(field, value)
+    return found
+
+
+def media_templates(type_keys, *, save_location=None, dir_format=None, file_format=None, site_name=None):
+    """(root, dir_format, file_format) for these types: type_options first,
+    then the values given, then file_options."""
+    found = _type_settings(type_keys)
+    dir_fmt = found.get("dir_format") or dir_format or data.get_dirformat()
+    file_fmt = found.get("file_format") or file_format or data.get_fileformat()
+    root = default_media_root(
+        found.get("save_location") or save_location, dir_fmt, file_fmt, site_name=site_name
+    )
+    return root, dir_fmt, file_fmt
+
+
+def media_roots():
+    """Every folder media is saved under: the save location's and each
+    type_options entry's."""
+    roots = [default_media_root()]
+    roots.extend(media_templates((name,))[0] for name in data.get_type_options())
+    return list(dict.fromkeys(roots))
+
+
+def _base_path_variables(save_location, site_name, *, include_account=True):
+    """Common path context; live templates fetch account identity only when used."""
+    my_username, my_id = "", ""
+    if include_account:
+        _, my_username = me.parse_user()
+        my_id = "anon" if settings.get_settings().anon else me.get_id()
+    return {
+        "config_path": common_paths.get_config_home(),
+        "profile": profile_data.get_active_profile(),
+        "site_name": site_name,
+        "save_location": save_location,
+        "root": pathlib.Path(save_location),
+        "my_id": my_id,
+        "my_username": my_username,
+    }
+
+
+def _add_aliases(variables):
+    variables.update({key.replace("_", ""): value
+                      for key, value in list(variables.items()) if "_" in key})
+
+
+DEFAULT_LIVE_DIR_FORMAT = "{sitename}/{model_username}/Livestreams"
+DEFAULT_LIVE_FILE_FORMAT = "{model_username}_{date}_live"
+
+
+def live_recording_path(
+    save_location,
+    username: str,
+    started_at: datetime.datetime,
+    *,
+    site_name: str,
+    ext: str,
+    model_id=None,
+) -> pathlib.Path:
+    """A livestream's file: type_options.livestreams, then live_options, then
+    ``{sitename}/{model_username}/Livestreams/{model_username}_{date}_live``
+    under the save location. A template that can't be filled in (an unknown
+    placeholder) falls back to that default, with a warning, so the stream
+    is still recorded."""
+    context = dict(username=username, started_at=started_at, site_name=site_name,
+                   model_id=model_id, ext=ext)
+    templates = media_templates(
+        LIVE_TYPE_KEYS,
+        save_location=data.get_live_save_location() or save_location,
+        dir_format=data.get_live_dirformat() or DEFAULT_LIVE_DIR_FORMAT,
+        file_format=data.get_live_fileformat() or DEFAULT_LIVE_FILE_FORMAT,
+        site_name=site_name,
+    )
+    try:
+        path = _live_path(*templates, **context)
+    except (KeyError, AttributeError, IndexError, ValueError) as E:
+        log.warning(
+            f"The livestream folder or file name template can't be filled in ({E!r}),"
+            f" so {username}'s recording uses the default name"
+        )
+        default = media_templates(
+            (), save_location=save_location, dir_format=DEFAULT_LIVE_DIR_FORMAT,
+            file_format=DEFAULT_LIVE_FILE_FORMAT, site_name=site_name,
+        )
+        path = _live_path(*default, **context)
+    return final_path(path)
+
+
+def _live_path(root, dir_fmt, file_fmt, *, username, started_at, site_name, model_id, ext):
+    fields = _template_fields(dir_fmt, file_fmt)
+    variables = _base_path_variables(
+        str(root), site_name,
+        include_account=bool(fields & {"my_id", "myid", "my_username", "myusername"}),
+    )
+    stamp = started_at.strftime("%Y%m%d_%H%M%S")
+    variables.update({
+        "user_name": username,
+        "username": username,
+        "model_username": username,
+        "model_id": model_id if model_id is not None else "",
+        "first_letter": username[0].capitalize() if username else "U",
+        "response_type": "Livestreams",
+        "media_type": "Videos",
+        "date": stamp,
+        "timestamp": stamp,
+        "year": started_at.strftime("%Y"),
+        "month": started_at.strftime("%m"),
+        "day": started_at.strftime("%d"),
+        "ext": ext,
+        "config": config_file.open_config(),
+        "args": settings.get_args(),
+    })
+    _add_aliases(variables)
+    folder = _safe_format(dir_fmt, variables)
+    stem = _safe_format(file_fmt, variables)
+    if stem.lower().endswith(f".{ext.lower()}"):
+        stem = stem[: -(len(ext) + 1)]
+    return pathlib.Path(os.path.normpath(str(root / folder)), f"{stem}.{ext}")
 
 
 def final_path(path):
@@ -119,22 +252,8 @@ class basePlaceholder:
         self._ele = None
 
     def create_variables_base(self):
-        _, my_username = me.parse_user()
-        my_id = "anon" if settings.get_settings().anon else me.get_id()
-        # {save_location} and {root} keep the site root (<save location>/Fansly
-        # on Fansly runs) even when {site_name} drops it from the media
-        # folder, so a metadata path built from them can't reach an OnlyFans
-        # user_data.db
-        save_location = site_save_location()
-        self._variables = {
-            "config_path": common_paths.get_config_home(),
-            "profile": profile_data.get_active_profile(),
-            "site_name": sites.site_name(),
-            "save_location": save_location,
-            "my_id": my_id,
-            "my_username": my_username,
-            "root": pathlib.Path((save_location)),
-        }
+        # Metadata keeps the site root even when the media template names the site.
+        self._variables = _base_path_variables(site_save_location(), sites.site_name())
 
     def async_wrapper(f):
         async def inner(*args, **kwargs):
@@ -153,11 +272,13 @@ class basePlaceholder:
         return inner
 
     def add_no_underline(self):
-        items = list(self._variables.items())
-        for key, val in items:
-            if "_" in key:
-                new_key = key.replace("_", "")
-                self._variables.update({new_key: val})
+        _add_aliases(self._variables)
+
+    def templates(self):
+        """(root, dir_format, file_format) for this item, worked out once"""
+        if getattr(self, "_templates", None) is None:
+            self._templates = media_templates(self.type_keys())
+        return self._templates
 
 
 class tempFilePlaceholder(basePlaceholder):
@@ -334,6 +455,10 @@ class Placeholders(basePlaceholder):
         self._ele = ele
         self._ext = ext
 
+    def type_keys(self):
+        ele = self._ele
+        return (ele.responsetype, ele.modified_responsetype, ele.mediatype)
+
     async def init(self, create=True):
         dir = await self.getmediadir(create=create)
         file = await self.createfilename()
@@ -383,10 +508,11 @@ class Placeholders(basePlaceholder):
         the extension: a nameless ".jpg" is no name, nor is the "_1.jpg" a
         count makes of it (the count repeats in every post), but "_70.jpg"
         from "{text}_{media_id}" is."""
-        out = data.get_fileformat().format(**{**self._variables, "text": text.rstrip()})
+        file_fmt = self.templates()[2]
+        out = file_fmt.format(**{**self._variables, "text": text.rstrip()})
         if not re.sub(r"\.[a-z0-9]{1,10}$", "", out, flags=re.IGNORECASE).strip():
             return None
-        return self._addcount(self._ele, out)
+        return self._addcount(self._ele, out, file_fmt)
 
     def add_price_variables(self, username):
         modelObj = manager.Manager.current_model_manager.get_model(username)
@@ -470,7 +596,8 @@ class Placeholders(basePlaceholder):
         ele = self._ele
         username = ele.username
         model_id = ele.model_id
-        root = pathlib.Path(root or default_media_root())
+        default_root, dir_fmt, _ = self.templates()
+        root = pathlib.Path(root) if root else default_root
         await self.add_common_variables(ele, username, model_id)
         # the date setting can hold ":" or "*", which a folder name can't on
         # Windows; a date fills one folder, so its "/" adds none
@@ -480,9 +607,7 @@ class Placeholders(basePlaceholder):
         log.trace(
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
         )
-        downloadDir = pathlib.Path(
-            _safe_format(data.get_dirformat(), self._variables)
-        )
+        downloadDir = pathlib.Path(_safe_format(dir_fmt, self._variables))
         final_path = pathlib.Path(
             os.path.normpath(f"{str(root)}/{str(pathlib.Path(downloadDir))}")
         )
@@ -499,6 +624,7 @@ class Placeholders(basePlaceholder):
         ext = self._ext
         username = ele.username
         model_id = ele.model_id
+        file_fmt = self.templates()[2]
         self._variables.update({"ext": ext})
         await self.add_common_variables(ele, username, model_id)
         # the date setting can hold "/", which a folder can use but a file
@@ -512,16 +638,16 @@ class Placeholders(basePlaceholder):
         if ele.responsetype.capitalize() == "Profile":
             out = _safe_parts(f"{await ele.final_filename}.{ext}")
         else:
-            out = _safe_format(data.get_fileformat(), self._variables)
-        out = self._addcount(ele, out)
+            out = _safe_format(file_fmt, self._variables)
+        out = self._addcount(ele, out, file_fmt)
         log.debug(f"final filename path {out}")
         self._filename = out
         return out
 
-    def _addcount(self, ele, out):
+    def _addcount(self, ele, out, file_format):
         if not of_env.getattr("FILE_COUNT_PLACEHOLDER"):
             return out
-        elif not self._needs_count(ele):
+        elif not self._needs_count(ele, file_format):
             return out
         out = re.sub(" $", "", out)
         # insert count, before the extension if there is one: only the last
@@ -532,7 +658,7 @@ class Placeholders(basePlaceholder):
             out = f"{out}_{ele.count}"
         return out
 
-    def _needs_count(self, ele):
+    def _needs_count(self, ele, file_format):
         unique = set(
             [
                 "filename",
@@ -546,7 +672,7 @@ class Placeholders(basePlaceholder):
                 "mediaid",
             ]
         )
-        file_format = parse_safe(data.get_fileformat())
+        file_format = parse_safe(file_format)
         # return early if pass
         if len((unique & file_format)) > 0:
             return False
@@ -664,6 +790,10 @@ class Textholders(basePlaceholder):
         self._ele = ele
         self._ext = ext
 
+    def type_keys(self):
+        ele = self._ele
+        return (ele.responsetype, ele.modified_responsetype, "text")
+
     async def init(self, create=True):
         dir = await self.getmediadir(create=create)
         file = await self.createfilename()
@@ -755,7 +885,8 @@ class Textholders(basePlaceholder):
         ele = self._ele
         username = ele.username
         model_id = ele.model_id
-        root = pathlib.Path(root or default_media_root())
+        default_root, dir_fmt, _ = self.templates()
+        root = pathlib.Path(root) if root else default_root
         await self.add_common_variables(ele, username, model_id)
         # the date setting can hold ":" or "*", which a folder name can't on
         # Windows; a date fills one folder, so its "/" adds none
@@ -766,9 +897,7 @@ class Textholders(basePlaceholder):
             f"modelid:{model_id}  mediadir placeholders {list(filter(lambda x:x[0] in set(list(self._variables.keys())),list(locals().items())))}"
         )
 
-        downloadDir = pathlib.Path(
-            _safe_format(data.get_dirformat(), self._variables)
-        )
+        downloadDir = pathlib.Path(_safe_format(dir_fmt, self._variables))
         final_path = pathlib.Path(
             os.path.normpath(f"{str(root)}/{str(pathlib.Path(downloadDir))}")
         )
@@ -783,6 +912,7 @@ class Textholders(basePlaceholder):
         ext = self._ext
         username = ele.username
         model_id = ele.model_id
+        file_fmt = self.templates()[2]
         self._variables.update({"ext": ext})
         await self.add_common_variables(ele, username, model_id)
         # the date setting can hold "/", which a folder can use but a file
@@ -798,7 +928,7 @@ class Textholders(basePlaceholder):
             text = ele.file_sanitized_text
             out = f"{text}.{ext}"
         else:
-            file_format = data.get_fileformat()
+            file_format = file_fmt
             fields = parse_safe(file_format)
             if "text" in fields and any(k in fields for k in _CAPTION_NAMES):
                 # a text file's {filename} is its caption, as {text} is: with
@@ -814,7 +944,7 @@ class Textholders(basePlaceholder):
             else:
                 out = file_format.format(**self._variables)
         log.debug(f"final filename path {out}")
-        self._filename = _safe_name(out, data.get_fileformat(), self._variables)
+        self._filename = _safe_name(out, file_fmt, self._variables)
         return self._filename
 
     @property

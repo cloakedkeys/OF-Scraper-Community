@@ -170,12 +170,16 @@ def folder_name(username) -> str:
     return name or "unknown"
 
 
-def recording_base(save_location, username, started_at) -> pathlib.Path:
+def recording_base(save_location, username, started_at, *, model_id=None) -> pathlib.Path:
     """``{save_location}/Fansly/{username}/Livestreams/{username}_{YYYYMMDD_HHMMSS}_live``"""
-    stamp = utc_start(started_at).strftime("%Y%m%d_%H%M%S")
-    username = folder_name(username)
-    folder = pathlib.Path(save_location) / "Fansly" / username / "Livestreams"
-    return folder / f"{username}_{stamp}_live"
+    import ofscraper.classes.placeholder as placeholder
+
+    path = placeholder.live_recording_path(
+        save_location, folder_name(username), utc_start(started_at),
+        site_name="Fansly", ext="mp4", model_id=model_id,
+    )
+    # part_path adds .mp4, or _part<n>.mp4
+    return path.with_name(path.stem)
 
 
 def part_path(base: pathlib.Path, n: int) -> pathlib.Path:
@@ -419,7 +423,8 @@ class LiveRecorder:
                     mask_url_secrets(channel.get("playbackUrl"))
                 if self.base is None:
                     self.base = recording_base(self.save_location, self.username,
-                                               self.stream.get("startedAt"))
+                                               self.stream.get("startedAt"),
+                                               model_id=self.stream.get("accountId"))
                     self.base.parent.mkdir(parents=True, exist_ok=True)
                     self._read_earlier_sidecar()
                 # chat starts with the first channel that came back, so a

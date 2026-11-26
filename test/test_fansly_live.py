@@ -2080,3 +2080,68 @@ def test_an_empty_proxy_connects_the_chat_socket_directly(monkeypatch):
     asked, error = asyncio.run(scenario())
     assert not isinstance(error, ValueError)
     assert asked == ["GET /?v=3 HTTP/1.1\r\n"]
+
+
+
+
+def test_fansly_live_options_enforces_sitename_when_omitted(monkeypatch, tmp_path):
+    import ofscraper.utils.config.file as config_file
+
+    cfg = {
+        "live_options": {
+            "save_location": str(tmp_path / "streams"),
+            "dir_format": "{model_username}/VODs",
+            "file_format": "{model_username}_{date}",
+        },
+        "type_options": {},
+    }
+    monkeypatch.setattr(config_file, "open_config", lambda: cfg)
+
+    # Without {sitename} in dir_format or file_format, /Fansly is still enforced
+    assert live.recording_base(tmp_path, "creator_a", STARTED_MS) == (
+        tmp_path / "streams" / "Fansly" / "creator_a" / "VODs" / f"creator_a_{STAMP}"
+    )
+
+    # With {sitename} present, no duplicate Fansly folder is added
+    cfg["live_options"]["dir_format"] = "{sitename}/{model_username}/VODs"
+    assert live.recording_base(tmp_path, "creator_a", STARTED_MS) == (
+        tmp_path / "streams" / "Fansly" / "creator_a" / "VODs" / f"creator_a_{STAMP}"
+    )
+
+    # type_options.livestreams takes precedence over live_options
+    cfg["type_options"] = {
+        "livestreams": {
+            "save_location": str(tmp_path / "nvme_live"),
+            "dir_format": "{sitename}/custom/{model_username}",
+        }
+    }
+    assert live.recording_base(tmp_path, "creator_a", STARTED_MS) == (
+        tmp_path / "nvme_live" / "Fansly" / "custom" / "creator_a" / f"creator_a_{STAMP}"
+    )
+
+
+@pytest.mark.parametrize("field", ["model_id", "modelid"])
+def test_live_path_uses_stream_account_id_without_cached_models(monkeypatch, tmp_path, fansly_settings, field):
+    import ofscraper.utils.config.file as config_file
+
+    fansly_settings(live=True, anon=True)
+    monkeypatch.setattr(manager, "Manager", manager.mainManager())
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({"live_options": {
+        "dir_format": "{" + field + "}", "file_format": "{date}"}}), encoding="utf-8")
+    monkeypatch.setattr(config_file, "open_config", lambda: json.loads(cfg_path.read_text(encoding="utf-8")))
+
+    async def channel():
+        return {"live": True}
+
+    async def text(url):
+        raise AssertionError("No playlist request expected")
+
+    async def record(channel, stop):
+        return True, False
+
+    stream = {"username": "test_creator", "accountId": "123", "startedAt": STARTED_MS}
+    recorder = live.LiveRecorder(stream, tmp_path, channel, text)
+    monkeypatch.setattr(recorder, "_record_part", record)
+    asyncio.run(recorder.run())
+    assert recorder.base.parent == tmp_path / "Fansly" / "123"
