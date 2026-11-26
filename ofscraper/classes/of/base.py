@@ -75,7 +75,9 @@ class base:
         text = text.replace("\xa0", " ")
         # Fansly text is plain already (normalize._item_dict); removing the
         # codes again would drop an escaped "\[s:lg\]", shown as "[s:lg]"
-        text = re.sub(r'[\n<>:"/\|?*:;]+', "", text)
+        # a backslash is a folder separator on Windows, and control characters
+        # (tab, carriage return) can't be in a Windows file name
+        text = re.sub(r'[\x00-\x1f\x7f<>:"/\\|?*;]+', "", text)
         text = re.sub("-+", "_", text)
         text = re.sub(" +", " ", text).strip(" ")
         text = re.sub(" ", settings.get_settings().space_replacer, text)
