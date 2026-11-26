@@ -18,6 +18,7 @@ from humanfriendly import InvalidSize, parse_size
 
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.config.file as config_file
+import ofscraper.utils.config.naming_check as naming_check
 import ofscraper.utils.config.utils.wrapper as wrapper
 
 # auto_update_config rebuilds config.json from these getters and writes it
@@ -317,6 +318,16 @@ def get_post_script(config=None):
         "advanced_options.post_script",
         "scripts.post_script",
         "script_options.post_script",
+    )
+
+
+@wrapper.config_reader
+def get_alert_script(config=None):
+    return _value(
+        config,
+        "ALERT_SCRIPT_DEFAULT",
+        "alert_script",
+        "script_options.alert_script",
     )
 
 
@@ -694,11 +705,9 @@ def get_textType(config=None):
         "text_type_default",
         "file_options.text_type_default",
     )
-    return (
-        final_value
-        if isinstance(final_value, str) and final_value in {"letter", "word"}
-        else of_env.getattr("TEXT_TYPE_DEFAULT")
-    )
+    # "Word" is word; anything else falls back, and the startup rewrite of
+    # config.json then replaces it
+    return naming_check.text_type(final_value) or of_env.getattr("TEXT_TYPE_DEFAULT")
 
 
 @wrapper.config_reader
