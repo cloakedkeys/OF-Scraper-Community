@@ -129,8 +129,10 @@ def test_words_on_separate_lines_count_as_separate_words(naming):
 
 
 def test_a_caption_with_nothing_for_a_name_is_the_post_id(naming):
-    text, (media,) = naming("{text}.{ext}", "???")
-    assert (text, media) == ("8.txt", "8.jpg")
+    # the text file's name; a media file falls back to its own file name,
+    # then the date (test_textlength.py)
+    text, _ = naming("{text}.{ext}", "???")
+    assert text == "8.txt"
     # a text file's {filename} is its caption too
     assert naming("{filename}.{ext}", "???")[0] == "8.txt"
 
