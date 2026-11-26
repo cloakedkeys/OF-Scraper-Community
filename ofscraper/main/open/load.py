@@ -11,6 +11,7 @@ import ofscraper.utils.logs.logger as logger
 import ofscraper.utils.logs.logs as logs
 import ofscraper.utils.paths.manage as paths_manage
 import ofscraper.utils.system.system as system
+import ofscraper.utils.config.naming_check as naming_check
 import ofscraper.utils.settings as settings
 
 
@@ -39,6 +40,7 @@ def main():
             raise SystemExit(exit_status.CONFIG)
         setLogger()
         make_folder()
+        checkFileOptions()
         run.main()
     except Exception as E:
         _report_startup_error(E)
@@ -72,3 +74,7 @@ def readConfig():
 
 def make_folder():
     paths_manage.make_folders()
+
+
+def checkFileOptions():
+    naming_check.report()
