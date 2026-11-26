@@ -36,7 +36,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 
 | Command | Summary |
 |---|---|
-| [Main program (no command)](#main-program-no-command) (104 options) | OF-Scraper Options |
+| [Main program (no command)](#main-program-no-command) (105 options) | OF-Scraper Options |
 | [`manual`](#manual) (53 options) | Manually download media by providing a list of URLs or IDs |
 | [`msg_check`](#msg_check) (53 options) | Produces a media table from messages with filterable entries and quick downloads |
 | [`story_check`](#story_check) (51 options) | Produces a media table from stories and highlights with filterable entries and quick downloads |
@@ -45,12 +45,15 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 | [`metadata`](#metadata) (86 options) | Modify metadata or db files |
 | [`db`](#db) (61 options) | Print information from the database |
 | [`creator_names`](#creator_names-separate-entry-point) (argparse) | List and record the usernames each creator account has had. |
+| [`doctor`](#doctor-separate-entry-point) (argparse) | Check the setup without running a scrape. |
 | [`health`](#health-separate-entry-point) (argparse) | Check whether an unattended daemon is healthy from its status file. |
 | [`move_creator_files`](#move_creator_files-separate-entry-point) (argparse) | Move a creator's downloaded files to match new path settings and update recorded paths. |
 | [`postgres_export`](#postgres_export-separate-entry-point) (argparse) | Export creators from PostgreSQL back to per-creator `user_data.db` files. |
 | [`postgres_import`](#postgres_import-separate-entry-point) (argparse) | Import per-creator `user_data.db` files into PostgreSQL. |
 | [`recover_collisions`](#recover_collisions-separate-entry-point) (argparse) | Find recorded paths shared by different media and reset downloaded flags to re-download. |
+| [`rename_to_format`](#rename_to_format-separate-entry-point) (argparse) | Rename a creator's downloaded files to the current file_format and dir_format, offline. |
 | [`stash_sync`](#stash_sync-separate-entry-point) (argparse) | Sync downloaded media metadata from OF-Scraper databases into Stash. |
+| [`verify`](#verify-separate-entry-point) (argparse) | Check downloaded files against the database, offline. |
 
 ## Commands
 
@@ -58,7 +61,7 @@ Run `OF-Scraper [OPTIONS] [COMMAND] [COMMAND OPTIONS]`.
 
 ### Main program (no command)
 
-**Options:** 104 · **`--help` summary:** OF-Scraper Options
+**Options:** 105 · **`--help` summary:** OF-Scraper Options
 
 Runs when no subcommand is given. The entry point is `ofscraper/__main__.py`. Then `Manager.pick()` calls `commands/scraper/scraper.main()`, which cleans temp files and the database and checks the CDM. After that, the run goes one of these ways:
 
@@ -135,6 +138,23 @@ Run `ofscraper creator_names [--all | --find NAME | --add MODEL_ID NAME [--seen 
 - `--force`: with --add, add the name even if it changes the deleted-account folder name
 - `--csv`: also write the listing to a CSV file
 
+### `doctor` (separate entry point)
+
+`ofscraper doctor [--config PATH] [--profile NAME] [--site SITE] [--json] [--online]` (or `python -m ofscraper.commands.doctor`). Offline tool using argparse. Checks the setup and prints one line per check: `PASS`, `WARN`, `FAIL` or `SKIP`. Exits 1 when any check fails, else 0. Changes nothing, makes no connection and never asks a question: `config.json` is read as plain JSON (a missing or broken file is a finding, and the rest is checked with the defaults), not through the normal start.
+
+- **Checks:** the running install (version, Python and package folder, or the binary), warning when the `ofscraper` command on `PATH` starts a different install (its Python is read from the script's `#!` line, `/usr/bin/env` ones found on `PATH`, from pip's Windows launcher, or from a uv trampoline's `UV_PYTHON_PATH` resource, a relative one beside the trampoline; a shell wrapper's `exec` is followed to a python or to another command, and a script that can't be followed, such as a version manager's shim, is `SKIP`); the config file (`--config` is found as a run finds it); the profile and its site (`site.json`, or `--site`); that site's auth file (OnlyFans: `auth.json` present with `sess`, `auth_id`, `user_agent` and `x-bc` set as text that isn't only spaces, warning about a value that still has quotes, spaces, `;` or `=` (the last three not counted in `user_agent`) or characters outside printable ASCII after a run's own clean-up, about `sess` set to `deleted`, and about `sess`, `auth_id` or `x-bc` in `config.json`; Fansly: `fansly_auth.json` as `problems()` judges it; a missing file is `WARN`, as a run asks for the login), the other site's being `SKIP`; ffmpeg, found as a download finds it (config, pyffmpeg, `PATH`) and failing below version 6, with its version and where it was found (pyffmpeg isn't imported: a binary it hasn't unpacked yet is reported as such, with no version); ffprobe beside it or in `PATH` (`WARN` if missing); the key files in `manual` key mode, which must exist and load as a Widevine device, with the likely cause when they don't (a `~` that isn't expanded, a folder named instead of a file, a dumped or renamed file beside the missing name in any letter case, a `client-id` that looks like a private key or the reverse, a JSON file, with or without a byte order mark, or key paths put in `auth.json`) (neither set is `WARN`, the fresh-install default: a run skips protected videos until they're set; `cdrm` mode is a `WARN`: its service no longer works, so protected videos fail; it says to switch to `manual`, noting when `client-id` and `private-key` are already set, and the service isn't contacted; with `OFSC_CDRM_URL` set to another server it names that server's host instead, and says it is sent the OnlyFans cookies; `SKIP` for a Fansly profile, whose videos have no DRM); the save folder and the temp folder (when set) exist, with free space (a missing save folder is `WARN`, as a run makes it, but `FAIL` when its drive is missing on Windows, or on Linux and macOS when nothing is there below `/` or a place drives are mounted (`/mnt`, `/media`, `/Volumes`, `/net`, `/run/media/<user>`), as the drive or share likely isn't mounted); the free-space limit (`system_free_min`), warning when `OFSC_DISK_SPACE_CHECK_PATH` is on another disk than the save folder (an empty value measures the save folder's disk); and the database setting (`OFSC_DATABASE_URL`, shown without the login, failing when its driver isn't installed).
+- **`--online`:** also connects. PostgreSQL is checked first (`POSTGRES.check()`: the server version, or why it can't be used), then the scraper is started as a run starts (settings, config, logs, folders, no scrape), the login is checked with the scraper's own session (`auth_status`: logged in, rejected, or couldn't be checked). For OnlyFans, once logged in, the subscription count is read (one `subscriptions/count/all` request, as a run makes), warning at no active subscriptions or a count that can't be read (a network or server failure in the start's own words), and naming `default_user_list` or `default_black_list` when they leave creators out (with how many lists, not the lists' names, which are often creators' names); and it says which signing-rule source answered and why others didn't. With `STASH_URL` set, Stash is asked for its version. It isn't read-only: the start may rewrite `config.json` and create folders, and the signing rule and Fansly's device id are kept as a run keeps them. The login check is skipped when the config file or the auth file failed offline or the auth file isn't there, since the start would stop to ask about them.
+- **Secrets:** auth values, the database password and key contents are never printed; fields are named. The output is meant for public issues: the home folder is shown as `~`, and the login name, where it's a folder name in another path, as `<user>`.
+- **`--json`:** prints `{"ok": ..., "results": [{"status", "check", "detail"}]}`; anything the `--online` start prints goes to stderr.
+
+Run `ofscraper doctor [--config PATH] [--profile NAME] [--site SITE] [--json] [--online]` (or `python -m ofscraper.commands.doctor [--config PATH] [--profile NAME] [--site SITE] [--json] [--online]`).
+
+- `--config`: The config file or folder, as for a run's --config
+- `--profile`: The profile to check (default: the config's main profile)
+- `--site`: Check this site's auth file, not the profile's site
+- `--json`: Print the results as JSON
+- `--online`: Also connect: PostgreSQL, the login, the subscription count, the signing rules and Stash. Not read-only: it starts the scraper as a run does
+
 ### `health` (separate entry point)
 
 `ofscraper health [STATUS_FILE] [--max-quiet MINUTES]` (or `python -m ofscraper.commands.health`). Offline tool using argparse. Reads `status.json` (from `STATUS_FILE`, `OFSC_STATUS_FILE`, or else the main profile's) without starting the scraper, prints one line saying why, and exits 0 when healthy or 1 when unhealthy. Reports unhealthy when a running daemon's heartbeat is older than `--max-quiet` (default 60 minutes, above 0), as is an idle daemon's with no next pass scheduled, when an idle daemon's `next_pass_at` passed more than `--max-quiet` ago, when the last pass recorded a failed login that no later login check cleared, or when the last pass ended any other way than ok (0), partial (4) or stopped by Ctrl+C or `docker stop` (130). Only a pass or login recorded since the current daemon started counts: one left from before a restart is ignored, so until the daemon's first pass ends the heartbeat and schedule decide. Reports healthy when there is no status file or the last run was a one-off.
@@ -180,7 +200,7 @@ Run `ofscraper postgres_export FOLDER [OPTIONS]` (or `python -m ofscraper.comman
 
 Run `ofscraper postgres_import FOLDER [OPTIONS]` (or `python -m ofscraper.commands.postgres_import FOLDER [OPTIONS]`).
 
-- `FOLDER`: folder to search for user_data.db files
+- `FOLDER`: folder to search for user_data.db files, or one database file
 - `--apply`: write to PostgreSQL; without it, only report
 - `--skip-bad-files`: with --apply, bring in the files that can be and leave out the rest
 - `--staging`: folder for the working copies, which need as much room as the files (default: the system's temporary folder)
@@ -202,6 +222,26 @@ Run `ofscraper recover_collisions (DATABASE | --postgres --creator NAME) [OPTION
 - `--creator`: With --postgres, the one creator to work on, by a username or id that no other creator has
 - `--undo-dir`: With --postgres, the folder --apply writes the undo file to: needed with --apply, and it must be a folder that is kept (in Docker, a mounted one)
 
+### `rename_to_format` (separate entry point)
+
+`ofscraper rename_to_format (DB [--username NAME] [--config PATH] [--profile NAME] [--path-root DIR] [--sample N] | --undo FILE) [--apply]` (or `python -m ofscraper.commands.rename_to_format`). Offline tool using argparse (see `RENAMING_FILES.md`). Works offline on one creator's `user_data.db`: gives the files its `medias` rows record the names a download would now give them under the current `file_format` and `dir_format`, and sets `directory` and `filename` in those rows to match. Reads the scraper's `config.json` (`--config`, `--profile`, as the scraper's own options) but never writes it, and refuses a missing or broken one. Without `--apply`, prints a JSON report and changes nothing.
+
+- **New names:** built by the download's placeholder code (`ofscraper/classes/placeholder.py`) from what the database holds: the media row, its post, message or story row, the `labels` table and the creator's name (`--username`, default the name seen last). A name that needs a value the database doesn't hold is left and listed: a video's `{quality}` (and `{filename}`, which includes it) when the recorded name doesn't show it, `{text}` of a story or of text saved with `sanitize_text` on, `{label}` of a labelled post, `{count}` in a post with several media, the price placeholders, `{my_id}`, `{my_username}`, `{modelObj}` and `{args}`. A set `naming_script` is refused.
+- **Per-file handling:** a file is renamed when its new place is free, never onto an existing file. A file whose new place is taken, recorded by another row, or the new name of another file too is left and listed with its rows unchanged. A file already at its new place with the recorded size only gets its rows changed. Removes old folders left empty, up to the save location.
+- **Undo:** with `--apply`, a JSON undo file listing every rename and row change is written beside the database first. `--undo FILE` previews putting back what is still as the run left it, and does it with `--apply`. If a run is stopped (an error or Ctrl-C), the files renamed so far get their old names back and no row changes; the undo file is removed when every file is back at its old name and kept otherwise. A file that can't be renamed is listed and the rest go on.
+- **PostgreSQL:** not supported. While `OFSC_DATABASE_URL` is set, a preview warns that the file doesn't reach PostgreSQL, and `--apply` (also with `--undo`) is refused.
+
+Run `ofscraper rename_to_format (DATABASE | --undo FILE) [OPTIONS]` (or `python -m ofscraper.commands.rename_to_format (DATABASE | --undo FILE) [OPTIONS]`).
+
+- `DATABASE`: One creator's user_data.db
+- `--apply`: Rename the files and change the rows; writes an undo file first. Without it, only report
+- `--username`: The recorded name to build {model_username} from (default: the name seen last)
+- `--config`, `-cg`: The scraper's config.json, or its folder, as the scraper's --config (default: the scraper's)
+- `--profile`, `-r`: The scraper profile, for {profile} (default: config.json's main_profile)
+- `--path-root`: Original working directory for relative recorded paths
+- `--sample`: List up to N of the renames (default 20; 0 lists all)
+- `--undo`: Preview putting back what an --apply changed, from its undo file; with --apply, put it back
+
 ### `stash_sync` (separate entry point)
 
 `ofscraper stash_sync (PATH... | --postgres [--site SITE] [--creator NAME]) [--apply] [--scan] [--path-map LOCAL=STASH]` (or `python -m ofscraper.commands.stash_sync`). Offline tool using argparse (see `STASH.md`). Reads creators' `user_data.db` files offline (searching folders such as `<profile>/.data`), or with `--postgres` reads the PostgreSQL database named by `OFSC_DATABASE_URL` in the current environment (read-only; all creators on both sites unless narrowed with `--site` or `--creator`). Over Stash's GraphQL API, fills empty fields on each downloaded file's scene or image: performer, studio, date, title, details, code, URL and source tags. Fansly databases (`schema_flags` `site=fansly`) get the `Fansly` studio and links instead of OnlyFans ones, plus @mentioned creators as performers, the media ID as code, a preview tag, hashtags as tags, and a gallery per post or message. Never overwrites existing Stash values, never contacts OnlyFans or Fansly, and without `--apply` only prints a JSON report.
@@ -221,6 +261,41 @@ Run `ofscraper stash_sync (PATH... | --postgres) [OPTIONS]` (or `python -m ofscr
 - `--organized`: also mark items as organized
 - `--path-map`: rewrite a path prefix when Stash sees the files elsewhere (e.g. in Docker); repeatable
 - `--scan`: with --apply, have Stash scan the download folders first and wait for it
+
+### `verify` (separate entry point)
+
+`ofscraper verify (PATH... | --postgres --creator NAME [--site SITE] [--undo-dir DIR]) [--apply] [--reset-size-differs] [--allow-missing] [--hash] [--reset-hash-differs] [--untracked] [--undo FILE] [--path-map RECORDED=HERE] [--path-root DIR] [--sample N]` (or `python -m ofscraper.commands.verify`). Offline tool using argparse (see `VERIFY.md`). Checks every media marked downloaded against the file its rows record, without logging in or reading the scraper's settings, and prints a JSON report. A path is a `user_data.db` or a folder (such as a profile's `.data`) searched for them. Without `--apply`, changes nothing.
+
+- **Findings, per media:** `missing` (no file at the recorded path), `empty` (0 bytes), `size_differs` (not the recorded `size`), `no_file_recorded` (marked downloaded with no path, which the scraper does when it gives up on an item for good; rows with `skip_permanent` are also counted as `skip_permanent`), and `ok`. A media whose rows record several paths takes the worst finding among them.
+- **Not recoverable:** a finding is marked `not_recoverable`, with the reason, when downloading it again can't work: stories and highlights expire, the post was deleted (`posts.is_deleted`), the item is locked (`unlocked = 0`), or it is a profile picture or header (a cache entry also blocks those). A media in several posts is recoverable if any of its rows is. A recorded path that is a link to a missing file, or a folder, is also `not_recoverable`. `--apply` leaves these alone.
+- **Report:** per creator, the counts, up to `--sample` findings (default 20) with paths and sizes, `folders_missing` (recorded folders that aren't there), and what `--apply` would do (`media_to_reset`, `files_to_move_aside`). `totals` adds up every creator.
+- **`--apply`:** sets `downloaded = 0` on every row of each `missing` or `empty` media (and `size_differs` with `--reset-size-differs`), so the next normal run downloads them again. An `empty` file, or a reset `size_differs` one, is renamed with `.bad` added (`.2.bad` and so on when that name is taken) so the new download gets the original name. For a `user_data.db`, the changes are one transaction and the undo file goes beside the database (`user_data.db.verify-undo-<hex>.json`). It is written and flushed before any file is renamed or row changed, and names every rename; a run stopped before the commit renames the files back and removes it. Creators finished before a failure stay changed: their report is printed and the error lists their undo files. `no_file_recorded` and `skip_permanent` rows are never changed.
+- **Drive-not-there guard:** with `--apply`, a creator is left alone when its folder (the folder all its recorded folders on a drive are in) isn't there or can't be read, when a missing file's nearest folder that is there is a place drives are mounted (`/`, `/mnt`, `/media`, `/Volumes`, `/net`, `/run/media/<user>`) or is empty (an unmounted drive often leaves its empty mount folder), or when more than half of its files are missing (`left_alone` says why, naming the folder), since the drive or share may not be connected; nothing of that creator is then reset. A missing folder inside the creator's folder (a post's, say) is just gone, and its files are reset. Findings that are `not_recoverable` aren't counted. Each creator is judged on its own rows, also in a database several creators share. `--allow-missing` resets it all the same.
+- **Names spelt otherwise:** a file whose name on disk is the recorded one in another Unicode form (NFC or NFD), or in another case on a disk that doesn't tell case apart, is found rather than reported missing, and is moved aside under its name on disk.
+- **`--undo FILE`:** previews putting back what an `--apply` changed: rows still not downloaded are marked downloaded again, and files moved aside get their names back. With `--apply`, does it; if a file can't be renamed back, the files renamed so far are moved aside again and no row changes. The database comes from the undo file, so no path is given with it.
+- **Paths:** `--path-map RECORDED=HERE` reads a recorded path prefix as another (for a library recorded in Docker and checked from the host); relative recorded paths need `--path-root`. A full path from another system (`C:\...` read on Linux) stops the run with an error asking for `--path-map`.
+- **With `--postgres`:** checks the rows of the creator `--creator` names (a username or ID) in the PostgreSQL database named by `OFSC_DATABASE_URL` in the current environment, read-only without `--apply`. `--apply` needs `--undo-dir` (a folder that is kept; in Docker a mounted one) and must match one creator; each row is changed only if it still holds what was read, and nothing is changed if the scraper changed one meanwhile. `--undo` with `--postgres --creator` restores every row still as the reset left them, or none if one is not (the error names the database the undo file was made on when it differs). Given `user_data.db` files while `OFSC_DATABASE_URL` is set, it prints a warning that they don't hold PostgreSQL's rows.
+- **`--hash`:** also compares each file the right size with the recorded `hash` (xxh128, recorded only when `remove_hash_match` was on as the file was saved), giving `hash_differs`, and counts the media with no recorded hash (`hash_not_recorded`). Reads every file, so it is slow. `--reset-hash-differs` resets those with `--apply` and moves the files aside like `size_differs`; it implies `--hash`.
+- **`--untracked`:** also lists files in the folders the creator's rows name (not their subfolders) that no row points to (`untracked`, `untracked_files`). Files that never get a row are counted as `not_in_database` instead: `.txt`, `.part`, `.duplicate`, `.bad`, `.json`, `.jsonl`, live recordings (`_live.<ext>`, `_live_part<N>.<ext>`) and system files (`Thumbs.db`, `desktop.ini`, `.DS_Store`). Nothing is moved or deleted.
+- **Exit status:** 0 with the report, 1 on failure, 2 on bad arguments, 130 when interrupted.
+
+Run `ofscraper verify (PATH... | --postgres --creator NAME) [OPTIONS]` (or `python -m ofscraper.commands.verify (PATH... | --postgres --creator NAME) [OPTIONS]`).
+
+- `DATABASES`: user_data.db files, or folders (e.g. a profile's .data) to search for them
+- `--apply`: Mark missing and empty files as not downloaded, so the next run downloads them again; writes an undo file first
+- `--reset-size-differs`: With --apply, also reset files whose size isn't the recorded one (moved aside with .bad added)
+- `--allow-missing`: With --apply, reset a creator even when most of its files are missing, or its folder isn't there or can't be read (otherwise left alone: the drive may not be connected)
+- `--hash`: Also compare each file's hash with the recorded one, where one was recorded (only with remove_hash_match on); reads every file, so slow
+- `--reset-hash-differs`: With --apply, also reset files whose hash isn't the recorded one (moved aside with .bad added); implies --hash
+- `--untracked`: Also list files in the creator's folders that no database row points to; nothing is moved or deleted
+- `--undo`: Preview putting back what an --apply changed, from its undo file; with --apply, put it back
+- `--path-map`: read a recorded path prefix as another, e.g. a library recorded in Docker and checked from the host; repeatable
+- `--path-root`: Original working directory for relative recorded paths
+- `--sample`: list up to N findings per creator (default 20)
+- `--postgres`: Check the PostgreSQL database $OFSC_DATABASE_URL names instead of user_data.db files; give --creator and no database with it
+- `--site`: With --postgres, the creator's site (default: the site that has the creator)
+- `--creator`: With --postgres, the creator to check, by username or id
+- `--undo-dir`: With --postgres --apply, the folder for the undo file: a folder that is kept (in Docker, a mounted one)
 
 ### Scripts in `scripts/`
 
@@ -545,7 +620,7 @@ Character to replace spaces with
 
 **Also:** `-tl` · **Type:** integer · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata` · **Config fallback:** `file_options.textlength`
 
-Max length of text
+Max length of text, in letters or words (see --text-type)
 
 **Dest:** `textlength` · **Defined in:** `ofscraper/utils/args/parse/arguments/file.py`
 
@@ -735,7 +810,9 @@ Record the selected creators (all followed creators without -u) who are live now
 
 **Type:** flag · **Default:** off · **Commands:** main program
 
-Keep checking who is live and record them; with --daemon it runs beside the scheduled scrapes
+Keep checking who is live and record them; with --daemon it runs beside the scheduled scrapes. With -u or user filters, the creators to watch are chosen once, when watching starts
+
+When `-u`, a user list or other subscription filters choose the creators, the choice is made once. New subscriptions, expired ones and changes that filters such as `--last-seen-after` depend on take effect on the next run. Without them, each OnlyFans check reads the active subscriptions again, and each Fansly check reads the followed creators who are live.
 
 **Dest:** `live_watch` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
 
@@ -1160,6 +1237,14 @@ Get up-to-date profile info instead of using cache
 Quit on authentication failure rather than prompting
 
 **Dest:** `auth_fail` · **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
+
+#### `--migrate-sqlite-to-postgres`
+
+**Type:** path · **Default:** none · **Commands:** main program
+
+Copy a user_data.db file (such as the one Merge Databases writes), or a folder of them, into the PostgreSQL database OFSC_DATABASE_URL names, then exit
+
+**Dest:** `migrate_sqlite_to_postgres` · **Defined in:** `ofscraper/utils/args/parse/arguments/advanced_program.py`
 
 ### Other options
 
