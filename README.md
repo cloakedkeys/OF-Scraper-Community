@@ -248,6 +248,21 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
 - **Record OnlyFans livestreams:** `--live` records the selected creators who are live now, and `--live-watch` keeps checking and records them as they go live. OnlyFans streams are recorded in a Chromium browser, which the first `--live` run at a terminal offers to install for you (about 200 MB; turn this off with `OFSC_INSTALL_EXTRAS=False` and install it yourself: `pip install "ofscraper-community[live]"`, then `playwright install chromium`). Recordings are saved as `.webm` under `OnlyFans/{username}/Livestreams/`. Based on [cjb900](https://github.com/cjb900)'s Live Stream Monitor plugin.
 - **Check your library against the database:** find files the database says are downloaded but that are missing, empty or the wrong size, offline, and mark them to be downloaded again. See [Verify](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/VERIFY.md).
 - **Something's wrong?** Run `ofscraper doctor`. It checks the config file, the auth file, ffmpeg, the key files, the save and temp folders, the free-space limit and the database setting in a few seconds, without logging in or changing anything, and says what to fix.
+- **A run summary on your phone:** `--discord SUMMARY` sends one Discord message per run (or daemon pass) instead of log lines, for example `OnlyFans, main_profile: 12 creators, 47 new files (1.8 GB), 2 failed. Took 14 min.`, followed by a line per creator that got new files. The same summary reaches `post_script` as the `summary` key of its JSON input (`site`, `profile`, `started`, `finished`, `outcome`, `totals`, `creators`, `per_creator`), so a short script can forward it anywhere else. For example, to [ntfy](https://ntfy.sh):
+
+  ```python
+  #!/usr/bin/env python3
+  import json, sys, urllib.request
+
+  s = json.load(sys.stdin)["summary"] or {}
+  d = s.get("totals", {}).get("downloads", {})
+  new = d.get("videos", 0) + d.get("audios", 0) + d.get("photos", 0)
+  text = f"{s.get('outcome')}: {new} new files, {d.get('failed', 0)} failed"
+  urllib.request.urlopen("https://ntfy.sh/your-topic", data=text.encode())
+  ```
+
+- **Alerts when something needs you:** when the login is rejected, the free-space limit is reached, or a daemon pass fails, a short alert goes to Discord (at any `--discord` level except `OFF`) and to `alert_script` (`--alert-script`), which gets `kind`, `message`, `site` and `profile` as JSON. Each is sent when it starts and again when it's fixed, not on every pass. A login rejected partway through a run stops that pass with exit code 3.
+
 - **Move a creator's files after a rename:** move the files saved under a creator's old name to their current name's folder, and update the database to match. See [Moving files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/MOVING_FILES.md).
 - **Rename files after changing `file_format` or `dir_format`:** give the files already downloaded the names the new formats give, offline, and update the database to match. See [Renaming files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/RENAMING_FILES.md).
 
