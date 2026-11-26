@@ -174,13 +174,13 @@ def test_media_with_no_usable_caption_uses_the_cleaned_file_name_or_date(
     assert media == f"{expected}.jpg"
 
 
-@pytest.mark.parametrize("caption", ["<p> </p>", "  ", "<br />\n<br />"])
+@pytest.mark.parametrize("caption", ["<p> </p>", "  ", "<br />\n<br />", "???"])
 def test_media_with_a_caption_of_only_spaces_uses_the_file_name(
     naming, monkeypatch, caption
 ):
-    """A caption that cleans to nothing but spaces (or the space_replacer
-    standing for them) names nothing either: {text} falls back to the
-    media's file name, not "-" or the post id."""
+    """A caption that cleans to nothing, or to nothing but spaces (or the
+    space_replacer standing for them), names nothing: {text} falls back to
+    the media's file name, not "-" or the post id."""
     import naming_helpers
 
     make_post = naming_helpers.make_post
