@@ -113,7 +113,13 @@ The Discord webhook URL that log messages are posted to. Nothing is sent unless 
 
 **Default:** `{}` · **Read by:** `get_type_options()` in `ofscraper/utils/config/data.py`
 
-Per-type folder and file name overrides, at the top level of `config.json`. Each key is a post area (`timeline`, `messages`, `archived`, `stories`, ...), a media type (`videos`, `images`, `audios`, `text`) or `livestreams`, matched without regard to case (`post` means `timeline` and `message` means `messages`; a folder name from `responsetype` matches every area saved under it, so `posts`, the timeline's default folder, also matches pinned posts, which `timeline` doesn't); each value is an object with any of `save_location`, `dir_format` and `file_format`. A media file is looked up by its area, then its area as `responsetype` names it, then its media type, and the first entry that sets a value wins; a `--text` file by its area, then `text`. A value left out comes from `file_options` (for livestreams, from `live_options`, then the built-in livestream pattern). On Fansly a `Fansly` folder is added to an override `save_location` as to `file_options.save_location`, unless the templates use `{site_name}` (or `{sitename}`). Templates with unknown placeholders, an entry named for no area or type, two entries for the same type (the last is used), and an entry that isn't an object, has another field or holds a value that isn't text (each removed) are logged at startup, naming the entry. `ofscraper doctor` checks each override save folder as it checks `save_location`, and the free-space limit is checked on the disk each file is saved on. Example: `{"videos": {"save_location": "E:/videos"}, "text": {"file_format": "{post_id}.{ext}"}}`.
+Per-type folder and file name overrides at the top level of `config.json`. Each value is an object with any of `save_location`, `dir_format` and `file_format`.
+
+- **Keys:** A post area (`timeline`, `messages`, `archived`, `stories`, ...), a media type (`videos`, `images`, `audios`, `text`) or `livestreams`, matched without regard to case. `post` means `timeline` and `message` means `messages`; a folder name from `responsetype` matches every area saved under it (so `posts`, the timeline's default folder, also matches pinned posts, which `timeline` doesn't).
+- **Precedence:** Media files look up their area, then their `responsetype` folder name, then their media type — the first entry that sets a field wins. `--text` files look up their area, then `text`. Any omitted field falls back to `file_options` (for livestreams, `live_options`, then the built-in livestream pattern).
+- **Fansly & validation:** On Fansly a `Fansly` folder is added to an override `save_location` unless the templates use `{site_name}` (or `{sitename}`). Unknown placeholders, unrecognised keys, duplicate entries for the same type (last wins), and invalid entries/fields/values (removed) are logged at startup. `ofscraper doctor` checks each override save folder, and the free-space limit is checked on the disk each file is saved on.
+
+Example: `{"videos": {"save_location": "E:/videos"}, "text": {"file_format": "{post_id}.{ext}"}}`.
 
 ## `file_options`
 
@@ -151,7 +157,10 @@ The character that replaces spaces in post text used for file and folder names. 
 
 **Default:** `"MM-DD-YYYY"` · **Env default:** [`DATE_DEFAULT`](env.md#date_default) · **Read by:** `get_date()` in `ofscraper/utils/config/data.py`
 
-An arrow date-format string (for example `MM-DD-YYYY`). It formats the `{date}` placeholder in `dir_format`, `file_format` and naming-script payloads. A `/` is removed from the date, and on Windows so are the other characters a name can't hold there (such as `\`, `:` or `?`). This is the same in `dir_format`, so a date always fills one folder: a `/` in the date format no longer makes folders, and a config that used one (such as `YYYY/MM/DD`) gets one date folder (`20240501`) in place of the old nested ones, with a warning at startup; use `{year}/{month}/{day}` in `dir_format` for nested date folders. A `/` typed in `dir_format` itself still separates folders.
+An arrow date-format string (for example `MM-DD-YYYY`). It formats the `{date}` placeholder in `dir_format`, `file_format` and naming-script payloads.
+
+- A `/` is removed from the formatted date, and on Windows so are other characters a name can't hold (such as `\`, `:` or `?`).
+- This also applies in `dir_format`, so `{date}` always fills one folder: a `/` in the date format no longer makes nested folders, and a config that used one (such as `YYYY/MM/DD`) gets one folder (`20240501`) with a startup warning. Use `{year}/{month}/{day}` in `dir_format` for nested date folders; a `/` typed in `dir_format` itself still separates folders.
 
 ### `file_options.text_type_default`
 
@@ -169,7 +178,11 @@ When true, final file paths longer than the operating system's limit are shorten
 
 **Default:** `"media_id"` · **Env default:** [`FILENAME_COLLISION_DEFAULT`](env.md#filename_collision_default) · **Read by:** `get_filename_collision()` in `ofscraper/utils/config/data.py`
 
-What happens when a download's target path already holds a different file. `overwrite` keeps the old behaviour: the larger file wins. Any other value saves the new file as `name_<media_id>`, then `name_<media_id>_2` and so on. An existing file with identical content is kept. With `--allow-dupes`, an identical file counts as this download only when the database records it for the same media and post; otherwise it is another post's copy and the new one gets its own name, in both modes. A `--text` file follows the same rule with the post's id: when its name holds another post's text, it is saved as `name_<post_id>`, then `name_<post_id>_2` and so on, unless `file_format` or `dir_format` has `{post_id}`. A text file that holds the post's text, or whose name has `{post_id}`, is the post's own and isn't rewritten without `--force-all`, unless it holds the caption's raw HTML as older versions wrote it; one that holds another post's text never is. With `overwrite`, it is skipped as before.
+What happens when a download's target path already holds a different file.
+
+- **`media_id` (or any value other than `overwrite`):** Saves the new file as `name_<media_id>`, then `name_<media_id>_2` and so on. An existing file with identical content is kept. With `--allow-dupes`, an identical file counts as this download only when the database records it for the same media and post; otherwise it is another post's copy and the new one gets its own name, in both modes.
+- **`overwrite`:** Keeps the old behaviour — the larger file wins.
+- **`--text` files:** Follow the same rule with the post ID (`name_<post_id>`, `name_<post_id>_2`, ...), unless `file_format` or `dir_format` already contains `{post_id}`. A text file that holds the post's text, or whose name has `{post_id}`, is the post's own and isn't rewritten without `--force-all`, unless it holds the caption's raw HTML as older versions wrote it; one that holds another post's text never is. With `overwrite`, it is skipped as before.
 
 ## `live_options`
 
@@ -183,7 +196,10 @@ Optional root directory override for livestream recordings (`onlyfans/live.py` a
 
 **Default:** `""` · **Read by:** `get_live_dirformat()` in `ofscraper/utils/config/data.py`
 
-Optional folder pattern for livestream recordings, relative to `save_location` (a full path is placed under it too). When empty, defaults to `{sitename}/{model_username}/Livestreams`. Livestream templates can use `{model_username}`, `{username}`, `{model_id}`, `{first_letter}`, `{site_name}` (`OnlyFans` or `Fansly`, the folder recordings were saved in before these settings; downloads' `{site_name}` is `Onlyfans`, so a template shared by both makes two folders where names are case-sensitive), `{date}` and `{timestamp}` (the start time as `YYYYMMDD_HHMMSS`), `{year}`, `{month}`, `{day}`, `{response_type}` (`Livestreams`), `{media_type}` (`Videos`), `{ext}`, `{save_location}`, `{root}`, `{config_path}`, `{profile}`, `{my_id}`, `{my_username}`, `{config}` and `{args}`, and their underscore-free forms. Post and media placeholders such as `{post_id}` or `{text}` don't apply: an unknown placeholder is logged at startup, and a template that can't be filled in is replaced by the default names for that recording, in the same save location, with a warning, so the stream is still recorded.
+Optional folder pattern for livestream recordings, relative to `save_location` (a full path is placed under it too). When empty, defaults to `{sitename}/{model_username}/Livestreams`.
+
+- **Supported placeholders** (and their underscore-free forms): `{model_username}`, `{username}`, `{model_id}`, `{first_letter}`, `{site_name}` (`OnlyFans` or `Fansly` — note that downloads use `Onlyfans`, so sharing one template creates two folders on case-sensitive disks), `{date}` and `{timestamp}` (start time as `YYYYMMDD_HHMMSS`), `{year}`, `{month}`, `{day}`, `{response_type}` (`Livestreams`), `{media_type}` (`Videos`), `{ext}`, `{save_location}`, `{root}`, `{config_path}`, `{profile}`, `{my_id}`, `{my_username}`, `{config}` and `{args}`.
+- **Fallback:** Post and media placeholders such as `{post_id}` or `{text}` don't apply. Unknown placeholders are logged at startup, and a template that can't be filled in falls back to the default names in the same save location with a warning so the stream is still recorded.
 
 ### `live_options.file_format`
 
@@ -303,7 +319,10 @@ The minimum duration in seconds. Shorter videos are filtered out. Only videos wi
 
 **Default:** `"digital"` · **CLI override:** `--dynamic-rules` · **Env default:** [`DYNAMIC_OPTIONS_ALL`](env.md#dynamic_options_all), [`DYNAMIC_RULE_DEFAULT`](env.md#dynamic_rule_default) · **Read by:** `get_dynamic()` in `ofscraper/utils/config/data.py`
 
-Which source of OnlyFans request-signing rules to use. Allowed values: `xagler`, `rafa`, `digitalcriminals` (aliases `dc`, `digital`, `digitals`, `digitalcriminal`, `datawhores`; the config menu lists and saves it as `digital`), `generic` (needs `OF_DYNAMIC_GENERIC_URL`) and `manual` (needs `OFSC_DYNAMIC_RULE_MANUAL`). Unknown values fall back to the default with a warning. `datawhores` was its own rule source until OnlyFans stopped accepting its rule; it's now an alias for `digitalcriminals`, so configs that name it keep working. If the chosen source fails, isn't configured, or returns an unusable rule (incomplete, or obsolete such as a 2024 rule OnlyFans rejects), `digitalcriminals`, `rafa` and `xagler` are tried in order and the one used is logged. If none returns a usable rule, the auth check reports that auth couldn't be verified rather than bad auth, and the next request tries again. The `-dr`/`--dynamic-rules` option overrides it.
+Which source of OnlyFans request-signing rules to use. The `-dr`/`--dynamic-rules` option overrides it.
+
+- **Allowed values:** `xagler`, `rafa`, `digitalcriminals` (aliases `dc`, `digital`, `digitals`, `digitalcriminal`, `datawhores`; the config menu lists and saves it as `digital`), `generic` (needs `OF_DYNAMIC_GENERIC_URL`) and `manual` (needs `OFSC_DYNAMIC_RULE_MANUAL`). Unknown values fall back to the default with a warning. `datawhores` is now an alias for `digitalcriminals`, so existing configs keep working.
+- **Fallback:** If the chosen source fails, isn't configured, or returns an unusable rule (incomplete or obsolete), `digitalcriminals`, `rafa` and `xagler` are tried in order and the one used is logged. If none returns a usable rule, the auth check reports that auth couldn't be verified rather than bad auth, and the next request tries again.
 
 ### `advanced_options.skip_unavailable_content`
 
@@ -433,7 +452,12 @@ An executable that runs after each file is downloaded (text files included). It 
 
 **Default:** `null` · **CLI override:** `--skip-download-script` · **Env default:** [`SKIP_DOWNLOAD_SCRIPT_DEFAULT`](env.md#skip_download_script_default) · **Also reads:** `advanced_options`, `scripts` · **Read by:** `get_skip_download_script()` in `ofscraper/utils/config/data.py`
 
-An executable that runs before each download. Receives JSON about the media, post and total size on stdin, and is called once per file (per track for DRM video) per run. Printing `false` or nothing skips the file for this run only: it is counted as skipped, not saved as downloaded, and asked about again on the next run. Printing `skip-permanent` (any case) skips it for good: counted as skipped and saved as downloaded with no file, so it isn't asked about again. Undo permanent skips with `--retry-permanent-skips` or `ofscraper db --unmark-permanent-skips`. Any other output, or a failed script, lets the download proceed. Before #351, `false` and nothing also saved the file as downloaded; print `skip-permanent` to keep that behaviour. Programs the script starts are stopped once it exits, times out or is cancelled, and when ofscraper exits (a warning is logged when the script exits and leaves any running). `nohup` and `&` don't keep a program running. On Linux and macOS, a program started in its own session (for example with `setsid`) is left running; on Windows, none is. The `-sdl`/`--skip-download-script` option overrides it.
+An executable that runs before each download. Receives JSON about the media, post and total size on stdin, and is called once per file (per track for DRM video) per run. The `-sdl`/`--skip-download-script` option overrides it.
+
+- **`false` or empty output:** Skips the file for this run only (counted as skipped, not saved as downloaded, and asked about again on the next run). Before #351, this also saved the file as downloaded; print `skip-permanent` to keep that behaviour.
+- **`skip-permanent` (any case):** Skips it for good (counted as skipped and saved as downloaded with no file, so it isn't asked about again). Undo with `--retry-permanent-skips` or `ofscraper db --unmark-permanent-skips`.
+- **Any other output (or a failed script):** Lets the download proceed.
+- **Child processes:** Programs the script starts are stopped once it exits, times out or is cancelled, and when ofscraper exits (a warning is logged if any are left running). `nohup` and `&` don't keep a program running; on Linux and macOS, a program started in its own session (for example with `setsid`) is left running; on Windows, none is.
 
 ## `responsetype`
 
