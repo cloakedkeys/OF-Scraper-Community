@@ -247,8 +247,57 @@ Newer versions save the second one as `name_<media_id>` instead. To recover file
 
 - **Organize downloads in Stash:** copy each download's creator, date, caption and source into [Stash](https://stashapp.cc). See [Stash](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/STASH.md).
 - **Keep the database in PostgreSQL:** as an option, one PostgreSQL database can replace the per-creator SQLite files. See [PostgreSQL](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/POSTGRESQL.md).
-- **Record OnlyFans livestreams:** `--live` records the selected creators who are live now, and `--live-watch` keeps checking and records them as they go live. OnlyFans streams are recorded in a Chromium browser, so install the optional extra first: `pip install "ofscraper-community[live]"`, then `playwright install chromium`. Recordings are saved as `.webm` under `OnlyFans/{username}/Livestreams/`. Based on [cjb900](https://github.com/cjb900)'s Live Stream Monitor plugin.
+- **Record OnlyFans livestreams:** `--live` records the selected creators who are live now, and `--live-watch` keeps checking and records them as they go live. OnlyFans streams are recorded in a Chromium browser, which the first `--live` run at a terminal offers to install for you (about 200 MB; turn this off with `OFSC_INSTALL_EXTRAS=False` and install it yourself: `pip install "ofscraper-community[live]"`, then `playwright install chromium`). Recordings are saved as `.webm` under `OnlyFans/{username}/Livestreams/`. Based on [cjb900](https://github.com/cjb900)'s Live Stream Monitor plugin.
+- **Check your library against the database:** find files the database says are downloaded but that are missing, empty or the wrong size, offline, and mark them to be downloaded again. See [Verify](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/VERIFY.md).
+- **Something's wrong?** Run `ofscraper doctor`. It checks the config file, the auth file, ffmpeg, the key files, the save and temp folders, the free-space limit and the database setting in a few seconds, without logging in or changing anything, and says what to fix.
+- **A run summary on your phone:** `--discord SUMMARY` sends one Discord message per run (or daemon pass) instead of log lines, for example `OnlyFans, main_profile: 12 creators, 47 new files (1.8 GB), 2 failed. Took 14 min.`, followed by a line per creator that got new files. The same summary reaches `post_script` as the `summary` key of its JSON input (`site`, `profile`, `started`, `finished`, `outcome`, `totals`, `creators`, `per_creator`), so a short script can forward it anywhere else. For example, to [ntfy](https://ntfy.sh):
+
+  ```python
+  #!/usr/bin/env python3
+  import json, sys, urllib.request
+
+  s = json.load(sys.stdin)["summary"] or {}
+  d = s.get("totals", {}).get("downloads", {})
+  new = d.get("videos", 0) + d.get("audios", 0) + d.get("photos", 0)
+  text = f"{s.get('outcome')}: {new} new files, {d.get('failed', 0)} failed"
+  urllib.request.urlopen("https://ntfy.sh/your-topic", data=text.encode())
+  ```
+
+- **Alerts when something needs you:** when the login is rejected, the free-space limit is reached, or a daemon pass fails, a short alert goes to Discord (at any `--discord` level except `OFF`) and to `alert_script` (`--alert-script`), which gets `kind`, `message`, `site` and `profile` as JSON. Each is sent when it starts and again when it's fixed, not on every pass. A login rejected partway through a run stops that pass with exit code 3.
+
+- **See what a run would download first:** `--dry-run` with `--action download` scans as usual and reports, per creator and area, how many photos, videos and audio files a download would attempt, with a few of the paths they would be saved to. It downloads nothing and doesn't change the database, the cache or your files. It's handy for trying a filter, a new `dir_format` or `file_format`, or checking a new creator. `--dry-run-json FILE` also writes the report to a file as JSON. It doesn't work with PostgreSQL yet, with `--daemon`, `--live` or `--live-watch`, or with a subcommand such as `metadata` or `db`. A run that fails or is stopped part-way prints no report.
+
+  ```sh
+  ofscraper --action download -u modelname --dry-run
+  ```
+
 - **Move a creator's files after a rename:** move the files saved under a creator's old name to their current name's folder, and update the database to match. See [Moving files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/MOVING_FILES.md).
+- **Rename files after changing `file_format` or `dir_format`:** give the files already downloaded the names the new formats give, offline, and update the database to match. See [Renaming files](https://github.com/cloakedkeys/OF-Scraper-Community/blob/main/RENAMING_FILES.md).
+
+## Exit codes and scheduled runs
+
+OF-Scraper exits with a code that scripts, cron jobs and Task Scheduler can check. When more than one problem happens during a run, the most severe code wins:
+
+| Code | Meaning |
+|---|---|
+| `0` | Everything ran. Skipped files are fine. |
+| `2` | Usage error (command-line mistake, such as a `-u` name no creator has). Any of the codes below it wins over a `-u` name not found. |
+| `4` | Partial: at least one creator, area or download failed. |
+| `5` | Site unavailable (OnlyFans maintenance). Try again later. |
+| `3` | Login failed (`--auth-fail` or an unreadable auth file). |
+| `6` | Configuration error (unreadable config, or a configured database that can't be reached). |
+| `1` | Unexpected error. |
+| `130` | Interrupted with Ctrl+C. |
+
+In `--daemon` mode, each pass logs its outcome and resets for the next pass; stopping the daemon with `SIGTERM` exits `0`. Outside the daemon, `SIGTERM` isn't caught: the signal ends the run, and a shell reports `143`.
+
+**Docker restart policies:** a file or creator that keeps failing makes every run exit `4`. With `restart: on-failure` on a one-off run, Docker starts the container again straight after each run, so it loops without a pause. Run the container with `--daemon` and `restart: unless-stopped` instead: the daemon waits between passes, and a failed pass doesn't stop it.
+
+Example cron job (every 3 hours, with `--auth-fail` so it never hangs waiting for a prompt):
+
+```sh
+0 */3 * * *  ofscraper --action download -u ALL -o all -p normal --no-rich --auth-fail || echo "ofscraper exited with status $?"
+```
 
 ## Reporting a problem
 
