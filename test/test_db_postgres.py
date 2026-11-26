@@ -7,6 +7,7 @@ which CI runs with a PostgreSQL container.
 import asyncio
 import builtins
 import contextlib
+import importlib.util
 import logging
 import sqlite3
 from types import SimpleNamespace
@@ -164,11 +165,14 @@ def test_an_address_written_in_config_json_is_said_to_be_unused(
     monkeypatch, caplog, config, said
 ):
     monkeypatch.setattr(config_file, "write_config", lambda config: None)
+    monkeypatch.setattr(config_file, "_notes", [])
 
     with caplog.at_level(logging.WARNING, logger="shared"):
         config_file.auto_update_config(config)
+        # kept until the log is set up, then written
+        config_file.log_notes()
 
-    assert ("advanced_options.database_url in config.json is not read" in caplog.text) is said
+    assert ("database_url in config.json is not read" in caplog.text) is said
     assert "OFSC_DATABASE_URL" in caplog.text or not said
     # the address isn't repeated: it holds a password
     assert "s3cr" not in caplog.text
@@ -424,7 +428,18 @@ def state(name):
         ("UniqueViolation", False),
     ],
 )
-def test_only_an_error_a_retry_can_fix_is_retried(name, again):
+def test_only_an_error_a_retry_can_fix_is_retried(name, again, monkeypatch):
+    # With the driver installed, the wrapper knows PostgreSQL's errors once a
+    # run picks PostgreSQL. Pick it here as a run does, so this test doesn't
+    # rely on an earlier one having done it, and put the wrapper's engine list
+    # back afterwards. Without the driver there is nothing to pick.
+    if importlib.util.find_spec("psycopg"):
+        monkeypatch.setattr(wrapper, "_BACKENDS", list(wrapper._BACKENDS))
+        monkeypatch.setattr(wrapper, "DB_ERRORS", wrapper.DB_ERRORS)
+        monkeypatch.setattr(wrapper, "OPERATIONAL_ERRORS", wrapper.OPERATIONAL_ERRORS)
+        monkeypatch.setenv(postgres.URL_KEY, URL)
+        assert wrapper.backend_for({}) is postgres.POSTGRES
+
     assert postgres.POSTGRES.retryable(state(name)) is again
     assert wrapper._retryable(state(name)) is again
 
