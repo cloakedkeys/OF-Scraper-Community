@@ -1,3 +1,5 @@
+import re
+
 import cloup as click
 
 from ofscraper.utils.args.callbacks.parse.string import (
@@ -5,11 +7,38 @@ from ofscraper.utils.args.callbacks.parse.string import (
 )
 from ofscraper.utils.args.types.choice import MutuallyExclusiveMultichoice
 
+
+def _parse_profiles(ctx, param, value):
+    out = []
+    seen = set()
+    for raw in value or ():
+        for part in re.split(r"[,\s]+", str(raw)):
+            name = part.strip()
+            if name and name not in seen:
+                seen.add(name)
+                out.append(name)
+    return out
+
 daemon_option = click.option(
     "-d",
     "--daemon",
     help="Run script in the background. Set value for how many minutes between script runs",
     type=float,
+)
+
+daemon_jitter_option = click.option(
+    "--daemon-jitter",
+    help="Add a random delay up to this many minutes to each --daemon interval (default 0)",
+    type=click.FloatRange(min=0),
+    default=0.0,
+)
+
+profiles_option = click.option(
+    "--profiles",
+    help="Comma- or space-separated profiles to run one after another on each --daemon pass (each in its own child process; cannot be combined with --live-watch or --profile)",
+    multiple=True,
+    default=[],
+    callback=_parse_profiles,
 )
 
 action_option = click.option(
@@ -57,7 +86,7 @@ live_option = click.option(
 
 live_watch_option = click.option(
     "--live-watch",
-    help="Keep checking who is live and record them; with --daemon it runs beside the scheduled scrapes",
+    help="Keep checking who is live and record them; with --daemon it runs beside the scheduled scrapes. With -u or user filters, the creators to watch are chosen once, when watching starts",
     is_flag=True,
     default=False,
 )

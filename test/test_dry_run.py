@@ -525,6 +525,24 @@ def test_postgresql_is_refused(monkeypatch):
     assert dry_run.refuse_reason() is None
 
 
+def test_a_refused_dry_run_stops_before_the_profiles_daemon(monkeypatch):
+    """The refusal comes before the --profiles daemon starts, as it does
+    before an ordinary run."""
+    from types import SimpleNamespace
+
+    import ofscraper.commands.scraper.multi_profile as multi_profile
+    import ofscraper.main.open.run as run
+
+    started = []
+    monkeypatch.setattr(dry_run, "active", lambda: True)
+    monkeypatch.setattr(dry_run, "refuse_reason", lambda: "refused")
+    monkeypatch.setattr(settings, "get_args", lambda *a, **k: SimpleNamespace(profiles=["a", "b"]))
+    monkeypatch.setattr(multi_profile, "run_multi_profile_daemon", started.append)
+    with pytest.raises(SystemExit) as exc:
+        run.main()
+    assert exc.value.code == 2 and started == []
+
+
 # --- refused combinations ---------------------------------------------------
 
 
