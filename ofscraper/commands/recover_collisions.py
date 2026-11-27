@@ -482,10 +482,9 @@ def on_postgres(database_url, creator, site=None, undo_file=None, apply=False, p
         ) from None
 
 
-def validate_db_args(
-    parser, args, files_notice, *, extra_postgres_only=(), pg_only_label="--site and --creator"
-):
+def validate_db_args(parser, args, files_notice, *, extra_postgres_only=None):
     """Validate --postgres / --creator / database arguments and return database_url."""
+    extra = extra_postgres_only or {}
     # Only this command's own environment says where PostgreSQL is: the
     # scraper's settings and env files aren't read
     database_url = os.environ.get(postgres.URL_KEY, "").strip()
@@ -502,8 +501,10 @@ def validate_db_args(
     elif (
         args.site is not None
         or args.creator is not None
-        or any(v is not None for v in extra_postgres_only)
+        or any(v is not None for v in extra.values())
     ):
+        names = ["--site", "--creator", *extra]
+        pg_only_label = f"{', '.join(names[:-1])} and {names[-1]}"
         parser.error(
             f"{pg_only_label} go with --postgres; with a file, give that creator's user_data.db"
         )
@@ -532,8 +533,7 @@ def main(argv=None):
         parser,
         args,
         FILES_NOTICE,
-        extra_postgres_only=(args.undo_dir,),
-        pg_only_label="--site, --creator and --undo-dir",
+        extra_postgres_only={"--undo-dir": args.undo_dir},
     )
     if args.postgres:
         # a path that is empty (a shell variable that isn't set) would be
