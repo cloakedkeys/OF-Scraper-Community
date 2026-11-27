@@ -655,15 +655,13 @@ def warn_streak(streaks: dict, key: str, message: str = None) -> None:
 class PollStateLogger:
     """Tracks announced live/idle state across poll cycles and logs transitions."""
 
-    def __init__(self, site_name: str, watch: bool, logger=None):
+    def __init__(self, site_name: str, watch: bool):
         self._site_name = site_name
         self._watch = watch
-        self._log = logger
         self.announced_idle = False
         self.announced_live_ids = set()
 
     def __call__(self, selected) -> None:
-        logger = self._log or log
         current_ids = {s["accountId"] for s in selected}
         self.announced_live_ids &= current_ids
 
@@ -672,25 +670,25 @@ class PollStateLogger:
         ]
         if new_live:
             names = ", ".join(s["username"] for s in new_live)
-            logger.info(f"Live now ({len(new_live)}): {names}")
+            log.info(f"Live now ({len(new_live)}): {names}")
             self.announced_live_ids.update(s["accountId"] for s in new_live)
             self.announced_idle = False
         elif selected:
             names = ", ".join(s["username"] for s in selected)
-            logger.debug(f"Still live ({len(selected)}): {names}")
+            log.debug(f"Still live ({len(selected)}): {names}")
             self.announced_idle = False
         elif not self.announced_idle:
             if self._watch:
-                logger.info(
+                log.info(
                     f"No active {self._site_name} livestreams; waiting for selected creators to go live..."
                 )
             else:
-                logger.info(
+                log.info(
                     f"No active {self._site_name} livestreams found for the selected creators."
                 )
             self.announced_idle = True
         else:
-            logger.debug(f"No active {self._site_name} livestreams found.")
+            log.debug(f"No active {self._site_name} livestreams found.")
 
 
 def lookup_due(misses: dict, name: str, poll: int) -> bool:
@@ -891,7 +889,7 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
     # playlists get one attempt each: a 403 means "fetch a fresh URL", not "retry"
     async with manager.Manager.session.aget_ofsession() as c, \
             manager.Manager.session.aget_ofsession(retries=1) as playlists:
-        _log_poll_state = PollStateLogger("Fansly", watch)
+        log_poll_state = PollStateLogger("Fansly", watch)
         announced_no_targets = False
         streaks = {}
         lookups = {"poll": 0, "misses": {}}
@@ -1025,7 +1023,7 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
                     online = await _streams_for_targets(targets)
                     selected = select_streams(online, usernames, opts["excluded"])
                     warn_streak(streaks, "poll")
-                    _log_poll_state(selected)
+                    log_poll_state(selected)
                     return selected
 
                 # Default / list search (-fl): fetch followed online streams
@@ -1081,7 +1079,7 @@ async def run(watch: bool = False, stop: asyncio.Event = None):
 
                 selected = select_streams(selected, usernames, opts["excluded"])
                 warn_streak(streaks, "poll")
-                _log_poll_state(selected)
+                log_poll_state(selected)
                 return selected
             except Exception as e:
                 warn_streak(streaks, "poll", f"Fansly livestream check failed: {e}")

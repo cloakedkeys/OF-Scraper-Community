@@ -449,7 +449,7 @@ async def run(watch: bool, stop: asyncio.Event | None = None):
                 manager.Manager.session.aget_ofsession(retries=1) as checks:
             loop = asyncio.get_running_loop()
             warned = []
-            log_poll_state = shared.PollStateLogger("OnlyFans", watch, logger=log)
+            log_poll_state = shared.PollStateLogger("OnlyFans", watch)
             streaks = {}
 
             async def fetch_online():
