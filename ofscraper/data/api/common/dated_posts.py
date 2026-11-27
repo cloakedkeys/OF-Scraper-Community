@@ -5,11 +5,12 @@ from the database, split the cached posts into chunks with one worker each,
 and flag cached posts the API no longer returns as deleted.
 
 ``timeline.py``, ``archive.py`` and ``streams.py`` keep their public functions
-as thin wrappers. Each passes its own module as ``m``; the functions here look
-up the area's own functions and database helpers on ``m`` (``m.get_tasks``,
-``m.mark_post_as_deleted``, ``getattr(m, area.post_info)``, ...), so patching
-those names on the area module changes only that area's scan. Shared utilities
-(``settings``, ``of_env``, ``incomplete``, ``log``) are read directly here.
+as thin wrappers. Each passes its own module as ``m`` (for shared-name hooks
+such as ``m.get_tasks`` and ``m.mark_post_as_deleted``) and passes its own
+area-specific callables (``post_info``, ``media``, ``youngest_date``,
+``scrape``) at call time, so patching a name on the area module changes only
+that area's scan. Shared utilities (``settings``, ``of_env``, ``incomplete``,
+``log``) are read directly here.
 """
 
 import logging
@@ -42,11 +43,6 @@ class Area:
     cache_trace: str
     # end of the "Flagging N ..." line
     ghosts: str
-    # attribute names on the area module for its DB helpers and page scraper
-    post_info: str
-    media: str
-    youngest_date: str
-    scrape: str
     # log each batch's post ids at debug level as pages arrive
     log_progress_ids: bool = False
     # log the final ids and count once the pages are merged
@@ -71,8 +67,7 @@ async def get_posts(m, model_id, username, c=None, post_id=None):
     return data
 
 
-async def get_old_posts(m, model_id, username):
-    post_info = getattr(m, m.AREA.post_info)
+async def get_old_posts(m, post_info, model_id, username):
     if not settings.get_settings().api_cached_disabled:
         oldposts = await post_info(model_id=model_id, username=username)
     else:
@@ -129,8 +124,7 @@ def split_posts(m, oldposts, after):
     return splitArrays
 
 
-def get_tasks(m, splitArrays, c, model_id, username, after):
-    scrape = getattr(m, m.AREA.scrape)
+def get_tasks(scrape, splitArrays, c, model_id, username, after):
     tasks = []
 
     # Scenario 1: Empty DB, or just hunting for brand new posts today
@@ -339,16 +333,14 @@ async def scrape_posts(
             )
 
 
-async def get_after(m, model_id, username):
-    area = m.AREA
-    api = area.api
+async def get_after(m, media, youngest_date, model_id, username):
+    api = m.AREA.api
     prechecks = m.get_after_pre_checks(model_id, api)
     if prechecks is not None:
         return max(
             arrow.get(prechecks).float_timestamp, arrow.get("2000").float_timestamp
         )
 
-    media = getattr(m, area.media)
     curr = await media(model_id=model_id, username=username)
     if len(curr) == 0:
         return arrow.get("2000").float_timestamp
@@ -378,7 +370,6 @@ async def get_after(m, model_id, username):
     ]
 
     if len(filtered_items) == 0:
-        youngest_date = getattr(m, area.youngest_date)
         youngest = await youngest_date(model_id=model_id, username=username)
         return date_or_2000(youngest)
 

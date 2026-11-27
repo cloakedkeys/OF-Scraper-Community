@@ -32,15 +32,15 @@ from ofscraper.data.api.common.after import get_after_pre_checks  # noqa: F401
 from ofscraper.data.api.common.check import update_check  # noqa: F401
 from ofscraper.data.api.common.page import get_min_posts_batch  # noqa: F401
 from ofscraper.data.api.common.timeline import process_posts_as_individual  # noqa: F401
-from ofscraper.db.operations_.media import (  # noqa: F401
+from ofscraper.db.operations_.media import (
     get_archived_media,
-    get_media_ids_downloaded_model,
+    get_media_ids_downloaded_model,  # noqa: F401
 )
-from ofscraper.db.operations_.posts import (  # noqa: F401
+from ofscraper.db.operations_.posts import (
     get_archived_post_info,
-    get_deleted_post_ids,
+    get_deleted_post_ids,  # noqa: F401
     get_youngest_archived_date,
-    mark_post_as_deleted,
+    mark_post_as_deleted,  # noqa: F401
 )
 
 API = "Archived"
@@ -51,10 +51,6 @@ AREA = dated_posts.Area(
     max_individual="MAX_ARCHIVED_INDIVIDUAL_SEARCH",
     cache_trace="oldarchived",
     ghosts="ghost archived posts.",
-    post_info="get_archived_post_info",
-    media="get_archived_media",
-    youngest_date="get_youngest_archived_date",
-    scrape="scrape_archived_posts",
 )
 log = logging.getLogger("shared")
 _area = sys.modules[__name__]
@@ -67,7 +63,9 @@ async def get_archived_posts(model_id, username, c=None, post_id=None):
 
 
 async def get_oldarchived(model_id, username):
-    return await dated_posts.get_old_posts(_area, model_id, username)
+    return await dated_posts.get_old_posts(
+        _area, get_archived_post_info, model_id, username
+    )
 
 
 async def process_tasks_batch(generators):
@@ -80,7 +78,9 @@ async def get_split_array(model_id, username, after):
 
 
 def get_tasks(splitArrays, c, model_id, username, after):
-    return dated_posts.get_tasks(_area, splitArrays, c, model_id, username, after)
+    return dated_posts.get_tasks(
+        scrape_archived_posts, splitArrays, c, model_id, username, after
+    )
 
 
 def scrape_archived_posts(
@@ -99,7 +99,9 @@ def scrape_archived_posts(
 
 
 async def get_after(model_id, username):
-    return await dated_posts.get_after(_area, model_id, username)
+    return await dated_posts.get_after(
+        _area, get_archived_media, get_youngest_archived_date, model_id, username
+    )
 
 
 def time_log(username, after):

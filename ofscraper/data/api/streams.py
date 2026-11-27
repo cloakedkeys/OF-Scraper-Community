@@ -32,15 +32,15 @@ from ofscraper.data.api.common.after import get_after_pre_checks  # noqa: F401
 from ofscraper.data.api.common.check import update_check  # noqa: F401
 from ofscraper.data.api.common.page import get_min_posts_batch  # noqa: F401
 from ofscraper.data.api.common.timeline import process_posts_as_individual  # noqa: F401
-from ofscraper.db.operations_.media import (  # noqa: F401
-    get_media_ids_downloaded_model,
+from ofscraper.db.operations_.media import (
+    get_media_ids_downloaded_model,  # noqa: F401
     get_streams_media,
 )
-from ofscraper.db.operations_.posts import (  # noqa: F401
-    get_deleted_post_ids,
+from ofscraper.db.operations_.posts import (
+    get_deleted_post_ids,  # noqa: F401
     get_streams_post_info,
     get_youngest_streams_date,
-    mark_post_as_deleted,
+    mark_post_as_deleted,  # noqa: F401
 )
 
 API = "Streams"
@@ -51,10 +51,6 @@ AREA = dated_posts.Area(
     max_individual="MAX_STREAMS_INDIVIDUAL_SEARCH",
     cache_trace="oldtimestreams",
     ghosts="ghost streams in database.",
-    post_info="get_streams_post_info",
-    media="get_streams_media",
-    youngest_date="get_youngest_streams_date",
-    scrape="scrape_stream_posts",
     log_final=True,
 )
 log = logging.getLogger("shared")
@@ -68,7 +64,9 @@ async def get_streams_posts(model_id, username, c=None, post_id=None):
 
 
 async def get_oldstreams(model_id, username):
-    return await dated_posts.get_old_posts(_area, model_id, username)
+    return await dated_posts.get_old_posts(
+        _area, get_streams_post_info, model_id, username
+    )
 
 
 async def process_tasks_batch(generators):
@@ -81,7 +79,9 @@ async def get_split_array(model_id, username, after):
 
 
 def get_tasks(splitArrays, c, model_id, username, after):
-    return dated_posts.get_tasks(_area, splitArrays, c, model_id, username, after)
+    return dated_posts.get_tasks(
+        scrape_stream_posts, splitArrays, c, model_id, username, after
+    )
 
 
 def scrape_stream_posts(
@@ -100,7 +100,9 @@ def scrape_stream_posts(
 
 
 async def get_after(model_id, username):
-    return await dated_posts.get_after(_area, model_id, username)
+    return await dated_posts.get_after(
+        _area, get_streams_media, get_youngest_streams_date, model_id, username
+    )
 
 
 def time_log(username, after):
