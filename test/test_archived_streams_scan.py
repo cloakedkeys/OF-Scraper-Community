@@ -157,6 +157,61 @@ def test_pages_follow_the_area_endpoints(area):
     ]
 
 
+def undated(n):
+    return {"id": n}
+
+
+def scan(area, client):
+    scrape = area.module.get_tasks([], client, MODEL_ID, USER, 0)[0]
+    return [p["id"] for batch in collect(scrape) for p in batch]
+
+
+def test_undated_post_keeps_page_and_later_pages(area, logged):
+    client = Client(
+        Response(200, {"list": [post(1), undated(2), post(3)], "hasMore": True}),
+        Response(200, {"list": [post(4)], "hasMore": False}),
+    )
+
+    assert scan(area, client) == [1, 2, 3, 4]
+    # the next page starts after the newest dated post of the first page
+    assert client.urls[1] == of_env.getattr(area.next_endpoint).format(
+        MODEL_ID, str(ts(3))
+    )
+    assert f"{area.api}: post 2 has no date" in logged(logging.WARNING)
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_null_or_empty_date_counts_as_undated(area, logged, value):
+    blank = {"id": 2, "postedAtPrecise": value}
+    client = Client(Response(200, {"list": [post(1), blank, post(3)], "hasMore": False}))
+
+    assert scan(area, client) == [1, 2, 3]
+    assert f"{area.api}: post 2 has no date" in logged(logging.WARNING)
+
+
+def test_page_crossing_before_keeps_undated_post(area):
+    area.settings.before = ts(2.5)
+    client = Client(
+        Response(200, {"list": [post(1), undated(2), post(3)], "hasMore": True})
+    )
+
+    assert scan(area, client) == [1, 2]
+
+
+def test_page_with_no_dated_post_is_kept_and_ends_the_scan(area, logged):
+    client = Client(
+        Response(200, {"list": [undated(1), undated(2)], "hasMore": True}),
+        Response(200, {"list": [post(3)], "hasMore": False}),
+    )
+
+    assert scan(area, client) == [1, 2]
+    assert len(client.urls) == 1
+    assert (
+        f"{area.api}: no post on this page has a date, stopping the scan here"
+        in logged(logging.WARNING)
+    )
+
+
 def test_failed_page_is_logged_with_the_area_name(area, logged, monkeypatch):
     marked = Mock()
     monkeypatch.setattr(area.module.incomplete, "mark_incomplete", marked)

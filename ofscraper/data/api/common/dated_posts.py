@@ -226,8 +226,22 @@ async def scrape_posts(
                 if not batch:
                     break
 
-                batch_timestamps = [float(x.get("postedAtPrecise", 0)) for x in batch]
-                max_ts = max(batch_timestamps)
+                # an undated post is kept; it doesn't move the page cursor
+                batch_timestamps = []
+                for x in batch:
+                    if x.get("postedAtPrecise") in (None, ""):
+                        log.warning(f"{area.api}: post {x.get('id')} has no date")
+                        batch_timestamps.append(None)
+                    else:
+                        batch_timestamps.append(float(x["postedAtPrecise"]))
+                dated = [ts for ts in batch_timestamps if ts is not None]
+                if not dated:
+                    log.warning(
+                        f"{area.api}: no post on this page has a date, stopping the scan here"
+                    )
+                    yield batch
+                    break
+                max_ts = max(dated)
                 batch_ids = {x["id"] for x in batch}
 
                 expected_missing = [
@@ -254,7 +268,11 @@ async def scrape_posts(
                 # Boundary condition: this page reaches past the "before" date limit.
                 # Keep its in-range posts before stopping.
                 if max_ts > before:
-                    yield [x for x, ts in zip(batch, batch_timestamps) if ts <= before]
+                    yield [
+                        x
+                        for x, ts in zip(batch, batch_timestamps)
+                        if ts is None or ts <= before
+                    ]
                     break
 
                 # This chunk has found all of its cached posts. Keep the page
