@@ -27,11 +27,17 @@ from ofscraper.managers.sessionmanager.sleepers import (
 )
 
 
+_UNSET: Any = object()
+
+
 class OFSessionManager(sessionManager):
     """
     A specialized sessionManager for OF API interactions, with preset
     actions, exceptions, and specific default values for retries and limits.
     """
+
+    default_rate_limit_sleeper: Any = sleepers.rate_limit_session_sleeper
+    default_forbidden_sleeper: Any = sleepers.forbidden_session_sleeper
 
     def __init__(
         self,
@@ -55,9 +61,13 @@ class OFSessionManager(sessionManager):
         sync_sem_count: Optional[int] = None,
         sync_sem: Optional[threading.Semaphore] = None,
         # ---rate limit sleepers
-        rate_limit_sleeper: Optional[float] = sleepers.rate_limit_session_sleeper,
-        forbidden_sleeper: Optional[float] = sleepers.forbidden_session_sleeper,
+        rate_limit_sleeper: Any = _UNSET,
+        forbidden_sleeper: Any = _UNSET,
     ):
+        if rate_limit_sleeper is _UNSET:
+            rate_limit_sleeper = self.default_rate_limit_sleeper
+        if forbidden_sleeper is _UNSET:
+            forbidden_sleeper = self.default_forbidden_sleeper
         # --- Apply specialized defaults for this subclass ---
         limit = limit if limit is not None else of_env.getattr("API_MAX_CONNECTION")
         # Assuming API_INDVIDIUAL_NUM_TRIES is a valid key in your config
@@ -136,14 +146,21 @@ class download_session(sessionManager):
     and specific retry/timeout settings.
     """
 
+    default_rate_limit_sleeper: Any = sleepers.download_rate_limit_session_sleeper
+    default_forbidden_sleeper: Any = sleepers.download_forbidden_session_sleeper
+
     def __init__(
         self,
         sem_count=None,
         # ---rate limit sleepers
-        rate_limit_sleeper: Optional[float] = sleepers.download_rate_limit_session_sleeper,
-        forbidden_sleeper: Optional[float] = sleepers.download_forbidden_session_sleeper,
+        rate_limit_sleeper: Any = _UNSET,
+        forbidden_sleeper: Any = _UNSET,
         **kwargs: Any,
     ) -> None:
+        if rate_limit_sleeper is _UNSET:
+            rate_limit_sleeper = self.default_rate_limit_sleeper
+        if forbidden_sleeper is _UNSET:
+            forbidden_sleeper = self.default_forbidden_sleeper
         # --- Apply specialized defaults for download sessions ---
         # only None means "use the default": 0 retries or a 0 s wait is a value
         retries = kwargs.pop("retries", None)
@@ -218,99 +235,32 @@ class download_session(sessionManager):
 
 
 class metadata_session(download_session):
-    """
-    A specialized sessionManager for metadata operations,
-    """
+    """A specialized sessionManager for metadata operations."""
 
-    def __init__(
-        self,
-        sem_count=None,
-        # ---rate limit sleepers
-        rate_limit_sleeper: Optional[float] = sleepers.metadata_rate_limit_session_sleeper,
-        forbidden_sleeper: Optional[float] = sleepers.metadata_forbidden_session_sleeper,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            sem_count=sem_count,
-            rate_limit_sleeper=rate_limit_sleeper,
-            forbidden_sleeper=forbidden_sleeper,
-            **kwargs,
-        )
-
-    @contextlib.asynccontextmanager
-    async def requests_async(
-        self, *args: Any, **kwargs: Any
-    ) -> AsyncGenerator[Any, None]:
-        # Set default actions and exceptions for downloads
-        if not kwargs.get("actions"):
-            actions = [SIGN, COOKIES, HEADERS]
-            if of_env.getattr("API_FORCE_KEY"):
-                actions.append(FORCED_NEW)
-            kwargs["actions"] = actions
-        kwargs["exceptions"] = [TOO_MANY, AUTH]
-
-        async with super().requests_async(*args, **kwargs) as r:
-            yield r
-
-    # the speed limit is inherited from download_session
+    default_rate_limit_sleeper = sleepers.metadata_rate_limit_session_sleeper
+    default_forbidden_sleeper = sleepers.metadata_forbidden_session_sleeper
 
 
 class cdm_session(sessionManager):
     """A session manager for CDM operations."""
 
-    def __init__(self, sem_count: Optional[int] = None, **kwargs: Any) -> None:
-        super().__init__(sem_count=sem_count, **kwargs)
-
 
 class cdm_session_manual(OFSessionManager):
     """A session manager for manual CDM operations, using OFSessionManager presets."""
 
-    def __init__(
-        self,
-        sem_count: Optional[int] = None,  # ---rate limit sleepers
-        rate_limit_sleeper: Optional[float] = sleepers.cdm_rate_limit_session_sleeper,
-        forbidden_sleeper: Optional[float] = sleepers.cdm_forbidden_session_sleeper,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            sem_count=sem_count,
-            rate_limit_sleeper=rate_limit_sleeper,
-            forbidden_sleeper=forbidden_sleeper,
-            **kwargs,
-        )
+    default_rate_limit_sleeper = sleepers.cdm_rate_limit_session_sleeper
+    default_forbidden_sleeper = sleepers.cdm_forbidden_session_sleeper
 
 
 class like_session(OFSessionManager):
-    """A session manager for manual CDM operations, using OFSessionManager presets."""
+    """A session manager for like operations, using OFSessionManager presets."""
 
-    def __init__(
-        self,
-        sem_count: Optional[int] = None,  # ---rate limit sleepers
-        rate_limit_sleeper: Optional[float] = sleepers.like_rate_limit_session_sleeper,
-        forbidden_sleeper: Optional[float] = sleepers.like_forbidden_session_sleeper,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            sem_count=sem_count,
-            rate_limit_sleeper=rate_limit_sleeper,
-            forbidden_sleeper=forbidden_sleeper,
-            **kwargs,
-        )
+    default_rate_limit_sleeper = sleepers.like_rate_limit_session_sleeper
+    default_forbidden_sleeper = sleepers.like_forbidden_session_sleeper
 
 
 class SubscriptionSessionManager(OFSessionManager):
-    """A session manager for subsciption operations, using OFSessionManager presets."""
+    """A session manager for subscription operations, using OFSessionManager presets."""
 
-    def __init__(
-        self,
-        sem_count: Optional[int] = None,  # ---rate limit sleepers
-        rate_limit_sleeper: Optional[float] = sleepers.subscription_rate_limit_session_sleeper,
-        forbidden_sleeper: Optional[float] = sleepers.subscription_forbidden_session_sleeper,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(
-            sem_count=sem_count,
-            rate_limit_sleeper=rate_limit_sleeper,
-            forbidden_sleeper=forbidden_sleeper,
-            **kwargs,
-        )
+    default_rate_limit_sleeper = sleepers.subscription_rate_limit_session_sleeper
+    default_forbidden_sleeper = sleepers.subscription_forbidden_session_sleeper
