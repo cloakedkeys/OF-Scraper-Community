@@ -18,6 +18,7 @@ import ofscraper.prompts.prompt_strings as prompt_strings
 import ofscraper.prompts.prompt_validators as prompt_validators
 import ofscraper.prompts.promptConvert as promptClasses
 import ofscraper.utils.args.accessors.areas as areas
+import ofscraper.utils.const as const
 import ofscraper.utils.settings as settings
 
 
@@ -32,8 +33,8 @@ _ALL_AREAS = (
     "Purchased",
     "Streams",
 )
-_LIKE_AREAS = ("Timeline", "Pinned", "Archived", "Streams")
-_ANON_AREAS = ("Profile", "Timeline", "Pinned", "Archived", "Streams")
+_LIKE_AREAS = const.TIMELINE_POST_AREAS
+_ANON_AREAS = ("Profile", *const.TIMELINE_POST_AREAS)
 
 
 def _areas_prompt(
