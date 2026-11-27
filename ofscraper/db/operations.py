@@ -63,7 +63,7 @@ async def make_changes_to_content_tables(
     # --metadata leaves alone
     await make_post_table_changes(
         filter(
-            lambda x: x.responsetype.capitalize() in const.POST_AREA_SET,
+            lambda x: x.responsetype.capitalize() in const.TIMELINE_POST_AREA_SET,
             posts,
         ),
         model_id=model_id,

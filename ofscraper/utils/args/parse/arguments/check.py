@@ -17,9 +17,9 @@ check_areas = click.option(
     "--posts",
     "check_area",
     help="Select areas to check (multiple allowed, separated by spaces)",
-    default=list(const.POST_AREAS),
+    default=list(const.TIMELINE_POST_AREAS),
     type=MultiChoice(
-        list(const.POST_AREA_CHOICES),
+        list(const.TIMELINE_POST_AREA_CHOICES),
         case_sensitive=False,
     ),
     callback=StringSplitParseTitle,

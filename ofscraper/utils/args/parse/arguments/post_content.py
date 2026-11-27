@@ -117,7 +117,7 @@ like_area_option = click.option(
     default=[],
     required=False,
     type=MultiChoice(
-        list(const.POST_AREA_CHOICES),
+        list(const.TIMELINE_POST_AREA_CHOICES),
         case_sensitive=False,
     ),
     callback=StringSplitParseTitle,

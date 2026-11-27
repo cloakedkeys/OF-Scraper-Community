@@ -422,7 +422,7 @@ def temp_post_filter(media):
 def likable_post_filter(post):
     return list(
         filter(
-            lambda x: x.opened and x.responsetype.capitalize() in const.POST_AREA_SET,
+            lambda x: x.opened and x.responsetype.capitalize() in const.TIMELINE_POST_AREA_SET,
             post,
         )
     )
