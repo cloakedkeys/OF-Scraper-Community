@@ -41,4 +41,11 @@ MEDIA_ALIASES = {
 # Timeline-style post areas shared across CLI choices, filters, DB writes and refresh
 TIMELINE_POST_AREAS = ("Timeline", "Pinned", "Archived", "Streams")
 TIMELINE_POST_AREA_SET = frozenset(TIMELINE_POST_AREAS)
-TIMELINE_POST_AREA_CHOICES = ("All", "Archived", "Timeline", "Pinned", "Labels", "Streams")
+TIMELINE_POST_AREA_CHOICES = (
+    "All",
+    "Archived",
+    "Timeline",
+    "Pinned",
+    "Labels",
+    "Streams",
+)
