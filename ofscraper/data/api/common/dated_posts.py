@@ -1,6 +1,6 @@
 """The timeline, archived and streams scans, which differ only in names and endpoints.
 
-Both page oldest-first by ``postedAtPrecise`` from a start point worked out
+All three page oldest-first by ``postedAtPrecise`` from a start point worked out
 from the database, split the cached posts into chunks with one worker each,
 and flag cached posts the API no longer returns as deleted.
 

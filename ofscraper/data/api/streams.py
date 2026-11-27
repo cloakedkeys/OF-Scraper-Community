@@ -11,7 +11,8 @@ r"""
 
 """
 
-# The scan itself is in common/dated_posts.py, shared with archived. The
+# The scan itself is in common/dated_posts.py, shared with timeline and
+# archived. The
 # names imported here are this area's: the shared code reaches them through
 # this module, so patching one here changes the streams scan only.
 import logging
