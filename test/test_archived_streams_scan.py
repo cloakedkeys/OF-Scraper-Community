@@ -325,17 +325,17 @@ def test_cache_rows_are_traced_under_the_area_name(area, monkeypatch):
     traced.assert_called_once_with(area.cache_trace, rows)
 
 
-@pytest.mark.parametrize("undated", [None, 0, ""])
-def test_undated_cache_rows_are_left_out_of_the_chunks(area, monkeypatch, undated):
+def test_undated_cache_rows_are_left_out_of_the_chunks(area, monkeypatch):
+    # the DB post-info helpers normalise undated rows to 0.0 and get_after is at least 2000
     rows = [
         {"post_id": 2, "created_at": ts(2)},
-        {"post_id": 9, "created_at": undated},
+        {"post_id": 9, "created_at": 0.0},
         {"post_id": 1, "created_at": ts(1)},
     ]
     monkeypatch.setattr(area.module, area.post_info, AsyncMock(return_value=rows))
     monkeypatch.setattr(area.module, "get_min_posts_batch", lambda total, api: 5)
 
-    split = asyncio.run(area.module.get_split_array(MODEL_ID, USER, 0))
+    split = asyncio.run(area.module.get_split_array(MODEL_ID, USER, YEAR_2000))
 
     assert [[r["post_id"] for r in chunk] for chunk in split] == [[1, 2]]
 

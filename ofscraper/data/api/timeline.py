@@ -9,20 +9,19 @@ r"""
 (_______)|/              \_______)(_______/|/   \__/|/     \||/       (_______/|/   \__/
 """
 
+# The scan itself is in common/dated_posts.py, shared with archived and streams.
+# The functions and DB helpers imported here are looked up through this module,
+# so patching one here changes the timeline scan only.
 import logging
 import sys
 
 import ofscraper.data.api.common.dated_posts as dated_posts
-import ofscraper.data.api.common.logs.strings as common_logs
 import ofscraper.data.api.common.scan_range as scan_range
 from ofscraper.commands.scraper.actions.download import stop
-from ofscraper.data.api.common.dated_posts import date_or_2000  # noqa: F401
-from ofscraper.data.api.common.logs.logs import trace_progress_log
-from ofscraper.data.api.tasks import collect_pages
 from ofscraper.utils.context.run_async import run
 
-# Imports marked F401 are used through this module by dated_posts, or patched
-# through it (module.settings, module.progress_utils, module.incomplete)
+# Test handles (module.incomplete, module.progress_utils, module.of_env) and
+# per-area helpers looked up on this module by dated_posts.
 import ofscraper.data.api.common.incomplete as incomplete  # noqa: F401
 import ofscraper.utils.live.updater as progress_utils  # noqa: F401
 import ofscraper.utils.of_env.of_env as of_env  # noqa: F401
@@ -50,6 +49,11 @@ AREA = dated_posts.Area(
     max_individual="MAX_TIMELINE_INDIVIDUAL_SEARCH",
     cache_trace="oldtimeline",
     ghosts="deleted posts in database.",
+    post_info="get_timeline_posts_info",
+    media="get_timeline_media",
+    youngest_date="get_youngest_timeline_date",
+    scrape="scrape_timeline_posts",
+    log_progress_ids=True,
 )
 log = logging.getLogger("shared")
 _area = sys.modules[__name__]
@@ -62,13 +66,7 @@ async def get_timeline_posts(model_id, username, c=None, post_id=None):
 
 
 async def process_tasks(generators):
-    def on_new(new_posts):
-        log.debug(
-            f"{common_logs.PROGRESS_IDS.format('Timeline')} {list(map(lambda x:x['id'],new_posts))}"
-        )
-        trace_progress_log(f"{API} task", new_posts)
-
-    return await collect_pages(generators, "Timeline Content Pages Progress", on_new)
+    return await dated_posts.process_tasks_batch(_area, generators)
 
 
 async def process_tasks_batch(generators):
@@ -76,9 +74,7 @@ async def process_tasks_batch(generators):
 
 
 async def get_oldtimeline(model_id, username):
-    return await dated_posts.get_old_posts(
-        _area, get_timeline_posts_info, model_id, username
-    )
+    return await dated_posts.get_old_posts(_area, model_id, username)
 
 
 async def get_split_array(model_id, username, after):
@@ -87,9 +83,7 @@ async def get_split_array(model_id, username, after):
 
 
 def get_tasks(splitArrays, c, model_id, username, after):
-    return dated_posts.get_tasks(
-        scrape_timeline_posts, splitArrays, c, model_id, username, after
-    )
+    return dated_posts.get_tasks(_area, splitArrays, c, model_id, username, after)
 
 
 def scrape_timeline_posts(
@@ -108,9 +102,7 @@ def scrape_timeline_posts(
 
 
 async def get_after(model_id, username):
-    return await dated_posts.get_after(
-        _area, get_timeline_media, get_youngest_timeline_date, model_id, username
-    )
+    return await dated_posts.get_after(_area, model_id, username)
 
 
 def time_log(username, after):
