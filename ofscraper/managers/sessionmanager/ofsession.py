@@ -36,8 +36,8 @@ class OFSessionManager(sessionManager):
     actions, exceptions, and specific default values for retries and limits.
     """
 
-    default_rate_limit_sleeper: Any = sleepers.rate_limit_session_sleeper
-    default_forbidden_sleeper: Any = sleepers.forbidden_session_sleeper
+    default_rate_limit_sleeper: str = "rate_limit_session_sleeper"
+    default_forbidden_sleeper: str = "forbidden_session_sleeper"
 
     def __init__(
         self,
@@ -65,9 +65,9 @@ class OFSessionManager(sessionManager):
         forbidden_sleeper: Any = _UNSET,
     ):
         if rate_limit_sleeper is _UNSET:
-            rate_limit_sleeper = self.default_rate_limit_sleeper
+            rate_limit_sleeper = getattr(sleepers, self.default_rate_limit_sleeper)
         if forbidden_sleeper is _UNSET:
-            forbidden_sleeper = self.default_forbidden_sleeper
+            forbidden_sleeper = getattr(sleepers, self.default_forbidden_sleeper)
         # --- Apply specialized defaults for this subclass ---
         limit = limit if limit is not None else of_env.getattr("API_MAX_CONNECTION")
         # Assuming API_INDVIDIUAL_NUM_TRIES is a valid key in your config
@@ -146,8 +146,8 @@ class download_session(sessionManager):
     and specific retry/timeout settings.
     """
 
-    default_rate_limit_sleeper: Any = sleepers.download_rate_limit_session_sleeper
-    default_forbidden_sleeper: Any = sleepers.download_forbidden_session_sleeper
+    default_rate_limit_sleeper: str = "download_rate_limit_session_sleeper"
+    default_forbidden_sleeper: str = "download_forbidden_session_sleeper"
 
     def __init__(
         self,
@@ -158,9 +158,9 @@ class download_session(sessionManager):
         **kwargs: Any,
     ) -> None:
         if rate_limit_sleeper is _UNSET:
-            rate_limit_sleeper = self.default_rate_limit_sleeper
+            rate_limit_sleeper = getattr(sleepers, self.default_rate_limit_sleeper)
         if forbidden_sleeper is _UNSET:
-            forbidden_sleeper = self.default_forbidden_sleeper
+            forbidden_sleeper = getattr(sleepers, self.default_forbidden_sleeper)
         # --- Apply specialized defaults for download sessions ---
         # only None means "use the default": 0 retries or a 0 s wait is a value
         retries = kwargs.pop("retries", None)
@@ -237,8 +237,8 @@ class download_session(sessionManager):
 class metadata_session(download_session):
     """A specialized sessionManager for metadata operations."""
 
-    default_rate_limit_sleeper = sleepers.metadata_rate_limit_session_sleeper
-    default_forbidden_sleeper = sleepers.metadata_forbidden_session_sleeper
+    default_rate_limit_sleeper = "metadata_rate_limit_session_sleeper"
+    default_forbidden_sleeper = "metadata_forbidden_session_sleeper"
 
 
 class cdm_session(sessionManager):
@@ -248,19 +248,19 @@ class cdm_session(sessionManager):
 class cdm_session_manual(OFSessionManager):
     """A session manager for manual CDM operations, using OFSessionManager presets."""
 
-    default_rate_limit_sleeper = sleepers.cdm_rate_limit_session_sleeper
-    default_forbidden_sleeper = sleepers.cdm_forbidden_session_sleeper
+    default_rate_limit_sleeper = "cdm_rate_limit_session_sleeper"
+    default_forbidden_sleeper = "cdm_forbidden_session_sleeper"
 
 
 class like_session(OFSessionManager):
     """A session manager for like operations, using OFSessionManager presets."""
 
-    default_rate_limit_sleeper = sleepers.like_rate_limit_session_sleeper
-    default_forbidden_sleeper = sleepers.like_forbidden_session_sleeper
+    default_rate_limit_sleeper = "like_rate_limit_session_sleeper"
+    default_forbidden_sleeper = "like_forbidden_session_sleeper"
 
 
 class SubscriptionSessionManager(OFSessionManager):
     """A session manager for subscription operations, using OFSessionManager presets."""
 
-    default_rate_limit_sleeper = sleepers.subscription_rate_limit_session_sleeper
-    default_forbidden_sleeper = sleepers.subscription_forbidden_session_sleeper
+    default_rate_limit_sleeper = "subscription_rate_limit_session_sleeper"
+    default_forbidden_sleeper = "subscription_forbidden_session_sleeper"
