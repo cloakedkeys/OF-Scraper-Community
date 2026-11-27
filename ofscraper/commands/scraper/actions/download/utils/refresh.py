@@ -33,6 +33,7 @@ from ofscraper.sites.fansly import address
 from ofscraper.sites.fansly import api as fansly_api
 from ofscraper.sites.fansly import normalize as fansly_normalize
 from ofscraper.sites.fansly import video as fansly_video
+import ofscraper.utils.const as const
 
 log = logging.getLogger("shared")
 
@@ -41,7 +42,7 @@ log = logging.getLogger("shared")
 FANSLY_ASKS = 3
 FANSLY_ASK_WAIT = 5
 
-TIMELINE_AREAS = {"Timeline", "Pinned", "Archived", "Streams"}
+TIMELINE_AREAS = const.POST_AREA_SET
 
 # Stories and highlights have no single-item fetch, so a creator's whole list
 # is fetched once and kept this long for the other items that fail after the

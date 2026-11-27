@@ -37,3 +37,8 @@ MEDIA_ALIASES = {
     "gif": "videos",
     "gifs": "videos",
 }
+
+# Timeline-style post areas shared across CLI choices, filters, DB writes and refresh
+POST_AREAS = ("Timeline", "Pinned", "Archived", "Streams")
+POST_AREA_SET = frozenset(POST_AREAS)
+POST_AREA_CHOICES = ("All", "Archived", "Timeline", "Pinned", "Labels", "Streams")
