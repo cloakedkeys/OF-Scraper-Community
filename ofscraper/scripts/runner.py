@@ -55,10 +55,11 @@ def run_user_script(
         stdin = _stdin(make_input, as_json)
         log.info(f"Running {name}{about} with script: {script_path}")
         result = run([script_path], input=stdin, **_options(name, level_key, timeout))
-        _log_success(result, name, about)
     except Exception as e:
         _log_failure(e, script_path, name, about)
         return None
+    # outside the try: the script succeeded, whatever happens logging it
+    _log_success(result, name, about)
     return result
 
 
@@ -80,10 +81,10 @@ async def async_run_user_script(
         result = await async_run(
             [script_path], input=stdin, **_options(name, level_key, timeout)
         )
-        _log_success(result, name, about)
     except Exception as e:
         _log_failure(e, script_path, name, about)
         return None
+    _log_success(result, name, about)
     return result
 
 
@@ -116,10 +117,13 @@ def _log_success(result, name, about):
     if result is not None and env.getattr("SCRIPT_OUTPUT_SUBPROCCESS"):
         for label, text in (("stdout", result.stdout), ("stderr", result.stderr)):
             if text and text.strip():
-                log.log(
-                    env.getattr("SCRIPT_OUTPUT_SUBPROCCESS_LEVEL"),
-                    f"{name.capitalize()} {label}{about}:\n{text.strip()}",
-                )
+                message = f"{name.capitalize()} {label}{about}:\n{text.strip()}"
+                try:
+                    log.log(env.getattr("SCRIPT_OUTPUT_SUBPROCCESS_LEVEL"), message)
+                except TypeError:
+                    # the level isn't a typed setting: set from the environment
+                    # it's a string, which log.log rejects
+                    log.debug(message)
     log.info(f"{name.capitalize()} ran successfully{about}.")
 
 

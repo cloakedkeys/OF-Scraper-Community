@@ -64,6 +64,22 @@ def test_skip_script_gets_json_and_answers(configured):
     assert asyncio.run(skip.skip_download_script(1000, _ele())) == skip.SKIP_PERMANENT
 
 
+def test_output_logging_with_an_untyped_level_keeps_the_answer(
+    configured, monkeypatch, caplog
+):
+    # SCRIPT_OUTPUT_SUBPROCCESS_LEVEL set from the environment is a string,
+    # which log.log rejects: the script still succeeded, so its answer counts
+    configured("print('skip-permanent')\n")
+    real = runner.env.getattr
+    overrides = {"SCRIPT_OUTPUT_SUBPROCCESS": True, "SCRIPT_OUTPUT_SUBPROCCESS_LEVEL": "INFO"}
+    monkeypatch.setattr(
+        runner.env, "getattr", lambda key, *a: overrides.get(key, real(key, *a))
+    )
+    with caplog.at_level(logging.DEBUG, logger="shared"):
+        assert asyncio.run(skip.skip_download_script(1000, _ele())) == skip.SKIP_PERMANENT
+    assert any("stdout for" in r.getMessage() for r in caplog.records)
+
+
 def test_failing_script_is_logged_and_downloads(configured, caplog):
     configured("import sys\nprint('oops', file=sys.stderr)\nsys.exit(3)\n")
     with caplog.at_level(logging.DEBUG, logger="shared"):
