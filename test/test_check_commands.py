@@ -229,10 +229,12 @@ def test_msg_check_help_describes_messages():
     assert "post_check" not in message.message_check.help
 
 
-def _run_msg_check(monkeypatch, inputs):
+def _run_msg_check(monkeypatch, inputs, sessions=None):
     # drives the real retriever; profile lookups and the cache are faked
     @contextlib.asynccontextmanager
     async def fake_session(**kwargs):
+        if sessions is not None:
+            sessions.append(kwargs)
         yield object()
 
     async def nothing(*args, **kwargs):
@@ -276,6 +278,13 @@ def test_msg_check_skips_blank_line(monkeypatch):
     checked, looked_up, _ = _run_msg_check(monkeypatch, ["", "a_creator"])
     assert checked == [("a_creator", "111")]
     assert looked_up == [("name", "a_creator")]
+
+
+def test_msg_check_session_uses_the_check_request_limit(monkeypatch):
+    # like the other check modes, msg_check caps requests at API_REQ_CHECK_MAX
+    sessions = []
+    _run_msg_check(monkeypatch, ["a_creator"], sessions)
+    assert sessions == [{"sem_count": check.of_env.getattr("API_REQ_CHECK_MAX")}]
 
 
 def _fetch_or_cache(monkeypatch, cached, forced):
