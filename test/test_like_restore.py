@@ -78,3 +78,60 @@ def test_unlike_restored():
     post, session = Post(), Session(True, False)
     assert like._toggle_unlike_requests(session, post, 456) == 2
     assert post.results == [True]
+
+
+class MarkedPost(Post):
+    """Records which of the two marks was set."""
+
+    def mark_post_liked(self, success=True):
+        self.results.append(("liked", success))
+
+    def mark_post_unliked(self, success=True):
+        self.results.append(("unliked", success))
+
+
+@pytest.mark.parametrize(
+    "toggle, replies, result, marks",
+    [
+        (like._toggle_like_requests, [True], 1, [("liked", True)]),
+        (like._toggle_like_requests, ["bad"], 3, [("liked", False)]),
+        (like._toggle_like_requests, [False, True], 2, [("liked", True)]),
+        (like._toggle_unlike_requests, [False], 1, [("unliked", True)]),
+        (like._toggle_unlike_requests, ["bad"], 3, [("unliked", False)]),
+        (like._toggle_unlike_requests, [True, False], 2, [("unliked", True)]),
+    ],
+)
+def test_toggle_result_and_mark(toggle, replies, result, marks):
+    post, session = MarkedPost(), Session(*replies)
+    assert toggle(session, post, 456) == result
+    assert post.results == marks
+    assert session.calls == len(replies)
+
+
+@pytest.mark.parametrize("process", [like.process_like, like.process_unlike])
+def test_like_screen_is_set_up_once(monkeypatch, process):
+    screens = []
+
+    @contextlib.contextmanager
+    def setup_live(name):
+        screens.append(name)
+        yield
+
+    @contextlib.contextmanager
+    def like_session(**kwargs):
+        yield Session()
+
+    class Progress:
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    monkeypatch.setattr(like.progress_utils, "setup_live", setup_live)
+    monkeypatch.setattr(like.progress_updater, "like", Progress())
+    monkeypatch.setattr(like.progress_updater, "activity", Progress())
+    monkeypatch.setattr(
+        like.manager,
+        "Manager",
+        type("M", (), {"session": type("S", (), {"get_like_session": staticmethod(like_session)})}),
+    )
+    process(posts=[], model_id=456, username="creator1")
+    assert screens == ["like"]
