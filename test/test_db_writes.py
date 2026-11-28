@@ -443,3 +443,46 @@ def test_merge_copies_products_others_and_messages(tmp_path, monkeypatch):
     assert rows(new_db, "products", PRODUCT_COLS) == PRODUCTS
     assert rows(new_db, "others", OTHER_COLS) == OTHERS
     assert rows(new_db, "messages", MESSAGE_COLS) == MESSAGES
+
+
+# every table merge.COPIED_TABLES copies, with its columns and rows
+COPIED = {
+    "labels": (LABEL_COLS, LABELS),
+    "posts": (POST_COLS, POSTS),
+    "products": (PRODUCT_COLS, PRODUCTS),
+    "others": (OTHER_COLS, OTHERS),
+    "stories": (STORY_COLS, STORIES),
+    "messages": (MESSAGE_COLS, MESSAGES),
+}
+
+
+def test_merge_again_copies_only_the_rows_the_target_lacks(tmp_path, monkeypatch):
+    assert set(COPIED) == set(merge.COPIED_TABLES)
+    old_db = tmp_path / "old" / "creator" / "user_data.db"
+    new_db = tmp_path / "new" / "user_data.db"
+    old_db.parent.mkdir(parents=True)
+
+    def fail(e):
+        raise e if isinstance(e, BaseException) else AssertionError(e)
+
+    monkeypatch.setattr(merge.log, "traceback_", fail, raising=False)
+
+    async def run():
+        await new_database(old_db)
+        await modify_tables(db_path=old_db)
+        for table, (cols, data) in COPIED.items():
+            # the target gets the first row from the first merge
+            insert(old_db, table, cols, data[:1])
+        first = await merge.MergeDatabase()(tmp_path / "old", new_db)
+        for table, (cols, data) in COPIED.items():
+            insert(old_db, table, cols, data[1:])
+        # a new merge reads what the target has: only the second rows are new,
+        # and copying a first row again would break the table's unique key
+        second = await merge.MergeDatabase()(tmp_path / "old", new_db)
+        return first, second
+
+    for failures, success, _ in asyncio.run(run()):
+        assert failures == []
+        assert [model for model, _ in success] == [MODEL_ID]
+    for table, (cols, data) in COPIED.items():
+        assert rows(new_db, table, cols) == sorted(data), table
