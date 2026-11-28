@@ -2,9 +2,10 @@ from ofscraper.filters.models.utils.logs import apply_yes_no_filters
 
 
 def _has_free_trial(x):
-    return (
-        x.final_current_price == 0 or x.final_promo_price == 0
-    ) and x.final_regular_price > 0
+    # final_regular_price can be None (no price known): not a free trial
+    return (x.final_current_price == 0 or x.final_promo_price == 0) and (
+        x.final_regular_price or 0
+    ) > 0
 
 
 # (setting_key, log label, predicate for "yes", yes label, no label)

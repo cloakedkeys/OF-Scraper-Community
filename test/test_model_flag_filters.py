@@ -62,11 +62,12 @@ def test_free_trial_flag(monkeypatch):
         _priced("trial_promo", 5, 0, 10),
         _priced("paid", 5, 5, 10),
         _priced("free", 0, 0, 0),
+        _priced("unpriced", 0, 0, None),
     ]
     _patch_settings(monkeypatch, free_trial=True)
     assert _names(flags.promoFilterHelper(models)) == ["trial_current", "trial_promo"]
     _patch_settings(monkeypatch, free_trial=False)
-    assert _names(flags.promoFilterHelper(models)) == ["paid", "free"]
+    assert _names(flags.promoFilterHelper(models)) == ["paid", "free", "unpriced"]
 
 
 @pytest.mark.parametrize(
