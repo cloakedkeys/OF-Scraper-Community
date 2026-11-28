@@ -82,6 +82,44 @@ def test_min_and_max_bounds_are_inclusive(monkeypatch, prefix, attr):
     assert [m.name for m in price_filters.priceMinMaxFilters(models)] == ["low", "mid"]
 
 
+@pytest.mark.parametrize(
+    "prefix, attr",
+    [
+        ("promo_price", "promo"),
+        ("regular_price", "regular"),
+        ("renewal_price", "renewal"),
+        ("current_price", "current"),
+    ],
+)
+def test_zero_max_bound_keeps_only_free(monkeypatch, prefix, attr):
+    # behaviour change: a bound of 0 used to be ignored as if unset
+    models = [_model("zero", **{attr: 0}), _model("low", **{attr: 5})]
+    _patch_settings(monkeypatch, **{f"{prefix}_max": 0})
+    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == ["zero"]
+
+    _patch_settings(monkeypatch, **{f"{prefix}_min": 0})
+    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == [
+        "zero",
+        "low",
+    ]
+
+
+def test_missing_regular_price(monkeypatch):
+    # final_regular_price is None when the API leaves the price out
+    models = [_model("unknown", regular=None), _model("paid", regular=5)]
+
+    # paid/free: unchanged, None counts as neither
+    _patch_settings(monkeypatch, regular_price="paid")
+    assert [m.name for m in price_filters.pricePaidFreeFilterHelper(models)] == ["paid"]
+    _patch_settings(monkeypatch, regular_price="free")
+    assert price_filters.pricePaidFreeFilterHelper(models) == []
+
+    # behaviour change: a bound used to raise TypeError on None, it now
+    # leaves the account out
+    _patch_settings(monkeypatch, regular_price_min=1)
+    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == ["paid"]
+
+
 def test_combined_paid_and_bound_filters(monkeypatch):
     models = [
         _model("free", current=0, renewal=0),

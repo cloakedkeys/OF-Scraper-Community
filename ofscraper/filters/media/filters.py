@@ -187,24 +187,29 @@ def mediatype_type_filter(media):
     return media
 
 
+def _date_filter(items, attr):
+    """Apply --before and --after to ``items`` by their ``attr`` date.
+
+    Undated items always pass."""
+    before = settings.get_settings().before
+    after = settings.get_settings().after
+    if before:
+        items = [
+            x
+            for x in items
+            if getattr(x, attr) is None or arrow.get(getattr(x, attr)) <= before
+        ]
+    if after:
+        items = [
+            x
+            for x in items
+            if getattr(x, attr) is None or arrow.get(getattr(x, attr)) >= after
+        ]
+    return items
+
+
 def posts_date_filter_media(media):
-    if settings.get_settings().before:
-        media = list(
-            filter(
-                lambda x: x.postdate is None
-                or arrow.get(x.postdate) <= settings.get_settings().before,
-                media,
-            )
-        )
-    if settings.get_settings().after:
-        media = list(
-            filter(
-                lambda x: x.postdate is None
-                or arrow.get(x.postdate) >= settings.get_settings().after,
-                media,
-            )
-        )
-    return media
+    return _date_filter(media, "postdate")
 
 
 def download_type_filter(media):
@@ -392,23 +397,7 @@ def post_id_filter(media):
 
 
 def posts_date_filter(media):
-    if settings.get_settings().before:
-        media = list(
-            filter(
-                lambda x: x.date is None
-                or arrow.get(x.date) <= settings.get_settings().before,
-                media,
-            )
-        )
-    if settings.get_settings().after:
-        media = list(
-            filter(
-                lambda x: x.date is None
-                or arrow.get(x.date) >= settings.get_settings().after,
-                media,
-            )
-        )
-    return media
+    return _date_filter(media, "date")
 
 
 def temp_post_filter(media):
@@ -431,57 +420,31 @@ def likable_post_filter(post):
     )
 
 
-def post_text_filter(media):
-    userfilter = settings.get_settings().filter
-    if not userfilter:
+def _text_filter(media, patterns, keep_matches):
+    """Keep posts whose text matches every pattern (``keep_matches``) or
+    none of them. An all lower-case pattern matches in any case.
+
+    Patterns are not precompiled: ``re`` caches them, and an invalid
+    pattern only raises once there is a post to match it against."""
+    if not patterns:
         return media
     curr = media
-    for ele in userfilter:
-        if not ele.islower():
-            curr = list(
-                filter(
-                    lambda x: re.search(ele, r"""{}""".format(x.text or ""))
-                    is not None,
-                    curr,
-                )
-            )
-        else:
-            curr = list(
-                filter(
-                    lambda x: re.search(
-                        ele, r"""{}""".format(x.text or ""), re.IGNORECASE
-                    )
-                    is not None,
-                    curr,
-                )
-            )
+    for ele in patterns:
+        flags = re.IGNORECASE if ele.islower() else 0
+        curr = [
+            x
+            for x in curr
+            if (re.search(ele, str(x.text or ""), flags) is not None) == keep_matches
+        ]
     return curr
+
+
+def post_text_filter(media):
+    return _text_filter(media, settings.get_settings().filter, keep_matches=True)
 
 
 def post_neg_text_filter(media):
-    userfilter = settings.get_settings().neg_filter
-    if not bool(userfilter):
-        return media
-    curr = media
-    for ele in userfilter:
-        if not ele.islower():
-            curr = list(
-                filter(
-                    lambda x: re.search(ele, r"""{}""".format(x.text or "")) is None,
-                    curr,
-                )
-            )
-        else:
-            curr = list(
-                filter(
-                    lambda x: re.search(
-                        ele, r"""{}""".format(x.text or ""), re.IGNORECASE
-                    )
-                    is None,
-                    curr,
-                )
-            )
-    return curr
+    return _text_filter(media, settings.get_settings().neg_filter, keep_matches=False)
 
 
 def mass_msg_filter(media):
