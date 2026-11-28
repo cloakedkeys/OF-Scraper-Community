@@ -65,10 +65,15 @@ def test_every_paid_lookup_in_check_passes_username_first():
     # OnlyFans' paid lookup is called only through _get_paid, which also
     # picks Fansly's (model id first) for a Fansly profile
     (onlyfans,) = [n for n in calls if named(n, "paid_.get_paid_posts")]
-    routed = [n for n in calls if named(n, "_get_paid")]
+    # called directly, or bound with partial() for _fetch_or_cache
+    routed = [n.args for n in calls if named(n, "_get_paid")] + [
+        n.args[1:]
+        for n in calls
+        if named(n, "partial") and isinstance(n.args[0], ast.Name) and n.args[0].id == "_get_paid"
+    ]
     assert len(routed) == 3
-    for call in [onlyfans, *routed]:
-        assert [a.id for a in call.args[:2]] == ["user_name", "model_id"], ast.unparse(call)
+    for args in [onlyfans.args, *routed]:
+        assert [a.id for a in args[:2]] == ["user_name", "model_id"], [ast.unparse(a) for a in args]
 
 
 def _parse(command, args):
@@ -271,6 +276,40 @@ def test_msg_check_skips_blank_line(monkeypatch):
     checked, looked_up, _ = _run_msg_check(monkeypatch, ["", "a_creator"])
     assert checked == [("a_creator", "111")]
     assert looked_up == [("name", "a_creator")]
+
+
+def _fetch_or_cache(monkeypatch, cached, forced):
+    saved = []
+    fetched = []
+
+    async def fetch():
+        fetched.append(True)
+        return [{"id": 2}]
+
+    monkeypatch.setattr(check, "read_check", lambda model_id, api: cached)
+    monkeypatch.setattr(check, "set_check", lambda posts, model_id, api: saved.append((posts, model_id, api)))
+    result = asyncio.run(check._fetch_or_cache(111, "creator1", "timeline", fetch, forced))
+    return result, fetched, saved
+
+
+def test_fetch_or_cache_uses_the_cache_when_not_forced(monkeypatch):
+    result, fetched, saved = _fetch_or_cache(monkeypatch, [{"id": 1}], forced=False)
+    assert result == ([{"id": 1}], False)
+    assert fetched == [] and saved == []
+
+
+def test_fetch_or_cache_uses_an_empty_cache(monkeypatch):
+    # an empty list is a cached result, not a missing one
+    result, fetched, _ = _fetch_or_cache(monkeypatch, [], forced=False)
+    assert result == ([], False) and fetched == []
+
+
+@pytest.mark.parametrize("cached, forced", [(None, False), ([{"id": 1}], True)])
+def test_fetch_or_cache_fetches_and_caches(monkeypatch, cached, forced):
+    result, fetched, saved = _fetch_or_cache(monkeypatch, cached, forced)
+    assert result == ([{"id": 2}], True)
+    assert fetched == [True]
+    assert saved == [([{"id": 2}], 111, "timeline")]
 
 
 def test_msg_check_reads_username_with_digits_as_username(monkeypatch):
