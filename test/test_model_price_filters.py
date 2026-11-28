@@ -91,14 +91,11 @@ def test_min_and_max_bounds_are_inclusive(monkeypatch, prefix, attr):
         ("current_price", "current"),
     ],
 )
-def test_zero_bound_is_ignored(monkeypatch, prefix, attr):
-    # a bound of 0 is skipped as if unset, as on main
+def test_zero_bound_applies(monkeypatch, prefix, attr):
+    # a bound of 0 used to be skipped as if unset
     models = [_model("zero", **{attr: 0}), _model("low", **{attr: 5})]
     _patch_settings(monkeypatch, **{f"{prefix}_max": 0})
-    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == [
-        "zero",
-        "low",
-    ]
+    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == ["zero"]
 
     _patch_settings(monkeypatch, **{f"{prefix}_min": 0})
     assert [m.name for m in price_filters.priceMinMaxFilters(models)] == [
@@ -109,12 +106,12 @@ def test_zero_bound_is_ignored(monkeypatch, prefix, attr):
 
 @pytest.mark.parametrize("bound", ["regular_price_min", "regular_price_max"])
 def test_zero_regular_bound_with_unknown_regular_price(monkeypatch, bound):
+    # a 0 bound now compares like any other, so a None regular price raises
+    # TypeError, as a bound of 1 already does
     models = [_model("unknown", regular=None), _model("paid", regular=5)]
     _patch_settings(monkeypatch, **{bound: 0})
-    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == [
-        "unknown",
-        "paid",
-    ]
+    with pytest.raises(TypeError):
+        price_filters.priceMinMaxFilters(models)
 
 
 def test_missing_regular_price(monkeypatch):
