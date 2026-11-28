@@ -33,26 +33,6 @@ def get_username():
     return pathlib.Path.home().name
 
 
-def getDB():
-    return get_profile_path() / "locks" / "db.lock"
-
-
-def getRich():
-    return get_profile_path() / "locks" / "rich.lock"
-
-
-def getFile():
-    return get_profile_path() / "locks" / "file.lock"
-
-
-def getDiscord():
-    return get_profile_path() / "locks" / "discord.lock"
-
-
-def getMediaDB():
-    return get_profile_path() / "locks" / "media_db.lock"
-
-
 def get_config_home():
     return get_config_path().parent
 

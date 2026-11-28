@@ -49,13 +49,6 @@ class NoTraceBack(logging.Filter):
         return record.levelno != 11
 
 
-class NoDebug(logging.Filter):
-    """A filter to exclude log records at or below the debug level."""
-
-    def filter(self, record):
-        return record.levelno > 11
-
-
 class SensitiveFormatter(logging.Formatter):
     """
     Base formatter that dynamically removes sensitive information in logs

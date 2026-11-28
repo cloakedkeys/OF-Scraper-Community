@@ -15,7 +15,6 @@ import logging
 import traceback
 from typing import Union
 
-from rich.console import Console
 from xxhash import xxh128
 
 import ofscraper.managers.manager as manager
@@ -25,7 +24,6 @@ import ofscraper.utils.settings as settings
 
 from ...utils import encoding
 
-console = Console()
 log = logging.getLogger("shared")
 API = "Profile"
 
@@ -132,15 +130,6 @@ def parse_profile(profile: dict) -> tuple:
     )
 
     return output, info
-
-
-def print_profile_info(info):
-    header_fmt = "Name: {} | Username: {} | ID: {} | Joined: {}\n"
-    info_fmt = (
-        "- {} posts\n -- {} photos\n -- {} videos\n -- {} audios\n- {} archived posts"
-    )
-    final_fmt = header_fmt + info_fmt
-    log.info(final_fmt.format(*info))
 
 
 def get_id(username, c=None, asked_for=None):
