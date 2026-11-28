@@ -132,15 +132,6 @@ def parse_profile(profile: dict) -> tuple:
     return output, info
 
 
-def print_profile_info(info):
-    header_fmt = "Name: {} | Username: {} | ID: {} | Joined: {}\n"
-    info_fmt = (
-        "- {} posts\n -- {} photos\n -- {} videos\n -- {} audios\n- {} archived posts"
-    )
-    final_fmt = header_fmt + info_fmt
-    log.info(final_fmt.format(*info))
-
-
 def get_id(username, c=None, asked_for=None):
     c = c or manager.Manager.session.get_ofsession()
     with c as c:

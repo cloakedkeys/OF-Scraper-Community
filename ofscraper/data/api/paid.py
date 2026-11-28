@@ -24,7 +24,6 @@ from ofscraper.data.api.common.logs.logs import trace_log_raw, trace_progress_lo
 from ofscraper.data.api.tasks import collect_pages
 from ofscraper.utils.context.run_async import run
 
-paid_content_list_name = "list"
 log = logging.getLogger("shared")
 API = "Purchased"
 

@@ -15,13 +15,10 @@ import asyncio
 import logging
 import traceback
 
-from rich.console import Console
-
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 
 log = logging.getLogger("shared")
-console = Console()
 
 
 def get_user_list_helper():

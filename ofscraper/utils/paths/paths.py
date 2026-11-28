@@ -1,11 +1,8 @@
 import logging
-import os
 import pathlib
 import platform
 import re
 import shutil
-from contextlib import contextmanager
-from pathlib import Path
 
 import ofscraper.utils.config.data as data
 import ofscraper.utils.console as console_
@@ -16,28 +13,7 @@ import ofscraper.utils.paths.names as names
 import ofscraper.utils.settings as settings
 
 console = console_.get_shared_console()
-homeDir = pathlib.Path.home()
 log = logging.getLogger("shared")
-
-
-@contextmanager
-def set_directory(path: Path):
-    """Sets the cwd within the context
-
-        Args:``
-            path (``Path): The path to the cwd
-
-    Yields:
-        None
-    """
-
-    origin = Path().absolute()
-    Path(str(path)).mkdir(parents=True, exist_ok=True)
-    try:
-        os.chdir(path)
-        yield
-    finally:
-        os.chdir(origin)
 
 
 def temp_cleanup():
@@ -70,7 +46,6 @@ def truncate(path, *, keep_suffix=""):
 
 
 _split_ext = names.split_extension
-_longest_fitting = names.longest_fitting
 _windows_truncateHelper = names.truncate_windows
 _mac_truncateHelper = names.truncate_mac
 _mac_name_size = names.mac_name_size

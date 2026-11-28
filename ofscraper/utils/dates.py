@@ -11,8 +11,6 @@ r"""
 
 """
 
-from datetime import datetime
-
 import arrow
 
 dateNow = None
@@ -22,28 +20,6 @@ dateDict = None
 def setDateNow():
     global dateNow
     dateNow = arrow.now()
-
-
-def getDateNow():
-    global dateNow
-    if not dateNow:
-        setDateNow()
-    return dateNow
-
-
-def convert_date_to_mdyhms(date: str):
-    datetime_obj = datetime.fromisoformat(date)
-    return datetime_obj.strftime("%B %d, %Y %I:%M:%S %p")
-
-
-def convert_date_to_mdy(date: str):
-    datetime_obj = datetime.fromisoformat(date)
-    return datetime_obj.strftime("%B %d, %Y")
-
-
-def convert_date_to_timestamp(date: str):
-    datetime_obj = datetime.fromisoformat(date)
-    return datetime_obj.timestamp()
 
 
 def convert_local_time(date: str):
