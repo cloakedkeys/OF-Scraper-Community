@@ -234,7 +234,6 @@ Templates are filled with Python's `str.format`, so object values allow attribut
 - Profile media (avatar, header) ignore `file_format`. They are saved as `<file_name>.<ext>`.
 - When `FILE_COUNT_PLACEHOLDER` is on (the default) and `file_format` uses none of `filename`, `only_file_name`, `original_filename` or `media_id`, `_<count>` is added before the extension. This applies to a post with several media, and to a story or highlight.
 - On Fansly, if the `metadata` template uses none of `save_location`, `root`, `site_name` or `model_id` (or their aliases), the site name is added as a subfolder. This keeps Fansly rows out of an OnlyFans `user_data.db`.
-- The validators in `ofscraper/prompts/prompt_validators.py` are not called anywhere. They accept only some of these names.
 """
 
 PLACEHOLDERS = {

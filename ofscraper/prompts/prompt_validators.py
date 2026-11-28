@@ -64,15 +64,6 @@ def currentProfilesCreationValidator():
     return validatorCallableHelper(callable, "This Profile already exists")
 
 
-def currentProfileDeleteValidator():
-    def callable(x):
-        return (
-            profiles_tools.profile_name_fixer(x) != profiles_data.get_active_profile()
-        )
-
-    return validatorCallableHelper(callable, "You can not delete the active profile")
-
-
 def emptyListValidator():
     def callable(x):
         return len(x) > 0

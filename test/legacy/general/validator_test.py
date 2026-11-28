@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock, patch
-
 import pytest
 from InquirerPy.validator import EmptyInputValidator
 from prompt_toolkit.document import Document
