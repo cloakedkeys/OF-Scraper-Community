@@ -13,6 +13,7 @@
 
 import asyncio
 import queue
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -1091,6 +1092,14 @@ def test_per_page_builds_each_table_once_at_startup(stub_env_hf, monkeypatch):
     asyncio.run(drive())
 
 
+async def _wait_until(pilot, predicate, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            break
+        await pilot.pause(0.05)
+
+
 def test_typing_a_per_page_value_builds_the_table_once(stub_env_hf, monkeypatch):
     counts = _count_page_builds_hf(monkeypatch)
     # long enough that a busy machine can't fire it between two keystrokes
@@ -1106,7 +1115,7 @@ def test_typing_a_per_page_value_builds_the_table_once(stub_env_hf, monkeypatch)
             await pilot.pause()
             counts["main"] = 0
             await pilot.press("5", "0", "0", "0")
-            await pilot.pause(1.5)
+            await _wait_until(pilot, lambda: counts["main"] >= 1)
             assert counts["main"] == 1
             assert app.table.row_count == 3
 
@@ -1120,10 +1129,10 @@ def test_clearing_per_page_restores_the_default(stub_env_hf):
             await pilot.pause()
             box = app.query_one("#main_per_page_input")
             box.value = "1"
-            await pilot.pause(0.5)
+            await _wait_until(pilot, lambda: app.table.row_count == 1)
             assert app.table.row_count == 1
             box.value = ""
-            await pilot.pause(0.5)
+            await _wait_until(pilot, lambda: app.table.row_count == 3)
             assert app.table.row_count == 3
 
     asyncio.run(drive())
