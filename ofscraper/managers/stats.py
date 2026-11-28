@@ -295,7 +295,7 @@ class StatsManager:
 
     def _clear_group_stats(self, group):
         """Removes every user's stats for the activities in ``group``."""
-        for user_activities in self._stats.values():
+        for user_activities in list(self._stats.values()):
             for activity in [a for a in user_activities if isinstance(a, group)]:
                 del user_activities[activity]
 
