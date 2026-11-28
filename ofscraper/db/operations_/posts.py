@@ -14,7 +14,6 @@ r"""
 import contextlib
 import logging
 
-import arrow
 from rich.console import Console
 
 import ofscraper.classes.of.posts as posts_
@@ -226,15 +225,10 @@ def fill_posts_missing_fields(
         conn.commit()
 
 
+
 @wrapper.operation_wrapper_async
 def get_timeline_posts_info(model_id=None, username=None, conn=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(timelinePostInfo, [model_id])
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(ele, created_at=arrow.get(ele.get("created_at") or 0).float_timestamp)
-            for ele in data
-        ]
+    return media.post_info(conn, timelinePostInfo, model_id)
 
 
 @wrapper.operation_wrapper_async
@@ -315,26 +309,12 @@ def add_column_post_mentions(conn=None, **kwargs):
 
 @wrapper.operation_wrapper_async
 def get_archived_post_info(model_id=None, username=None, conn=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(archivedPostInfo, [model_id])
-        conn.commit()
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(ele, created_at=arrow.get(ele.get("created_at") or 0).float_timestamp)
-            for ele in data
-        ]
+    return media.post_info(conn, archivedPostInfo, model_id, commit=True)
 
 
 @wrapper.operation_wrapper_async
 def get_streams_post_info(model_id=None, username=None, conn=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(streamsPostInfo, [model_id])
-        conn.commit()
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(ele, created_at=arrow.get(ele.get("created_at") or 0).float_timestamp)
-            for ele in data
-        ]
+    return media.post_info(conn, streamsPostInfo, model_id, commit=True)
 
 
 async def rebuild_posts_table(model_id=None, username=None, db_path=None, **kwargs):
@@ -392,40 +372,32 @@ async def make_post_table_changes(
 
 
 async def get_oldest_archived_date(model_id=None, username=None, **kwargs):
-    data = await media.get_archived_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"]))[0]
-    return last_item["posted_at"] or 0
+    read = media.get_archived_media
+    return await media.area_date(read, model_id, username) or 0
 
 
 async def get_youngest_archived_date(model_id=None, username=None, **kwargs):
-    data = await media.get_archived_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"]))[-1]
-    return last_item["posted_at"] or 0
+    read = media.get_archived_media
+    return await media.area_date(read, model_id, username, newest=True) or 0
 
 
 async def get_oldest_streams_date(model_id=None, username=None, **kwargs):
-    data = await media.get_streams_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"]))[0]
-    return last_item["posted_at"] or 0
+    read = media.get_streams_media
+    return await media.area_date(read, model_id, username) or 0
 
 
 async def get_youngest_streams_date(model_id=None, username=None, **kwargs):
-    data = await media.get_streams_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"]))[-1]
-    return last_item["posted_at"] or 0
+    read = media.get_streams_media
+    return await media.area_date(read, model_id, username, newest=True) or 0
 
 
 async def get_oldest_timeline_date(model_id=None, username=None, **kwargs):
-    data = await media.get_timeline_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"]))[0]
-    return last_item["posted_at"]
+    return await media.area_date(media.get_timeline_media, model_id, username)
 
 
 async def get_youngest_timeline_date(model_id=None, username=None, **kwargs):
-    data = await media.get_timeline_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"]))[-1]
-    return last_item["posted_at"]
-
+    read = media.get_timeline_media
+    return await media.area_date(read, model_id, username, newest=True)
 
 @wrapper.operation_wrapper_async
 def get_deleted_post_ids(model_id=None, username=None, conn=None, **kwargs) -> set:

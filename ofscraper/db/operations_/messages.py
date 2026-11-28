@@ -14,7 +14,6 @@ r"""
 import contextlib
 import logging
 
-import arrow
 from rich.console import Console
 
 import ofscraper.db.operations_.media as media
@@ -225,14 +224,7 @@ def get_all_messages_transition(
 
 @wrapper.operation_wrapper_async
 def get_messages_post_info(model_id=None, username=None, conn=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(messagesData, [model_id])
-        conn.commit()
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(ele, created_at=arrow.get(ele.get("created_at") or 0).float_timestamp)
-            for ele in data
-        ]
+    return media.post_info(conn, messagesData, model_id, commit=True)
 
 
 @wrapper.operation_wrapper_async
@@ -281,15 +273,12 @@ async def make_messages_table_changes(
 
 
 async def get_oldest_message_date(model_id=None, username=None, **kwargs):
-    data = await media.get_messages_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"] or 0))[0]
-    return last_item["posted_at"]
+    return await media.area_date(media.get_messages_media, model_id, username)
 
 
 async def get_newest_message_date(model_id=None, username=None, **kwargs):
-    data = await media.get_messages_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"] or 0))[-1]
-    return last_item["posted_at"]
+    read = media.get_messages_media
+    return await media.area_date(read, model_id, username, newest=True)
 
 
 @wrapper.operation_wrapper_async

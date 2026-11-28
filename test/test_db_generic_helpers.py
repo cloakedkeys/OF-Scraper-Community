@@ -1,5 +1,6 @@
 """The generic SQLite helpers behind the per-table upgrade, rebuild and area
-reads (#844): db_columns.add_column, rebuild.TableSpec and media._area_media.
+reads (#844): db_columns.add_column, rebuild.TableSpec and media._area_media;
+and the shared post-info and oldest/newest date reads (#865).
 """
 
 import asyncio
@@ -182,3 +183,87 @@ def test_area_reads(area_db, reader, api_type):
     else:
         assert all(isinstance(date, float) for date in dates)
         assert dates == [date.float_timestamp for date in expected]
+
+
+# each oldest/newest helper: its module, the area it reads, and whether it's
+# the newest. The archived and streams ones give 0 for no date.
+DATE_HELPERS = {
+    "get_oldest_archived_date": (posts, "Archived", False),
+    "get_youngest_archived_date": (posts, "Archived", True),
+    "get_oldest_streams_date": (posts, "Streams", False),
+    "get_youngest_streams_date": (posts, "Streams", True),
+    "get_oldest_timeline_date": (posts, "Timeline", False),
+    "get_youngest_timeline_date": (posts, "Timeline", True),
+    "get_oldest_message_date": (messages, "Messages", False),
+    "get_newest_message_date": (messages, "Messages", True),
+}
+ZERO_WHEN_EMPTY = {name for name in DATE_HELPERS if "archived" in name or "streams" in name}
+
+
+
+@pytest.mark.parametrize("helper", DATE_HELPERS)
+def test_oldest_and_newest_dates(area_db, monkeypatch, helper):
+    module, api_type, newest = DATE_HELPERS[helper]
+    # the helpers don't pass db_path on: point the area reads at the database
+    for name in AREAS:
+        real = getattr(media, name)
+        monkeypatch.setattr(
+            media, name, lambda real=real, **kwargs: real(**kwargs, db_path=area_db)
+        )
+    date = asyncio.run(getattr(module, helper)(model_id=5))
+    expected = arrow.get(POSTED) if newest else arrow.get(0)
+    if api_type == "Timeline":
+        assert date == expected
+    else:
+        assert date == expected.float_timestamp
+
+
+@pytest.mark.parametrize("helper", DATE_HELPERS)
+def test_oldest_and_newest_dates_of_an_empty_area(monkeypatch, helper):
+    module, _, _ = DATE_HELPERS[helper]
+
+    async def no_media(**kwargs):
+        return []
+
+    for name in AREAS:
+        monkeypatch.setattr(media, name, no_media)
+    date = asyncio.run(getattr(module, helper)(model_id=5))
+    assert date == (0 if helper in ZERO_WHEN_EMPTY else None)
+
+
+def test_newest_date_is_the_last_of_equal_dates(monkeypatch):
+    first, last = arrow.get(POSTED), arrow.get(POSTED).to("US/Pacific")
+
+    async def read(**kwargs):
+        return [{"posted_at": arrow.get(0)}, {"posted_at": first}, {"posted_at": last}]
+
+    monkeypatch.setattr(media, "get_timeline_media", read)
+    assert asyncio.run(posts.get_youngest_timeline_date()).tzinfo == last.tzinfo
+    assert asyncio.run(posts.get_oldest_timeline_date()) == arrow.get(0)
+
+
+@pytest.mark.parametrize(
+    "reader,table,row",
+    [
+        ("get_timeline_posts_info", "posts", {"archived": 0}),
+        ("get_archived_post_info", "posts", {"archived": 1}),
+        ("get_streams_post_info", "posts", {"stream": 1}),
+        ("get_messages_post_info", "messages", {}),
+    ],
+)
+def test_post_info(tmp_path, reader, table, row):
+    db = tmp_path / "user_data.db"
+    sql(db, posts.postCreate if table == "posts" else messages.messagesCreate)
+    for post_id, created_at, model_id in ((1, CREATED, 5), (2, None, 5), (3, CREATED, 6)):
+        values = dict(row, post_id=post_id, created_at=created_at, model_id=model_id)
+        sql(
+            db,
+            f"INSERT INTO {table} ({','.join(values)}) VALUES ({','.join('?' * len(values))})",
+            list(values.values()),
+        )
+    module = posts if table == "posts" else messages
+    info = asyncio.run(getattr(module, reader)(model_id=5, db_path=db))
+    assert sorted(info, key=lambda x: x["post_id"]) == [
+        {"created_at": arrow.get(CREATED).float_timestamp, "post_id": 1},
+        {"created_at": 0.0, "post_id": 2},
+    ]

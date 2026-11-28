@@ -752,6 +752,32 @@ def get_timeline_media(model_id=None, username=None, conn=None, **kwargs) -> lis
     return _area_media(conn, getTimelineMedia, model_id, arrow_dates=True)
 
 
+def post_info(conn, query, model_id, commit=False):
+    """The created_at and post_id rows `query` reads for model_id, with
+    created_at a float timestamp (0 for an undated row). commit: commit
+    after the read, as the archived, streams and messages reads did."""
+    with contextlib.closing(conn.cursor()) as cur:
+        cur.execute(query, [model_id])
+        if commit:
+            conn.commit()
+        data = [dict(row) for row in cur.fetchall()]
+    return [
+        dict(ele, created_at=arrow.get(ele.get("created_at") or 0).float_timestamp)
+        for ele in data
+    ]
+
+async def area_date(read, model_id=None, username=None, newest=False):
+    """The posted_at of the oldest of one area's media (`read` is that
+    area's get_*_media), or with newest, of the newest. None when the area
+    has no media."""
+    data = await read(model_id=model_id, username=username)
+    if not data:
+        return None
+    # the last of the newest, as the last item of a sort by date was
+    pick, rows = (max, reversed(data)) if newest else (min, data)
+    return pick(rows, key=lambda x: arrow.get(x["posted_at"] or 0))["posted_at"]
+
+
 @run
 @wrapper.operation_wrapper_async
 def get_model_media_status(model_id=None, username=None, conn=None, **kwargs) -> list:
