@@ -347,7 +347,7 @@ def test_broken_auth_stops_instead_of_asking_again(monkeypatch):
     import ofscraper.utils.auth.utils.error as error
 
     monkeypatch.setattr(error.prompts, "reset_auth_prompt", _no_console_once())
-    monkeypatch.setattr(error.console, "get_console", lambda: SimpleNamespace(print=lambda *a, **k: None))
+    monkeypatch.setattr(error.console_, "get_other_console", lambda: SimpleNamespace(print=lambda *a, **k: None))
     with pytest.raises(interactive.NoConsoleError):
         error.handle_auth_errors(json.JSONDecodeError("bad", "{", 0))
 

@@ -24,7 +24,7 @@ import ofscraper.prompts.prompt_validators as prompt_validators
 import ofscraper.prompts.promptConvert as promptClasses
 import ofscraper.prompts.utils.model_helpers as modelHelpers
 import ofscraper.prompts.utils.prompt_helpers as prompt_helpers
-import ofscraper.utils.console as console
+import ofscraper.utils.console as console_
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 
@@ -222,13 +222,14 @@ def modify_active_prompt(args):
 
 
 def modify_promo_prompt(args):
+    console = console_.get_console()
     answer = {}
     if (
         args.current_price is not None
         or args.promo_price is not None
         or args.regular_price is not None
     ):
-        console.get_console().print(
+        console.print(
             inspect.cleandoc(
                 """
                       [bold yellow]Please consider disabling price filters
@@ -256,7 +257,7 @@ def modify_promo_prompt(args):
         ]
     )
     if free_trial["free-trial"]:
-        console.get_console().print(
+        console.print(
             inspect.cleandoc(
                 """
                       [bold yellow]Setting both promos types to false is not allowed since 'Free Trial' is True and requires a promo[/bold yellow]"""
@@ -283,7 +284,7 @@ def modify_promo_prompt(args):
             ]
         )["promo"]
     else:
-        console.get_console().print(
+        console.print(
             inspect.cleandoc(
                 """
                       [bold yellow]Free Trial is not True so any promo status is allowed[/bold yellow]"""
@@ -335,15 +336,16 @@ def modify_promo_prompt(args):
 
 
 def modify_prices_prompt(args):
+    console = console_.get_console()
     if args.free_trial:
-        console.get_console().print(inspect.cleandoc("""
+        console.print(inspect.cleandoc("""
             [bold yellow]Free trial is True
             To avoid filtering list to zero
             Regular Subscription Price must be set to 'Paid/Both'
             Current or Promo  Subscription Price must be 'Free/Both'[/bold yellow]
             """))
     elif args.free_trial is False:
-        console.get_console().print(inspect.cleandoc("""
+        console.print(inspect.cleandoc("""
             [bold yellow]Free trial is False
             To avoid filtering list to zero
             Regular Subscription Price must be 'Free/Both' or

@@ -162,7 +162,7 @@ def make_auth(auth=None) -> dict:
         log.info("auth failed quitting on error")
         raise SystemExit(exit_status.AUTH)
     auth = normalize(auth or read_auth())
-    console = console_.get_console()
+    console = console_.get_other_console()
     console.print(
         "Fansly needs your authorization token and the browser's user agent.\n"
         "Token: in the browser's devtools on fansly.com, Application > Local Storage >\n"
@@ -195,7 +195,7 @@ def edit_auth() -> dict:
     import ofscraper.utils.profiles.data as profile_data
 
     profile_data.clear_my_info()
-    console_.get_console().print("Your `fansly_auth.json` file has been edited.")
+    console_.get_other_console().print("Your `fansly_auth.json` file has been edited.")
     return updated
 
 

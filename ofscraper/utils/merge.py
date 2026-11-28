@@ -1,20 +1,21 @@
 import ofscraper.db.merge as merge
 import ofscraper.db.postgres as postgres
 import ofscraper.prompts.prompts as prompts
-import ofscraper.utils.console as console
+import ofscraper.utils.console as console_
 from ofscraper.utils.context.run_async import run
 
 
 def merge_runner():
     # the merge works on user_data.db files, whichever engine is in use.
-    # Printed like the screen's other messages, so that it shows at every
-    # --output level
+    # Printed through the console that is never quiet, so that it shows at
+    # every --output level and while a screen has quieted the shared console
+    console = console_.get_other_console()
     if postgres.enabled():
-        console.get_console().print(postgres.sqlite_files_notice("Merge Databases"))
+        console.print(postgres.sqlite_files_notice("Merge Databases"))
     while True:
         while True:
             if not prompts.backup_prompt_db():
-                console.get_console().print("waiting for backup confirmation")
+                console.print("waiting for backup confirmation")
                 return
             curr_folder = prompts.folder_prompt_db()
             new_db = prompts.new_db_prompt()
@@ -32,17 +33,17 @@ def merge_runner():
             # holds. It ends in user_data.db, so no backslash is before the
             # closing quote (on Windows "D:\" reads as D:")
             merged = str(merge.MergeDatabase().get_new_db(new_db))
-            console.get_console().print("To bring the merged file into PostgreSQL, close the scraper and run:")
+            console.print("To bring the merged file into PostgreSQL, close the scraper and run:")
             # on one line and as written, so that it can be copied
-            console.get_console().print(
+            console.print(
                 f'ofscraper --migrate-sqlite-to-postgres "{merged}"',
                 soft_wrap=True,
                 markup=False,
                 emoji=False,
                 highlight=False,
             )
-            console.get_console().print("To see what it would do first, without writing anything:")
-            console.get_console().print(
+            console.print("To see what it would do first, without writing anything:")
+            console.print(
                 f'ofscraper postgres_import "{merged}"',
                 soft_wrap=True,
                 markup=False,

@@ -17,7 +17,7 @@ import logging
 import ofscraper.prompts.prompts as prompts
 import ofscraper.utils.auth.make as make
 import ofscraper.utils.auth.utils.dict as auth_dict
-import ofscraper.utils.console as console
+import ofscraper.utils.console as console_
 import ofscraper.utils.interactive as interactive
 import ofscraper.utils.paths.common as common_paths
 from ofscraper.prompts.cancel import back_to_menu
@@ -38,15 +38,17 @@ def handle_auth_errors(e: Exception,include_main_menu:bool=False) -> str | None:
         str | None: "quit" or "main" if the user chooses to exit,
                     or None if the user fixes the issue and the operation should be retried.
     """
+    # auth messages show even while a screen has quieted the shared console
+    console = console_.get_other_console()
     if isinstance(e, FileNotFoundError):
-        console.get_console().print("You don't seem to have an `auth.json` file. Creating one for you.")
+        console.print("You don't seem to have an `auth.json` file. Creating one for you.")
         # make_auth will guide the user. It returns "quit" or "main" if the user backs out.
         _,result = make.make_auth(include_main_menu=include_main_menu)
         if result and result in {"quit", "main"}:
             return result
 
     elif isinstance(e, json.JSONDecodeError):
-        console.get_console().print(f"[bold red]Error:[/bold red] Your 'auth.json' file has a syntax error at line {e.lineno}, column {e.colno}.")
+        console.print(f"[bold red]Error:[/bold red] Your 'auth.json' file has a syntax error at line {e.lineno}, column {e.colno}.")
         while True:
             try:
                 # This prompt should be defined in your prompts module
@@ -60,18 +62,18 @@ def handle_auth_errors(e: Exception,include_main_menu:bool=False) -> str | None:
                     # Overwrite with a blank, valid JSON
                     with open(common_paths.get_auth_file(), "w", encoding="utf-8") as f:
                         f.write(json.dumps(auth_dict.get_empty(), indent=4))
-                    console.get_console().print("`auth.json` has been reset.")
+                    console.print("`auth.json` has been reset.")
                 elif auth_prompt in {"quit", "main"}:
                     return auth_prompt
 
                 # After fixing, check if the file is now valid JSON before breaking the loop
                 auth_dict.get_auth_dict()
-                console.get_console().print("`auth.json` has been fixed.")
+                console.print("`auth.json` has been fixed.")
                 break
             except interactive.NoConsoleError:
                 raise  # asking again can't work either
             except Exception as new_e:
-                console.get_console().print(f"An error occurred while trying to fix the file: {escape_text(new_e)}")
+                console.print(f"An error occurred while trying to fix the file: {escape_text(new_e)}")
                 # Loop continues to give user another chance
                 continue
 

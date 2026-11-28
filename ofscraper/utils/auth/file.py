@@ -111,7 +111,7 @@ def edit_auth():
 
     hide_secrets(new_auth)
     profile_data.clear_my_info()
-    console.get_console().print("Your `auth.json` file has been edited.")
+    console.get_other_console().print("Your `auth.json` file has been edited.")
     return new_auth
 
 

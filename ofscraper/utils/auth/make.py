@@ -8,7 +8,7 @@ import ofscraper.prompts.prompts as prompts
 import ofscraper.utils.auth.schema as auth_schema
 import ofscraper.utils.auth.utils.dict as auth_dict
 import ofscraper.utils.auth.utils.prompt as auth_prompt
-import ofscraper.utils.console as console
+import ofscraper.utils.console as console_
 import ofscraper.utils.paths.common as common_paths
 import ofscraper.utils.settings as settings
 from ofscraper.prompts.cancel import cancel_scope
@@ -33,11 +33,13 @@ def make_auth(auth=None,include_main_menu=False):
 
 
 def _make_auth_attempt(auth, browserSelect):
+    # auth messages show even while a screen has quieted the shared console
+    console = console_.get_other_console()
     auth = auth_schema.auth_schema(auth or auth_dict.get_empty())
     if browserSelect == "Paste From M-rcus' OnlyFans-Cookie-Helper":
         auth = auth_schema.auth_schema(auth_prompt.cookie_helper_extension())
     elif browserSelect == "Enter Each Field Manually":
-        console.get_console().print(
+        console.print(
             """
     You'll need to go to onlyfans.com and retrive/update header information
     Go to https://github.com/datawhores/OF-Scraper and find the section named 'Getting Your Auth Info'
@@ -56,7 +58,7 @@ def _make_auth_attempt(auth, browserSelect):
         newitem = re.sub("\n+", "", newitem)
         auth[key] = newitem
     authFile = common_paths.get_auth_file()
-    console.get_console().print(f"{escape_text(auth)}\nWriting to {escape_text(authFile)}", style="yellow")
+    console.print(f"{escape_text(auth)}\nWriting to {escape_text(authFile)}", style="yellow")
     auth = auth_schema.auth_schema(auth)
     if not check_auth_warning(auth):
         return None
