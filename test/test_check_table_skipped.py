@@ -62,6 +62,10 @@ class _FakeApp:
     action_select_unique_all_filtered = (
         table_app.InputApp.action_select_unique_all_filtered
     )
+    ELIGIBLE_CART_STATES = table_app.InputApp.ELIGIBLE_CART_STATES
+    UNDOWNLOADED_CART_STATES = table_app.InputApp.UNDOWNLOADED_CART_STATES
+    _is_eligible_media = staticmethod(table_app.InputApp._is_eligible_media)
+    _select_undownloaded = table_app.InputApp._select_undownloaded
     _add_items_to_cart = table_app.InputApp._add_items_to_cart
     _run_unique_selection = table_app.InputApp._run_unique_selection
     on_data_table_cell_selected = table_app.InputApp.on_data_table_cell_selected

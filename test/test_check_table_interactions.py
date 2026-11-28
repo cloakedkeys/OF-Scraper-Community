@@ -1264,3 +1264,149 @@ def test_a_per_page_redraw_after_the_app_closed_does_nothing(stub_env_hf):
             app._apply_per_page(prefix)
 
     asyncio.run(drive())
+
+
+# ----------------------------------------------------------------------
+# Check table (#871): the media, post and cart tables share one page
+# renderer, and every cart action shares one eligibility rule.
+# ----------------------------------------------------------------------
+
+
+def _page_state_hf(app, prefix, table):
+    label = str(app.query_one(f"#{prefix}_page_label").render())
+    shown = [row.label.plain for row in table.rows.values()]
+    nav = {
+        btn: app.query_one(f"#{prefix}_{btn}").display
+        for btn in ("first", "prev", "next", "last")
+    }
+    return label, shown, nav
+
+
+@pytest.mark.parametrize("prefix", ["main", "post", "cart"])
+def test_each_table_pages_and_clamps_the_same_way(stub_env_hf, prefix):
+    media_rows = [
+        _media_row_hf(
+            n, post_date="2024-05-01", post_id=n, media_id=n, download_cart="[added]"
+        )
+        for n in range(1, 6)
+    ]
+    post_rows = post_metrics.build_post_centric_rows(
+        [_post_obj_hf(n, 0, [_media_obj_hf(n, n)]) for n in range(1, 6)], "creator_a", 1
+    )
+    on = {"first": True, "prev": True, "next": True, "last": True}
+
+    async def drive():
+        app = _app_hf(media_rows, post_rows)
+        async with app.run_test(size=(250, 60)) as pilot:
+            await pilot.pause()
+            table = {
+                "main": app.table,
+                "post": app.post_table,
+                "cart": app.query_one("#cart_data_table"),
+            }[prefix]
+            app.query_one(f"#{prefix}_per_page_input").value = "2"
+            app.handle_pagination(prefix, f"{prefix}_go")
+            await pilot.pause()
+            assert _page_state_hf(app, prefix, table) == (
+                "Page 1 of 3",
+                ["1", "2"],
+                {**on, "first": False, "prev": False},
+            )
+
+            app.handle_pagination(prefix, f"{prefix}_next")
+            await pilot.pause()
+            assert _page_state_hf(app, prefix, table) == ("Page 2 of 3", ["3", "4"], on)
+
+            app.handle_pagination(prefix, f"{prefix}_last")
+            await pilot.pause()
+            assert _page_state_hf(app, prefix, table) == (
+                "Page 3 of 3",
+                ["5"],
+                {**on, "next": False, "last": False},
+            )
+
+            # fewer rows than the page needs: drawn on the new last page
+            if prefix == "main":
+                app._filtered_rows = app._filtered_rows[:2]
+                app.set_page()
+            elif prefix == "post":
+                app._filtered_post_rows = app._filtered_post_rows[:2]
+                app.set_post_page()
+            else:
+                for row in media_rows[2:]:
+                    row["download_cart"] = "[]"
+                app.update_cart_table()
+            await pilot.pause()
+            assert getattr(app, f"{prefix}_page") == 1
+            assert _page_state_hf(app, prefix, table)[:2] == ("Page 1 of 1", ["1", "2"])
+
+    asyncio.run(drive())
+
+
+def _eligibility_rows_hf():
+    # index -> (row values, added by "Add All Filtered", added by "Add All New")
+    cases = {
+        1: ({"download_cart": "[]"}, True, True),
+        2: ({"download_cart": "[failed]"}, True, True),
+        3: ({"download_cart": "[stopped]"}, True, True),
+        4: ({"download_cart": "[skipped]"}, True, True),
+        5: ({"download_cart": "[downloaded]", "downloaded": True}, True, False),
+        6: ({"download_cart": "[]", "downloaded": True}, True, False),
+        7: ({"download_cart": "[downloading]"}, False, False),
+        8: ({"download_cart": "[]", "unlocked": False}, False, False),
+        9: ({"download_cart": "[]", "download_type": "unknown"}, False, False),
+    }
+    rows = [
+        _media_row_hf(n, post_date="2024-05-01", post_id=n, media_id=n, **values)
+        for n, (values, _, _) in cases.items()
+    ]
+    return rows, cases
+
+
+@pytest.mark.parametrize("tab", ["table", "post_tab"])
+@pytest.mark.parametrize("new_only", [False, True])
+def test_cart_add_actions_share_one_eligibility_rule(stub_env_hf, tab, new_only):
+    media_rows, cases = _eligibility_rows_hf()
+    post_rows = post_metrics.build_post_centric_rows(
+        [_post_obj_hf(n, 0, [_media_obj_hf(n, n)]) for n in cases], "creator_a", 1
+    )
+    expected = {n: (new if new_only else every) for n, (_, every, new) in cases.items()}
+
+    async def drive():
+        app = _app_hf(media_rows, post_rows)
+        async with app.run_test(size=(250, 60)) as pilot:
+            await pilot.pause()
+            await pilot.click(f"#{tab}")
+            await pilot.pause()
+            if new_only:
+                app.action_select_all_undownloaded()
+            else:
+                app.action_select_all_filtered()
+            await pilot.pause()
+            added = {r["index"]: r["download_cart"] == "[added]" for r in media_rows}
+            assert added == expected
+
+    asyncio.run(drive())
+
+
+def test_clicking_a_locked_or_unknown_row_leaves_it_out_of_the_cart(stub_env_hf):
+    media_rows = [
+        _media_row_hf(1, post_date="2024-05-01", unlocked=False),
+        _media_row_hf(2, post_date="2024-05-01", download_type="unknown"),
+        _media_row_hf(3, post_date="2024-05-01", download_cart="[skipped]"),
+    ]
+
+    async def drive():
+        app = _app_hf(media_rows, [])
+        async with app.run_test(size=(250, 60)) as pilot:
+            await pilot.pause()
+            app.table.focus()
+            col = app.table.ordered_columns_keys.index("download_cart")
+            for row in range(3):
+                app.table.cursor_coordinate = (row, col)
+                await pilot.pause(0.05)
+                await pilot.press("enter")
+                await pilot.pause(0.05)
+            assert [r["download_cart"] for r in media_rows] == ["[]", "[]", "[added]"]
+
+    asyncio.run(drive())
