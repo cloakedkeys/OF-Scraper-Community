@@ -165,8 +165,10 @@ def profile_menu_helper(result_profiles_prompt):
         prompts.press_enter_to_continue()
 
 
-# config menu choice -> the prompt in ofscraper.prompts.prompts that asks
-# that section, looked up when chosen
+# config menu choice -> the name of the prompt in ofscraper.prompts.prompts
+# that asks that section. The prompt is looked up by name when the section is
+# chosen rather than stored here, so a test that monkeypatches
+# prompts.<name> replaces the prompt the menu actually runs.
 CONFIG_SECTION_PROMPTS = {
     "download": "download_config",
     "file": "file_config",

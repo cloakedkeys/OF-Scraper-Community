@@ -708,17 +708,17 @@ If value is 'None' or '0' no logs will be touched
 
 
 # the response type prompts, in menu order: (key in the responsetype map, what
-# it's for, what an empty answer stands for, the data getter for its default)
+# it's for, what an empty answer stands for, the getter for its default)
 RESPONSE_TYPE_PROMPTS = (
-    ("timeline", "timeline posts", "posts", "get_timeline_responsetype"),
-    ("archived", "archived posts", "archived", "get_archived_responsetype"),
-    ("pinned", "pinned posts", "pinned", "get_pinned_responsetype"),
-    ("message", "message posts", "message", "get_messages_progress_responsetype"),
-    ("paid", "paid posts", "paid", "get_paid_responsetype"),
-    ("stories", "stories", "stories", "get_stories_responsetype"),
-    ("highlights", "highlights", "highlights", "get_highlights_responsetype"),
-    ("profile", "profile", "profile", "get_profile_responsetype"),
-    ("streams", "streams", "streams", "get_streams_responsetype"),
+    ("timeline", "timeline posts", "posts", data.get_timeline_responsetype),
+    ("archived", "archived posts", "archived", data.get_archived_responsetype),
+    ("pinned", "pinned posts", "pinned", data.get_pinned_responsetype),
+    ("message", "message posts", "message", data.get_messages_progress_responsetype),
+    ("paid", "paid posts", "paid", data.get_paid_responsetype),
+    ("stories", "stories", "stories", data.get_stories_responsetype),
+    ("highlights", "highlights", "highlights", data.get_highlights_responsetype),
+    ("profile", "profile", "profile", data.get_profile_responsetype),
+    ("streams", "streams", "streams", data.get_streams_responsetype),
 )
 
 
@@ -732,7 +732,7 @@ def response_type() -> dict:
 set responsetype for {what}
 Empty string is consider to be '{empty}'
 """,
-                "default": getattr(data, getter)(),
+                "default": getter(),
                 "message": f"{key} responsetype mapping: ",
             }
             for key, what, empty, getter in RESPONSE_TYPE_PROMPTS
