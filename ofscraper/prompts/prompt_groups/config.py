@@ -14,7 +14,6 @@ r"""
 from InquirerPy.base import Choice
 from InquirerPy.separator import Separator
 from InquirerPy.validator import EmptyInputValidator, PathValidator
-from rich.console import Console
 
 import ofscraper.db.postgres as postgres
 import ofscraper.prompts.prompt_strings as prompt_strings
@@ -24,13 +23,12 @@ import ofscraper.prompts.utils.size_prompt as size_prompt
 import ofscraper.utils.config.data as data
 import ofscraper.utils.config.file as config_file
 import ofscraper.utils.config.schema as schema
+import ofscraper.utils.console as console
 import ofscraper.utils.const as const
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.paths.common as common_paths
 import ofscraper.utils.settings as settings
 from ofscraper.prompts.promptConvert import prompt
-
-console = Console()
 
 # limits for the size and speed prompts, in bytes (a second); a value
 # outside them is a typo, not a setting
@@ -41,7 +39,7 @@ SPEED_MIN = 64 * 1000 // 8  # 64 Kbps; slower would stall every download
 
 
 def funct(prompt_):
-    console.print("""
+    console.get_console().print("""
     For more Details => https://cloakedkeys.gitbook.io/ofsc/setup/getting-started/config-options
 
     [General Options]

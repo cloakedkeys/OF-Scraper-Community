@@ -163,6 +163,7 @@ def test_auth_file_path_with_brackets(monkeypatch):
 @pytest.mark.parametrize(
     "module",
     [
+        "ofscraper.prompts.prompt_groups.config",
         "ofscraper.prompts.prompt_groups.model",
         "ofscraper.prompts.utils.prompt_helpers",
         "ofscraper.prompts.utils.size_prompt",
