@@ -407,6 +407,54 @@ def test_drm_merge_is_always_checked_and_skips_the_profile_cache(tmp_path, monke
     )
 
 
+@pytest.mark.parametrize("manager", ["main", "drm"])
+def test_a_stop_during_the_integrity_check_cancels_before_the_move(
+    tmp_path, monkeypatch, manager
+):
+    # ffprobe runs off the event loop, so a stop can arrive while it runs:
+    # both downloaders check again before moving the file
+    monkeypatch.setattr(
+        settings, "get_settings", lambda *a, **k: SimpleNamespace(verify_all_integrity=True)
+    )
+    monkeypatch.setattr(
+        dm, "verify_media_integrity", lambda path, expected: ad.stop.request() or True
+    )
+    merged = tmp_path / "merged.mp4"
+    holder = SimpleNamespace(trunicated_filepath=tmp_path / "f.mp4")
+    if manager == "main":
+        part = tmp_path / "f.part"
+        part.write_bytes(b"x")
+        mgr = md.MainDownloadManager()
+        mgr._size_checker = AsyncMock()
+        ele = SimpleNamespace(mediatype="Videos", duration=1, final_filename=_name())
+        run = lambda: mgr._handle_result_main((1, part, holder), ele, "u", 1)  # noqa: E731
+    else:
+        monkeypatch.setattr(
+            ad.placeholder,
+            "tempFilePlaceholder",
+            lambda *a: SimpleNamespace(
+                init=AsyncMock(return_value=SimpleNamespace(tempfilepath=merged))
+            ),
+        )
+        monkeypatch.setattr(ad, "get_ffmpeg", lambda: "ffmpeg")
+
+        async def merge(*a, **k):
+            merged.write_bytes(b"merged")
+            return SimpleNamespace(stderr=b"")
+
+        monkeypatch.setattr(ad, "async_run", merge)
+        mgr = ad.AltDownloadManager()
+        ele = SimpleNamespace(id=1, post_id=2, mediatype="Videos", duration=1)
+        run = lambda: mgr._handle_result_alt(holder, ele, None, None, "u", 1)  # noqa: E731
+    mgr._finalize_download = AsyncMock()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(run())
+    finally:
+        ad.stop.clear()
+    mgr._finalize_download.assert_not_awaited()
+
+
 @pytest.mark.parametrize("profile_cache", [True, False])
 @pytest.mark.parametrize("own_move", [False, True], ids=["move", "own-move"])
 def test_finalize_download_steps_in_order(tmp_path, monkeypatch, profile_cache, own_move):

@@ -453,7 +453,10 @@ class AltDownloadManager(DownloadManager):
 
         # always checked, unlike the normal downloader's files: a merge can
         # come out truncated
-        if not await self._verify_integrity(temp_path, ele):
+        valid = await self._verify_integrity(temp_path, ele)
+        # a stop asked for while ffprobe ran: cancel here, before the move
+        stop.check()
+        if not valid:
             self.ctx.log.warning(
                 f"DRM Merge failed integrity check for {ele.id}: {temp_path}"
             )
