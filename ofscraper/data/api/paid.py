@@ -9,7 +9,6 @@ r"""
 (_______)|/              \_______)(_______/|/   \__/|/     \||/       (_______/|/   \__/
 """
 
-import contextlib
 import logging
 
 import ofscraper.data.api.common.logs.strings as common_logs
@@ -55,23 +54,19 @@ async def process_tasks(generators):
     return responseArray
 
 
-async def scrape_paid(c, username, offset=0):
-    """Yield a model's purchases page by page."""
-    end = PageEnd()
-    pages = offset_paginate(
+def scrape_paid(c, username, offset=0):
+    """A model's purchases, page by page."""
+    return offset_paginate(
         c,
-        end,
+        PageEnd(),
         lambda offset: of_env.getattr("purchased_contentEP").format(offset, username),
         lambda offset: f"scrape paid offset -> {offset} username -> {username}",
         offset,
         on_page=lambda data, batch: trace_progress_log(
             f"{API} individual requests", data
         ),
+        on_end=lambda end: warn_if_stopped(end, f"Purchased scan for {username}"),
     )
-    async with contextlib.aclosing(pages) as pages:
-        async for batch in pages:
-            yield batch
-    warn_if_stopped(end, f"Purchased scan for {username}")
 
 
 def warn_if_stopped(end, scan):
@@ -79,7 +74,7 @@ def warn_if_stopped(end, scan):
     # say so outside debug logs (#34)
     if end.finished:
         return
-    verb = "failed" if end.error else "stopped"
+    verb = "failed" if end.error is not None else "stopped"
     log.warning(
         f"{scan} {verb} at offset {end.offset}: {end.reason}. "
         "Purchases may be incomplete."
@@ -135,10 +130,9 @@ async def process_tasks_all_paid(generators):
     return output
 
 
-async def scrape_all_paid(c, offset=0, required=None):
-    """Yield every model's purchases page by page, from ``offset``; with
+def scrape_all_paid(c, offset=0, required=None):
+    """Every model's purchases, page by page, from ``offset``; with
     ``required``, stop once that many have been read."""
-    end = PageEnd()
     retrieved = 0
 
     def enough(batch):
@@ -146,9 +140,9 @@ async def scrape_all_paid(c, offset=0, required=None):
         retrieved += len(batch)
         return required is not None and retrieved >= required
 
-    pages = offset_paginate(
+    return offset_paginate(
         c,
-        end,
+        PageEnd(),
         lambda offset: of_env.getattr("purchased_contentALL").format(offset),
         lambda offset: f"scrape entire paid page offset={offset}",
         offset,
@@ -156,11 +150,8 @@ async def scrape_all_paid(c, offset=0, required=None):
             f"{API} all users requests", data
         ),
         should_stop=enough,
+        on_end=lambda end: warn_if_stopped(end, "Purchased scan (all models)"),
     )
-    async with contextlib.aclosing(pages) as pages:
-        async for batch in pages:
-            yield batch
-    warn_if_stopped(end, "Purchased scan (all models)")
 
 
 def create_all_paid_dict(paid_content):

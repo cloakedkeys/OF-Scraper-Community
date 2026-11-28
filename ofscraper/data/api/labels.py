@@ -259,14 +259,16 @@ async def process_tasks_get_posts_for_labels(generators, labels):
     return list(responseDict.values())
 
 
-async def scrape_labels(c, model_id, offset=0):
-    """Yield a model's labels page by page."""
+def scrape_labels(c, model_id, offset=0):
+    """A model's labels, page by page."""
     end = PageEnd()
 
-    def url(offset):
-        url = of_env.getattr("labelsEP").format(model_id, offset)
-        log.debug(f"trying to access label names with url:{url}  offset:{offset}")
-        return url
+    def logged_url(offset):
+        # also logs the attempt: the pager asks for each page's url just
+        # before requesting it
+        page_url = of_env.getattr("labelsEP").format(model_id, offset)
+        log.debug(f"trying to access label names with url:{page_url}  offset:{offset}")
+        return page_url
 
     def on_page(data, batch):
         log.debug(
@@ -278,16 +280,21 @@ async def scrape_labels(c, model_id, offset=0):
         )
         trace_progress_log(f"{API} names requests", data)
 
-    pages = offset_paginate(
-        c, end, url, lambda offset: f"labels offset -> {offset}", offset, on_page=on_page
+    def on_end(end):
+        if end.status is not None:
+            log.debug(f"Labels API Error: {end.status} for {end.url}")
+        if not end.finished:
+            incomplete.mark_incomplete(model_id, API, end.reason)
+
+    return offset_paginate(
+        c,
+        end,
+        logged_url,
+        lambda offset: f"labels offset -> {offset}",
+        offset,
+        on_page=on_page,
+        on_end=on_end,
     )
-    async with contextlib.aclosing(pages) as pages:
-        async for batch in pages:
-            yield batch
-    if end.status is not None:
-        log.debug(f"Labels API Error: {end.status} for {end.url}")
-    if not end.finished:
-        incomplete.mark_incomplete(model_id, API, end.reason)
 
 
 async def scrape_posts_labels(c, label, model_id, offset=0, known=None, track=False):
@@ -306,10 +313,12 @@ async def scrape_posts_labels(c, label, model_id, offset=0, known=None, track=Fa
         cache.set(label_complete_key(model_id, label["id"]), False)
     end = PageEnd()
 
-    def url(offset):
-        url = of_env.getattr("labelledPostsEP").format(model_id, offset, label["id"])
-        log.debug(f"trying to access label content with url:{url}  offset:{offset}")
-        return url
+    def logged_url(offset):
+        # also logs the attempt: the pager asks for each page's url just
+        # before requesting it
+        page_url = of_env.getattr("labelledPostsEP").format(model_id, offset, label["id"])
+        log.debug(f"trying to access label content with url:{page_url}  offset:{offset}")
+        return page_url
 
     def on_page(data, batch):
         log.debug(
@@ -334,7 +343,7 @@ async def scrape_posts_labels(c, label, model_id, offset=0, known=None, track=Fa
     pages = offset_paginate(
         c,
         end,
-        url,
+        logged_url,
         lambda offset: f": getting posts from label -> {label['name']}",
         offset,
         on_page=on_page,

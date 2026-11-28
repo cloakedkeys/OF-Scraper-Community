@@ -11,7 +11,6 @@ r"""
 
 """
 
-import contextlib
 import logging
 import traceback
 
@@ -136,25 +135,25 @@ async def process_task_highlights(generators):
     return highlightResponse
 
 
-async def scrape_highlight_list(c, user_id, offset=0):
-    """Yield a model's highlight ids page by page."""
-    end = PageEnd()
-    pages = offset_paginate(
+def scrape_highlight_list(c, user_id, offset=0):
+    """A model's highlight ids, page by page."""
+
+    def on_end(end):
+        # a response that isn't a JSON object reads as no highlights, as before
+        if end.status is not None:
+            log.debug(f"Highlights List API Error: {end.status} for {end.url}")
+        if end.request_failed:
+            incomplete.mark_incomplete(user_id, API_H, end.reason)
+
+    return offset_paginate(
         c,
-        end,
+        PageEnd(),
         lambda offset: of_env.getattr("highlightsWithStoriesEP").format(user_id, offset),
         lambda offset: f"[Highlights] offset-> {offset}",
         offset,
         items=get_highlightList,
+        on_end=on_end,
     )
-    async with contextlib.aclosing(pages) as pages:
-        async for ids in pages:
-            yield ids
-    # a response that isn't a JSON object reads as no highlights, as before
-    if end.status is not None:
-        log.debug(f"Highlights List API Error: {end.status} for {end.url}")
-    if end.status is not None or end.error is not None:
-        incomplete.mark_incomplete(user_id, API_H, end.reason)
 
 
 async def scrape_highlights_from_list(c, id):

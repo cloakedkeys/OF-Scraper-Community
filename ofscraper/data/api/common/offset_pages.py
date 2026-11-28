@@ -4,8 +4,8 @@ Each of these asks for a page at an offset, yields its items, and asks again
 at ``offset + len(items)`` while the response says ``hasMore``. They differ in
 the endpoint, the progress text, where the items sit in the response, and how
 an early stop is reported. ``offset_paginate`` takes the first three as
-arguments and records how paging ended on a ``PageEnd``; each caller reads it
-after the loop and does its own reporting (``incomplete.mark_incomplete``,
+arguments, records how paging ended on a ``PageEnd`` and hands it to the
+caller's ``on_end``, which does its own reporting (``incomplete.mark_incomplete``,
 paid's "Purchases may be incomplete" warning, labels' finished mark).
 """
 
@@ -35,6 +35,12 @@ class PageEnd:
     def finished(self):
         return self.reason is None
 
+    @property
+    def request_failed(self):
+        # a non-2xx answer or a request that raised; unlike ``finished``, a
+        # body that isn't a JSON object doesn't count
+        return self.status is not None or self.error is not None
+
 
 def first_list(data):
     """The response's first list value, which is where most endpoints put
@@ -53,6 +59,7 @@ async def offset_paginate(
     items=first_list,
     on_page=None,
     should_stop=None,
+    on_end=None,
 ):
     """Yield each non-empty page of items, starting at ``offset``.
 
@@ -61,7 +68,8 @@ async def offset_paginate(
     ``on_page(data, batch)`` is called for every response, empty pages
     included, before its items are yielded. Paging ends at an empty page, at
     ``hasMore`` false, or when ``should_stop(batch)`` is true; any other stop
-    is recorded on ``end``.
+    is recorded on ``end``. ``on_end(end)`` is called once paging ends, but
+    not when the consumer stops iterating early.
     """
     end.offset = offset
     while True:
@@ -73,27 +81,29 @@ async def offset_paginate(
                 if not (200 <= r.status < 300):
                     end.status = r.status
                     end.reason = f"HTTP {r.status}"
-                    return
+                    break
                 data = await r.json_()
                 if not isinstance(data, dict):
                     end.reason = "unexpected response format"
-                    return
+                    break
                 batch = items(data)
                 if on_page:
                     on_page(data, batch)
                 if not batch:
-                    return
+                    break
                 yield batch
                 if not data.get("hasMore") or (should_stop and should_stop(batch)):
-                    return
+                    break
                 end.offset += len(batch)
         except Exception as E:
             end.error = E
             end.reason = f"{type(E).__name__}: {E}"
             log.traceback_(E)
             log.traceback_(traceback.format_exc())
-            return
+            break
         finally:
             # rich task ids start at 0
             if task is not None:
                 progress_utils.api.remove_job_task(task)
+    if on_end:
+        on_end(end)

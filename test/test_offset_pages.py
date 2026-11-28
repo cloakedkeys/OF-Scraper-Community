@@ -138,6 +138,43 @@ def test_early_stop_is_recorded_with_its_offset(tasks, failure, reason):
     assert tasks == []
 
 
+@pytest.mark.parametrize(
+    "failure,failed",
+    [(403, True), (OSError("boom"), True), (["x"], False), (_page([]), False)],
+    ids=["http-error", "exception", "bad-format", "end"],
+)
+def test_request_failed_counts_http_errors_and_exceptions_only(tasks, failure, failed):
+    end = PageEnd()
+    _paginate(_Client(failure), end)
+    assert end.request_failed is failed
+
+
+def test_on_end_runs_once_paging_ends(tasks):
+    ends = []
+    end = PageEnd()
+    _paginate(_Client(_page([1]), 403), end, on_end=ends.append)
+    assert ends == [end] and end.reason == "HTTP 403"
+
+
+def test_on_end_is_skipped_when_the_consumer_stops_early(tasks):
+    ends = []
+
+    async def run():
+        pages = offset_paginate(
+            _Client(_page([1]), _page([2])),
+            PageEnd(),
+            lambda o: f"url?offset={o}",
+            lambda o: f"task {o}",
+            on_end=ends.append,
+        )
+        async for _ in pages:
+            break
+        await pages.aclose()
+
+    asyncio.run(run())
+    assert ends == [] and tasks == []
+
+
 def _scan(gen):
     async def run():
         return [batch async for batch in gen]

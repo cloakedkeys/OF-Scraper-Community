@@ -11,7 +11,6 @@ r"""
 
 """
 
-import contextlib
 import logging
 
 import ofscraper.data.api.common.incomplete as incomplete
@@ -57,28 +56,27 @@ async def process_tasks_batch(generators):
     return responseArray
 
 
-async def scrape_pinned_posts(c, model_id, offset=0):
-    """Yield a model's pinned posts page by page."""
-    end = PageEnd()
+def scrape_pinned_posts(c, model_id, offset=0):
+    """A model's pinned posts, page by page."""
 
     def on_page(data, batch):
         if batch:
             trace_progress_log(f"{API} request", batch)
 
-    pages = offset_paginate(
+    def on_end(end):
+        # a response that isn't a JSON object ends the scan quietly, as before
+        if end.status is not None:
+            log.debug(f"Pinned API Error: {end.status}")
+        if end.request_failed:
+            incomplete.mark_incomplete(model_id, API, end.reason)
+
+    return offset_paginate(
         c,
-        end,
+        PageEnd(),
         lambda offset: of_env.getattr("timelinePinnedEP").format(model_id, offset),
         lambda offset: f"[Pinned] offset -> {offset}",
         offset,
         items=lambda data: data.get("list", []),
         on_page=on_page,
+        on_end=on_end,
     )
-    async with contextlib.aclosing(pages) as pages:
-        async for batch in pages:
-            yield batch
-    # a response that isn't a JSON object ends the scan quietly, as before
-    if end.status is not None:
-        log.debug(f"Pinned API Error: {end.status}")
-    if end.status is not None or end.error is not None:
-        incomplete.mark_incomplete(model_id, API, end.reason)
