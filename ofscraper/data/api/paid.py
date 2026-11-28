@@ -9,18 +9,18 @@ r"""
 (_______)|/              \_______)(_______/|/   \__/|/     \||/       (_______/|/   \__/
 """
 
+import contextlib
 import logging
-import traceback
 
 import ofscraper.data.api.common.logs.strings as common_logs
 import ofscraper.main.close.exit_status as exit_status
 import ofscraper.managers.manager as manager
 import ofscraper.utils.cache.cache as cache
-import ofscraper.utils.live.updater as progress_utils
 import ofscraper.utils.of_env.of_env as of_env
 from ofscraper.commands.scraper.actions.download import stop
 from ofscraper.data.api.common.check import update_check
 from ofscraper.data.api.common.logs.logs import trace_log_raw, trace_progress_log
+from ofscraper.data.api.common.offset_pages import PageEnd, offset_paginate
 from ofscraper.data.api.tasks import collect_pages
 from ofscraper.utils.context.run_async import run
 
@@ -56,75 +56,35 @@ async def process_tasks(generators):
 
 
 async def scrape_paid(c, username, offset=0):
-    """
-    Async Generator version of scrape_paid.
-    Yields batches of posts immediately to save memory and prevent data loss on crash.
-    """
-    current_offset = offset
+    """Yield a model's purchases page by page."""
+    end = PageEnd()
+    pages = offset_paginate(
+        c,
+        end,
+        lambda offset: of_env.getattr("purchased_contentEP").format(offset, username),
+        lambda offset: f"scrape paid offset -> {offset} username -> {username}",
+        offset,
+        on_page=lambda data, batch: trace_progress_log(
+            f"{API} individual requests", data
+        ),
+    )
+    async with contextlib.aclosing(pages) as pages:
+        async for batch in pages:
+            yield batch
+    warn_if_stopped(end, f"Purchased scan for {username}")
 
-    while True:
-        url = of_env.getattr("purchased_contentEP").format(current_offset, username)
-        task = None
-        try:
-            task = progress_utils.api.add_job_task(
-                f"scrape paid offset -> {current_offset} username -> {username}",
-                visible=True,
-            )
 
-            async with c.requests_async(url) as r:
-                if not (200 <= r.status < 300):
-                    # stopping here can leave a model's purchases empty or
-                    # incomplete, so say so outside debug logs (#34)
-                    log.warning(
-                        f"Purchased scan for {username} stopped at offset {current_offset}: "
-                        f"HTTP {r.status}. Purchases may be incomplete."
-                    )
-                    exit_status.record(exit_status.PARTIAL)
-                    break
-
-                data = await r.json_()
-                if not isinstance(data, dict):
-                    log.warning(
-                        f"Purchased scan for {username} stopped at offset {current_offset}: "
-                        f"unexpected response format. Purchases may be incomplete."
-                    )
-                    exit_status.record(exit_status.PARTIAL)
-                    break
-
-                trace_progress_log(f"{API} individual requests", data)
-
-                media_lists = list(filter(lambda x: isinstance(x, list), data.values()))
-                batch = media_lists[0] if media_lists else []
-
-                if not batch:
-                    break
-
-                # YIELD BATCH IMMEDIATELY
-                yield batch
-
-                # EXIT LOGIC
-                if not data.get("hasMore"):
-                    break
-
-                # SAFETY: Prevent stuck offset loop
-                new_offset = current_offset + len(batch)
-                if new_offset <= current_offset:
-                    break
-
-                current_offset = new_offset
-
-        except Exception as E:
-            log.warning(
-                f"Purchased scan for {username} failed at offset {current_offset}: "
-                f"{type(E).__name__}: {E}. Purchases may be incomplete."
-            )
-            log.traceback_(E)
-            log.traceback_(traceback.format_exc())
-            exit_status.record(exit_status.PARTIAL)
-            break
-        finally:
-            if task:
-                progress_utils.api.remove_job_task(task)
+def warn_if_stopped(end, scan):
+    # stopping early can leave a model's purchases empty or incomplete, so
+    # say so outside debug logs (#34)
+    if end.finished:
+        return
+    verb = "failed" if end.error else "stopped"
+    log.warning(
+        f"{scan} {verb} at offset {end.offset}: {end.reason}. "
+        "Purchases may be incomplete."
+    )
+    exit_status.record(exit_status.PARTIAL)
 
 
 @run
@@ -176,75 +136,31 @@ async def process_tasks_all_paid(generators):
 
 
 async def scrape_all_paid(c, offset=0, required=None):
-    """
-    Async Generator Worker Loop for global paid content.
-    """
-    current_offset = offset
-    items_retrieved = 0
+    """Yield every model's purchases page by page, from ``offset``; with
+    ``required``, stop once that many have been read."""
+    end = PageEnd()
+    retrieved = 0
 
-    while True:
-        url = of_env.getattr("purchased_contentALL").format(current_offset)
-        task = None
-        try:
-            task = progress_utils.api.add_job_task(
-                f"scrape entire paid page offset={current_offset}", visible=True
-            )
-            async with c.requests_async(url) as r:
-                if not (200 <= r.status < 300):
-                    log.warning(
-                        f"Purchased scan (all models) stopped at offset {current_offset}: "
-                        f"HTTP {r.status}. Purchases may be incomplete."
-                    )
-                    exit_status.record(exit_status.PARTIAL)
-                    break
+    def enough(batch):
+        nonlocal retrieved
+        retrieved += len(batch)
+        return required is not None and retrieved >= required
 
-                data = await r.json_()
-                if not isinstance(data, dict):
-                    log.warning(
-                        f"Purchased scan (all models) stopped at offset {current_offset}: "
-                        f"unexpected response format. Purchases may be incomplete."
-                    )
-                    exit_status.record(exit_status.PARTIAL)
-                    break
-
-                trace_progress_log(f"{API} all users requests", data)
-
-                media_lists = list(filter(lambda x: isinstance(x, list), data.values()))
-                batch = media_lists[0] if media_lists else []
-
-                if not batch:
-                    break
-
-                # YIELD BATCH IMMEDIATELY
-                yield batch
-
-                items_retrieved += len(batch)
-
-                # EXIT LOGIC
-                if not data.get("hasMore"):
-                    break
-
-                if required is not None and items_retrieved >= required:
-                    break
-
-                # SAFETY: Move pointer forward
-                new_offset = current_offset + len(batch)
-                if new_offset <= current_offset:
-                    break
-                current_offset = new_offset
-
-        except Exception as E:
-            log.warning(
-                f"Purchased scan (all models) failed at offset {current_offset}: "
-                f"{type(E).__name__}: {E}. Purchases may be incomplete."
-            )
-            log.traceback_(E)
-            log.traceback_(traceback.format_exc())
-            exit_status.record(exit_status.PARTIAL)
-            break
-        finally:
-            if task:
-                progress_utils.api.remove_job_task(task)
+    pages = offset_paginate(
+        c,
+        end,
+        lambda offset: of_env.getattr("purchased_contentALL").format(offset),
+        lambda offset: f"scrape entire paid page offset={offset}",
+        offset,
+        on_page=lambda data, batch: trace_progress_log(
+            f"{API} all users requests", data
+        ),
+        should_stop=enough,
+    )
+    async with contextlib.aclosing(pages) as pages:
+        async for batch in pages:
+            yield batch
+    warn_if_stopped(end, "Purchased scan (all models)")
 
 
 def create_all_paid_dict(paid_content):

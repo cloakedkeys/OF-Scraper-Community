@@ -11,15 +11,15 @@ r"""
 
 """
 
+import contextlib
 import logging
-import traceback
 
 import ofscraper.data.api.common.incomplete as incomplete
 import ofscraper.data.api.common.logs.strings as common_logs
-import ofscraper.utils.live.updater as progress_utils
 import ofscraper.utils.of_env.of_env as of_env
 from ofscraper.commands.scraper.actions.download import stop
 from ofscraper.data.api.common.logs.logs import trace_log_raw, trace_progress_log
+from ofscraper.data.api.common.offset_pages import PageEnd, offset_paginate
 from ofscraper.data.api.tasks import collect_pages
 from ofscraper.utils.context.run_async import run
 
@@ -58,49 +58,27 @@ async def process_tasks_batch(generators):
 
 
 async def scrape_pinned_posts(c, model_id, offset=0):
-    """
-    Worker Loop for pinned posts.
-    Yields batches page-by-page with safety checks for the EP constant.
-    """
-    current_offset = offset
+    """Yield a model's pinned posts page by page."""
+    end = PageEnd()
 
-    while True:
-        # Safety check: Ensure the endpoint string exists before calling .format()
-        ep = of_env.getattr("timelinePinnedEP")
-        url = ep.format(model_id, current_offset)
-        task = None
-        try:
-            task = progress_utils.api.add_job_task(
-                f"[Pinned] offset -> {current_offset}", visible=True
-            )
-            async with c.requests_async(url=url) as r:
-                if not (200 <= r.status < 300):
-                    log.debug(f"Pinned API Error: {r.status}")
-                    incomplete.mark_incomplete(model_id, API, f"HTTP {r.status}")
-                    break
+    def on_page(data, batch):
+        if batch:
+            trace_progress_log(f"{API} request", batch)
 
-                data = await r.json_()
-                if not isinstance(data, dict):
-                    break
-
-                batch = data.get("list", [])
-                if not batch:
-                    break
-
-                yield batch
-
-                trace_progress_log(f"{API} request", batch)
-
-                if not data.get("hasMore"):
-                    break
-
-                current_offset += len(batch)
-
-        except Exception as E:
-            log.traceback_(E)
-            log.traceback_(traceback.format_exc())
-            incomplete.mark_incomplete(model_id, API, f"{type(E).__name__}: {E}")
-            break
-        finally:
-            if task:
-                progress_utils.api.remove_job_task(task)
+    pages = offset_paginate(
+        c,
+        end,
+        lambda offset: of_env.getattr("timelinePinnedEP").format(model_id, offset),
+        lambda offset: f"[Pinned] offset -> {offset}",
+        offset,
+        items=lambda data: data.get("list", []),
+        on_page=on_page,
+    )
+    async with contextlib.aclosing(pages) as pages:
+        async for batch in pages:
+            yield batch
+    # a response that isn't a JSON object ends the scan quietly, as before
+    if end.status is not None:
+        log.debug(f"Pinned API Error: {end.status}")
+    if end.status is not None or end.error is not None:
+        incomplete.mark_incomplete(model_id, API, end.reason)

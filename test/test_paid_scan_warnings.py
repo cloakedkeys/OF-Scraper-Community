@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 import ofscraper.data.api.paid as paid
+import ofscraper.utils.live.updater as progress_utils
 
 
 class _Response:
@@ -29,7 +30,7 @@ class _Client:
 
 @pytest.fixture
 def warnings_seen(monkeypatch):
-    monkeypatch.setattr(paid.progress_utils.api, "add_job_task", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(progress_utils.api, "add_job_task", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(paid.log, "traceback_", lambda *a, **k: None, raising=False)
     seen = []
 
