@@ -1097,13 +1097,14 @@ class InputApp(App):
     def _render_table_page(self, prefix, table, rows, styler) -> None:
         """Draw the current page of rows into table and update its page bar.
 
-        The page number is pulled back to the last page when rows have shrunk.
+        The page number is pulled back to the last page when rows have shrunk,
+        and up to page 1 if it is below it.
         """
         table.clear()
         num_page = self._per_page(prefix) or AMOUNT_PER_PAGE
         self._shown_per_page[prefix] = num_page
         total_pages = max((len(rows) + num_page - 1) // num_page, 1)
-        page = min(getattr(self, f"{prefix}_page"), total_pages)
+        page = max(1, min(getattr(self, f"{prefix}_page"), total_pages))
         setattr(self, f"{prefix}_page", page)
         start = (page - 1) * num_page
         for count, row_dict in enumerate(rows[start : start + num_page]):

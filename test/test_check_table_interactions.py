@@ -1340,6 +1340,15 @@ def test_each_table_pages_and_clamps_the_same_way(stub_env_hf, prefix):
             assert getattr(app, f"{prefix}_page") == 1
             assert _page_state_hf(app, prefix, table)[:2] == ("Page 1 of 1", ["1", "2"])
 
+            # a page below 1 is drawn as page 1
+            setattr(app, f"{prefix}_page", 0)
+            {"main": app.set_page, "post": app.set_post_page, "cart": app.update_cart_table}[
+                prefix
+            ]()
+            await pilot.pause()
+            assert getattr(app, f"{prefix}_page") == 1
+            assert _page_state_hf(app, prefix, table)[:2] == ("Page 1 of 1", ["1", "2"])
+
     asyncio.run(drive())
 
 
