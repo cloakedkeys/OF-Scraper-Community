@@ -1279,7 +1279,7 @@ class InputApp(App):
             log.debug(f"Error updating the table info bars: {E!r}")
 
     def update_cart_info(self):
-        in_cart = sum(1 for row in self.table_data if row["download_cart"] == "[added]")
+        in_cart = len(self._cart_rows())
         downloading = sum(
             1 for row in self.table_data if row["download_cart"] == "[downloading]"
         )
