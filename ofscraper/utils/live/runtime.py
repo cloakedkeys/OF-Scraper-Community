@@ -224,7 +224,7 @@ class LiveWatcher:
             account_id=key_str,
             username=uname,
             status="stopped",
-            reason="Stopped by user",
+            reason="Stopped by user (click [Resume] or press r)",
         )
         return False
 
@@ -405,7 +405,7 @@ class LiveWatcher:
                     account_id=key_str,
                     username=stream.get("username") or key_str,
                     status="stopped",
-                    reason="Stopped by user",
+                    reason="Stopped by user (click [Resume] or press r)",
                 )
             wake.set()
 
@@ -730,7 +730,13 @@ class LiveThread(threading.Thread):
     """Runs ``runner(watch, stop)`` on its own event loop so it can be stopped cleanly."""
 
     def __init__(self, watch: bool, runner=None, *, site: str | None = None):
-        name = f"{site}-live" if site else "live-watch"
+        if site is None:
+            import ofscraper.sites as sites
+
+            resolved_site = sites.current_site()
+        else:
+            resolved_site = site
+        name = f"{resolved_site}-live" if resolved_site else "live-watch"
         super().__init__(daemon=True, name=name)
         self.watch = watch
         self.runner = runner or _default_runner
