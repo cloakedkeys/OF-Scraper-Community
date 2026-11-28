@@ -16,6 +16,7 @@ import pytest
 import ofscraper.commands.check as check
 import ofscraper.utils.args.parse.commands.message as message
 import ofscraper.utils.args.parse.commands.paid as paid_cmd
+import ofscraper.utils.args.parse.commands.post as post_cmd
 import ofscraper.utils.args.parse.commands.story as story_cmd
 
 
@@ -73,6 +74,36 @@ def test_every_paid_lookup_in_check_passes_username_first():
 
 def _parse(command, args):
     return command.main(args=args, standalone_mode=False, prog_name="OF-Scraper")
+
+
+CHECK_COMMANDS = [
+    (post_cmd.post_check, "post_check", ["--url", "creator1"]),
+    (message.message_check, "msg_check", ["--url", "creator1"]),
+    (paid_cmd.paid_check, "paid_check", ["-u", "creator1"]),
+    (story_cmd.story_check, "story_check", ["-u", "creator1"]),
+]
+
+
+@pytest.mark.parametrize("command, name, args", CHECK_COMMANDS)
+def test_check_command_returns_params_and_its_name(command, name, args):
+    params, info_name = _parse(command, args)
+    assert command.name == name
+    assert info_name == "OF-Scraper"
+    # check_mode_changes runs for every check command
+    assert params["before"] is not None and params["before_original"] is None
+    assert "force" in params
+    hidden = {p.name for p in command.params if p.hidden}
+    assert {"download_sem", "downloadbars"} <= hidden
+
+
+@pytest.mark.parametrize("command, name, args", CHECK_COMMANDS)
+def test_check_command_keeps_its_constraints(command, name, args):
+    # neither a creator nor a file: the require_one group refuses
+    with pytest.raises(click.UsageError):
+        _parse(command, [])
+    if name != "story_check":
+        with pytest.raises(click.UsageError):
+            _parse(command, [*args, "--text", "--text-only"])
 
 
 def test_paid_check_reads_usernames_from_a_file(tmp_path):

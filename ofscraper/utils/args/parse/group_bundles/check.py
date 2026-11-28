@@ -4,6 +4,7 @@ import cloup as click
 from cloup import constraint
 from cloup.constraints import mutually_exclusive
 
+from ofscraper.utils.args.helpers.hide_args import hide_check_mode
 from ofscraper.utils.args.parse.arguments.check import (
     check_mode_media_sort,
     force,
@@ -19,6 +20,8 @@ from ofscraper.utils.args.parse.arguments.metadata_filters import (
     posted_before,
 )
 from ofscraper.utils.args.parse.arguments.post_content import download_type_option
+from ofscraper.utils.args.parse.group_bundles.advanced_common import advanced_args
+from ofscraper.utils.args.parse.group_bundles.utils.check import check_mode_changes
 from ofscraper.utils.args.parse.groups.download import download_options
 from ofscraper.utils.args.parse.groups.file import file_options
 from ofscraper.utils.args.parse.groups.logging import logging_options
@@ -45,6 +48,27 @@ def main_check(func):
         return func(ctx, *args, **kwargs)
 
     return wrapper
+
+
+def make_check_command(name, short_help, help, options):
+    """A check-mode command (post_check, msg_check, paid_check, story_check).
+
+    ``options`` are the command's own option decorators, outermost first;
+    every check command then takes the advanced options and has ``before``
+    set by check_mode_changes. Running it returns ``(params, command name)``.
+    """
+
+    def params(ctx, *args, **kwargs):
+        return ctx.params, ctx.info_name
+
+    callback = advanced_args(check_mode_changes(params))
+    for option in reversed(options):
+        callback = option(callback)
+    command = click.command(
+        name, short_help=short_help, help=help, show_constraints=True
+    )(callback)
+    hide_check_mode(command)
+    return command
 
 
 def common_args_check(func):
