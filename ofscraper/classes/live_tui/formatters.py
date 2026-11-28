@@ -1,4 +1,5 @@
 import datetime
+import math
 
 from rich.markup import escape as rich_escape
 from rich.text import Text
@@ -81,13 +82,15 @@ def _epoch_seconds(started_at) -> float | None:
     if isinstance(started_at, datetime.datetime):
         return utc_start(started_at).timestamp()
     try:
-        float(started_at)
+        val = float(started_at)
     except (TypeError, ValueError):
         try:
             return datetime.datetime.fromisoformat(str(started_at)).timestamp()
         except ValueError:
             return None
-    return utc_start(started_at).timestamp()
+    if not math.isfinite(val) or val <= 0:
+        return None
+    return val / 1000.0 if val > 1e10 else val
 
 
 def sort_key_for_entry(entry: StreamRowState, sort_key: str, now_wall: float):

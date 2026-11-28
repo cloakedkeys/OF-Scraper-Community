@@ -782,12 +782,18 @@ def test_live_tui_cli_sets_flags_and_rejects_no_rich():
         )
 
 
-def test_live_tui_cli_trims_unused_option_groups():
+def test_live_tui_cli_keeps_runtime_option_groups():
     param_names = {p.name for p in live_tui_cmd.live_tui.params}
-    assert "username_search" in param_names
-    assert "dynamic_rules" in param_names
-    for removed in ("users_first", "sort", "key_mode", "no_cache", "no_api_cache"):
-        assert removed not in param_names
+    for required in (
+        "username_search",
+        "dynamic_rules",
+        "auth_fail",
+        "no_cache",
+        "no_api_cache",
+        "update_profile",
+        "desc",
+    ):
+        assert required in param_names
 
 
 def test_live_store_stop_resume_and_index_pruning():
@@ -827,6 +833,11 @@ def test_formatters_epoch_seconds_and_helpers():
 
     assert _epoch_seconds(None) is None
     assert _epoch_seconds("") is None
+    assert _epoch_seconds(0) is None
+    assert _epoch_seconds(-10) is None
+    assert _epoch_seconds(float("inf")) is None
+    assert _epoch_seconds(float("-inf")) is None
+    assert _epoch_seconds(float("nan")) is None
     assert _epoch_seconds("not-a-date") is None
     assert _epoch_seconds(1_700_000_000) == pytest.approx(1_700_000_000.0)
     assert _epoch_seconds(1_700_000_000_000) == pytest.approx(1_700_000_000.0)

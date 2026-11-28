@@ -1,11 +1,5 @@
 import cloup as click
 
-from ofscraper.utils.args.parse.arguments.advanced_processing import (
-    username_search_option,
-)
-from ofscraper.utils.args.parse.arguments.advanced_program import (
-    dynamic_rules_option,
-)
 from ofscraper.utils.args.parse.arguments.automatic import (
     live_chat_option,
     live_interval_option,
@@ -13,10 +7,10 @@ from ofscraper.utils.args.parse.arguments.automatic import (
     live_max_option,
     refresh_users_option,
 )
-from ofscraper.utils.args.parse.groups.advanced_program import (
-    advanced_options_desc,
-    advanced_options_help,
+from ofscraper.utils.args.parse.groups.advanced_processing import (
+    advanced_processing_options,
 )
+from ofscraper.utils.args.parse.groups.advanced_program import advanced_options
 from ofscraper.utils.args.parse.groups.advanced_user_filter import (
     advanced_userfilters_options,
 )
@@ -24,6 +18,7 @@ from ofscraper.utils.args.parse.groups.logging import logging_options
 from ofscraper.utils.args.parse.groups.program import program_options
 from ofscraper.utils.args.parse.groups.user_list import userlist_options
 from ofscraper.utils.args.parse.groups.user_select import user_select_options
+from ofscraper.utils.args.parse.groups.user_sort import user_sorting_options
 
 live_once_option = click.option(
     "--once",
@@ -61,16 +56,9 @@ def live_tui_args(func):
     @user_select_options
     @userlist_options
     @advanced_userfilters_options
-    @click.option_group(
-        "Advanced Search Options",
-        username_search_option,
-        help="Choose how usernames are searched",
-    )
-    @click.option_group(
-        advanced_options_desc,
-        dynamic_rules_option,
-        help=advanced_options_help,
-    )
+    @user_sorting_options
+    @advanced_processing_options
+    @advanced_options
     @click.pass_context
     def wrapper(ctx, *args, **kwargs):
         return func(ctx, *args, **kwargs)

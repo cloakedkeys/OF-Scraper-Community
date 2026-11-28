@@ -1,11 +1,9 @@
-import cloup as click
 from click import UsageError
 
 from ofscraper.utils.args.parse.group_bundles.live_tui import live_tui_args
 
 
 @live_tui_args
-@click.pass_context
 def live_tui(ctx, *args, **kwargs):
     if ctx.parent:
         for key in ("config", "profile", "site", "env_files"):
