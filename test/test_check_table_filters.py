@@ -121,6 +121,25 @@ def test_response_cell_semicolon_selects_its_option():
 
 
 @pytest.mark.usefixtures("table_env")
+def test_response_filter_lists_every_type_checked_in_order():
+    async def steps(app, pilot):
+        options = app.query_one("#responsetype").query_one(SelectionList)
+        values = [options.get_option_at_index(i).value for i in range(options.option_count)]
+        assert values == [
+            "Timeline", "Archived", "Pinned", "Streams", "Stories", "Highlights",
+            "Messages",
+        ]
+        assert options.selected == values
+        assert [options.get_option_at_index(i).id for i in range(options.option_count)] == [
+            "responsetype_timeline", "responsetype_archived", "responsetype_pinned",
+            "responsetype_stream", "responsetype_stories", "responsetype_highlights",
+            "responsetype_message",
+        ]
+
+    _drive([_row(1)], steps)
+
+
+@pytest.mark.usefixtures("table_env")
 def test_length_filter_includes_bounds():
     cases = [
         ("0:01:00", None, [2, 3, 4, 5]),

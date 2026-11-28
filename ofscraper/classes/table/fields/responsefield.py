@@ -3,6 +3,17 @@ from textual.widgets.selection_list import Selection
 
 from ofscraper.classes.table.fields.selectfield import SelectField
 
+# (value, id suffix) for each post type, in the order the list shows them
+RESPONSE_TYPES = (
+    ("Timeline", "timeline"),
+    ("Archived", "archived"),
+    ("Pinned", "pinned"),
+    ("Streams", "stream"),
+    ("Stories", "stories"),
+    ("Highlights", "highlights"),
+    ("Messages", "message"),
+)
+
 
 class ResponseField(SelectField):
     DEFAULT_CSS = """
@@ -17,85 +28,26 @@ class ResponseField(SelectField):
         super().__init__(name=name, classes="container")
         self.filter_name = name
         self.label_text = label or "Post Type (checked = shown)"
-        self._pinned = Selection(
-            "Pinned",
-            value="Pinned",
-            disabled=False,
-            id=f"{self.filter_name}_pinned",
-            initial_state=True,
-        )
-        self._archived = Selection(
-            "Archived",
-            value="Archived",
-            disabled=False,
-            id=f"{self.filter_name}_archived",
-            initial_state=True,
-        )
-        self._timeline = Selection(
-            "Timeline",
-            value="Timeline",
-            disabled=False,
-            id=f"{self.filter_name}_timeline",
-            initial_state=True,
-        )
-        self._stories = Selection(
-            "Stories",
-            value="Stories",
-            disabled=False,
-            id=f"{self.filter_name}_stories",
-            initial_state=True,
-        )
-        self._highlights = Selection(
-            "Highlights",
-            value="Highlights",
-            disabled=False,
-            id=f"{self.filter_name}_highlights",
-            initial_state=True,
-        )
-        self._streams = Selection(
-            "Streams",
-            value="Streams",
-            disabled=False,
-            id=f"{self.filter_name}_stream",
-            initial_state=True,
-        )
-        self._messages = Selection(
-            "Messages",
-            value="Messages",
-            disabled=False,
-            id=f"{self.filter_name}_message",
-            initial_state=True,
-        )
+        self._selections = {
+            value: Selection(
+                value,
+                value=value,
+                disabled=False,
+                id=f"{self.filter_name}_{suffix}",
+                initial_state=True,
+            )
+            for value, suffix in RESPONSE_TYPES
+        }
 
     def compose(self):
         yield Label(self.label_text)
-        yield SelectionList(
-            self._timeline,
-            self._archived,
-            self._pinned,
-            self._streams,
-            self._stories,
-            self._highlights,
-            self._messages,
-        )
+        yield SelectionList(*self._selections.values())
 
     def update_table_val(self, val):
         self.query_one(SelectionList).deselect_all()
-        val = self._normalize(val)
-        if val == "Pinned":
-            self.query_one(SelectionList).select(self._pinned)
-        elif val == "Archived":
-            self.query_one(SelectionList).select(self._archived)
-        elif val == "Timeline":
-            self.query_one(SelectionList).select(self._timeline)
-        elif val == "Stories":
-            self.query_one(SelectionList).select(self._stories)
-        elif val == "Highlights":
-            self.query_one(SelectionList).select(self._highlights)
-        elif val == "Streams":
-            self.query_one(SelectionList).select(self._streams)
-        elif val == "Messages":
-            self.query_one(SelectionList).select(self._messages)
+        selection = self._selections.get(self._normalize(val))
+        if selection is not None:
+            self.query_one(SelectionList).select(selection)
 
     @staticmethod
     def _normalize(value):
@@ -110,4 +62,3 @@ class ResponseField(SelectField):
 
     def compare(self, value):
         return self._normalize(value) in self.query_one(SelectionList).selected
-
