@@ -224,11 +224,33 @@ def from_api(call):
     return next((kw.value for kw in call.keywords if kw.arg == "from_api"), None)
 
 
+def save_uses(module):
+    """Every call that saves through a SAVES function: a direct call, or a
+    ``partial(<saver>, ...)`` that binds one for _process_area. Any other use
+    of a saver (passed bare, say) fails the test."""
+    tree = ast.parse(pathlib.Path(module.__file__).read_text(encoding="utf-8"))
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    uses = []
+    for node in ast.walk(tree):
+        name = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", None)
+        if name not in SAVES:
+            continue
+        parent = parents[node]
+        direct = isinstance(parent, ast.Call) and parent.func is node
+        bound = (
+            isinstance(parent, ast.Call)
+            and getattr(parent.func, "id", None) == "partial"
+            and parent.args[:1] == [node]
+        )
+        assert direct or bound, ast.unparse(parent)
+        uses.append(parent)
+    return uses
+
+
 def test_every_scan_area_saves_its_items_as_from_the_api():
-    # labels and scrape paid; the other areas save through _process_area,
-    # whose from_api test_post_area_wrappers.py checks per area
-    calls = save_calls(scan_post)
-    assert len(calls) == 2
+    # timeline, archived, streams, pinned, labels, messages, paid and scrape paid
+    calls = save_uses(scan_post)
+    assert len(calls) == 8
     for call in calls:
         value = from_api(call)
         assert isinstance(value, ast.Constant) and value.value is True, ast.unparse(call)

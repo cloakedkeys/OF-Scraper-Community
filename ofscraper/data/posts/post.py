@@ -127,7 +127,6 @@ async def _process_area(
     save,
     responsetype=None,
     keep=None,
-    from_api=True,
     after_checks=False,
 ):
     """Fetch one area's posts, save them and return ``(posts, api)``.
@@ -143,8 +142,7 @@ async def _process_area(
         ]
         if keep:
             posts = keep(posts)
-        save_kwargs = {"from_api": True} if from_api else {}
-        await save(posts, model_id=model_id, username=username, **save_kwargs)
+        await save(posts, model_id=model_id, username=username)
         if after_checks:
             set_after_checks(model_id, api)
         return posts, api
@@ -165,7 +163,8 @@ async def process_paid_post(model_id, username, c):
 
     return await _process_area(
         model_id, username, "Purchased", paid.API, fetch,
-        operations.make_post_table_changes, responsetype="Paid",
+        partial(operations.make_post_table_changes, from_api=True),
+        responsetype="Paid",
     )
 
 
@@ -177,7 +176,8 @@ async def process_messages(model_id, username, c):
 
     return await _process_area(
         model_id, username, "Messages", messages.API, fetch,
-        operations.make_messages_table_changes, after_checks=True,
+        partial(operations.make_messages_table_changes, from_api=True),
+        after_checks=True,
     )
 
 
@@ -187,7 +187,7 @@ async def process_stories(model_id, username, c):
         model_id, username, "Stories", highlights.API_S,
         lambda: highlights.get_stories_post(model_id, c=c),
         operations.make_stories_table_changes,
-        responsetype=highlights.API_S, from_api=False,
+        responsetype=highlights.API_S,
     )
 
 
@@ -197,7 +197,7 @@ async def process_highlights(model_id, username, c):
         model_id, username, "Highlights", highlights.API_H,
         lambda: highlights.get_highlight_post(model_id, c=c),
         operations.make_stories_table_changes,
-        responsetype=highlights.API_H, from_api=False,
+        responsetype=highlights.API_H,
     )
 
 
@@ -209,7 +209,8 @@ async def process_timeline_posts(model_id, username, c):
 
     return await _process_area(
         model_id, username, "Timeline", timeline.API, fetch,
-        operations.make_post_table_changes, responsetype=timeline.API,
+        partial(operations.make_post_table_changes, from_api=True),
+        responsetype=timeline.API,
         keep=timeline.filter_timeline_post, after_checks=True,
     )
 
@@ -219,7 +220,8 @@ async def process_archived_posts(model_id, username, c):
     return await _process_area(
         model_id, username, "Archived", archive.API,
         lambda: archive.get_archived_posts(model_id, username, c=c, post_id=_post_id()),
-        operations.make_post_table_changes, responsetype=archive.API,
+        partial(operations.make_post_table_changes, from_api=True),
+        responsetype=archive.API,
         after_checks=True,
     )
 
@@ -229,7 +231,8 @@ async def process_streamed_posts(model_id, username, c):
     return await _process_area(
         model_id, username, "Streams", streams.API,
         lambda: streams.get_streams_posts(model_id, username, c=c, post_id=_post_id()),
-        operations.make_post_table_changes, responsetype=streams.API,
+        partial(operations.make_post_table_changes, from_api=True),
+        responsetype=streams.API,
         after_checks=True,
     )
 
@@ -239,7 +242,7 @@ async def process_pinned_posts(model_id, username, c):
     return await _process_area(
         model_id, username, "Pinned", pinned.API,
         lambda: pinned.get_pinned_posts(model_id, c=c, post_id=_post_id()),
-        operations.make_post_table_changes,
+        partial(operations.make_post_table_changes, from_api=True),
     )
 
 
