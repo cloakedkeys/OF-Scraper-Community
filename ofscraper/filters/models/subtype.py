@@ -1,31 +1,28 @@
 import logging
 
 import ofscraper.utils.settings as settings
-from ofscraper.filters.models.utils.logs import trace_log_user
+from ofscraper.filters.models.utils.filtering import yes_no_filter
+
+log = logging.getLogger("shared")
 
 
 def subType(filterusername):
-    log = logging.getLogger("shared")
-    log.debug(f"Renewal: {settings.get_settings().renewal}")
-    if settings.get_settings().renewal:
-        filterusername = list(filter(lambda x: x.renewed, filterusername))
-        log.debug(f"active renewal filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "active renewal filter")
+    current = settings.get_settings()
 
-    elif settings.get_settings().renewal is False:
-        filterusername = list(filter(lambda x: not x.renewed, filterusername))
-        log.debug(f"disabled renewal filter username counta: {len(filterusername)}")
-        trace_log_user(filterusername, "disabled renewal filter")
+    log.debug(f"Renewal: {current.renewal}")
+    filterusername = yes_no_filter(
+        filterusername,
+        current.renewal,
+        lambda x: x.renewed,
+        "active renewal filter",
+        "disabled renewal filter",
+    )
 
-    log.debug(f"Sub status: {settings.get_settings().sub_status}")
-    if settings.get_settings().sub_status:
-        filterusername = list(filter(lambda x: x.active, filterusername))
-        log.debug(f"active subscription filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "active subscription filter")
-
-    elif settings.get_settings().sub_status is False:
-        filterusername = list(filter(lambda x: not x.active, filterusername))
-        log.debug(f"expired subscription filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "expired subscription filter")
-
-    return filterusername
+    log.debug(f"Sub status: {current.sub_status}")
+    return yes_no_filter(
+        filterusername,
+        current.sub_status,
+        lambda x: x.active,
+        "active subscription filter",
+        "expired subscription filter",
+    )

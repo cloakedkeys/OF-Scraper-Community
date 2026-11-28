@@ -1,6 +1,19 @@
 import logging
+import operator
 
 import ofscraper.utils.settings as settings
+
+# --sort value -> model attribute; unknown values sort by name
+SORT_ATTRS = {
+    "name": "name",
+    "last-seen": "final_last_seen",
+    "expired": "final_expired",
+    "subscribed": "final_subscribed",
+    "current-price": "final_current_price",
+    "promo-price": "final_promo_price",
+    "renewal-price": "final_renewal_price",
+    "regular-price": "final_regular_price",
+}
 
 
 def sort_models_helper(models):
@@ -9,48 +22,5 @@ def sort_models_helper(models):
     logging.getLogger("shared").debug(
         f"sorting details  [name:{sort} direction:{reverse}]"
     )
-    if sort == "name":
-        return sorted(models, reverse=reverse, key=lambda x: x.name)
-
-    elif sort == "last-seen":
-        return sorted(
-            models,
-            reverse=reverse,
-            key=lambda x: x.final_last_seen,
-        )
-    elif sort == "expired":
-        return sorted(
-            models,
-            reverse=reverse,
-            key=lambda x: x.final_expired,
-        )
-    elif sort == "subscribed":
-        return sorted(
-            models,
-            reverse=reverse,
-            key=lambda x: x.final_subscribed,
-        )
-    elif sort == "current-price":
-        return sorted(
-            models,
-            reverse=reverse,
-            key=lambda x: x.final_current_price,
-        )
-    elif sort == "promo-price":
-        return sorted(
-            models,
-            reverse=reverse,
-            key=lambda x: x.final_promo_price,
-        )
-
-    elif sort == "renewal-price":
-        return sorted(
-            models,
-            reverse=reverse,
-            key=lambda x: x.final_renewal_price,
-        )
-
-    elif sort == "regular-price":
-        return sorted(models, reverse=reverse, key=lambda x: x.final_regular_price)
-    else:
-        return sorted(models, reverse=reverse, key=lambda x: x.name)
+    key = operator.attrgetter(SORT_ATTRS.get(sort, "name"))
+    return sorted(models, reverse=reverse, key=key)

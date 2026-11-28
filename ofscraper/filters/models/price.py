@@ -1,186 +1,74 @@
 import logging
+import operator
 
 import ofscraper.utils.settings as settings
-from ofscraper.filters.models.utils.logs import trace_log_user
+from ofscraper.filters.models.utils.filtering import filter_users
+
+log = logging.getLogger("shared")
+
+# (setting_key, model attribute, log label)
+PAID_FREE_FILTERS = [
+    ("current_price", "final_current_price", "current price"),
+    ("renewal_price", "final_renewal_price", "renewal price"),
+    ("regular_price", "final_regular_price", "regular price"),
+    ("promo_price", "final_promo_price", "promo price"),
+]
+
+# (setting_key, model attribute, comparison, log label)
+MIN_MAX_FILTERS = [
+    ("promo_price_min", "final_promo_price", operator.ge, "promo price min"),
+    ("promo_price_max", "final_promo_price", operator.le, "promo price max"),
+    ("regular_price_min", "final_regular_price", operator.ge, "regular price min"),
+    ("regular_price_max", "final_regular_price", operator.le, "regular price max"),
+    ("renewal_price_min", "final_renewal_price", operator.ge, "renewal price min"),
+    ("renewal_price_max", "final_renewal_price", operator.le, "renewal price max"),
+    ("current_price_min", "final_current_price", operator.ge, "current price min"),
+    ("current_price_max", "final_current_price", operator.le, "current price max"),
+]
+
+
+def _is_paid(price):
+    # same accounts as main's `> 0` checks and its truthiness check on the
+    # regular price, which is the only price that can be None
+    return price is not None and price > 0
+
+
+def _paid_free_filter(users, value, attr, label):
+    if value == "paid":
+        return filter_users(
+            users, lambda x: _is_paid(getattr(x, attr)), f"paid {label} filter"
+        )
+    if value == "free":
+        return filter_users(
+            users, lambda x: getattr(x, attr) == 0, f"free {label} filter"
+        )
+    return users
 
 
 def pricePaidFreeFilterHelper(filterusername):
-    log = logging.getLogger("shared")
+    current = settings.get_settings()
+    for key, attr, label in PAID_FREE_FILTERS:
+        value = getattr(current, key)
+        log.debug(f"{label} filter: {value}")
+        filterusername = _paid_free_filter(filterusername, value, attr, label)
+    return priceMinMaxFilters(filterusername)
 
-    log.debug(f"Current price filter: {settings.get_settings().current_price}")
-    if settings.get_settings().current_price == "paid":
-        filterusername = list(
-            filter(
-                lambda x: x.final_current_price > 0,
-                filterusername,
-            )
-        )
-        log.debug(f"Currently paid filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "currently paid filter")
 
-    elif settings.get_settings().current_price == "free":
-        filterusername = list(
-            filter(
-                lambda x: x.final_current_price == 0,
-                filterusername,
-            )
-        )
-        log.debug(f"currently free filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "currently free filter")
-
-    log.debug(f"Account renewal price filter: {settings.get_settings().renewal_price}")
-    if settings.get_settings().renewal_price == "paid":
-        filterusername = list(
-            filter(
-                lambda x: x.final_renewal_price > 0,
-                filterusername,
-            ),
-        )
-
-        log.debug(f"Paid renewal filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "paid renewal filter")
-
-    elif settings.get_settings().renewal_price == "free":
-        filterusername = list(
-            filter(
-                lambda x: x.final_renewal_price == 0,
-                filterusername,
-            )
-        )
-        log.debug(f"Free renewal filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "free renewal filter")
-
-    log.debug(f"Regular Price filter: {settings.get_settings().regular_price}")
-    if settings.get_settings().regular_price == "paid":
-        filterusername = list(filter(lambda x: x.final_regular_price, filterusername))
-        log.debug(f"Paid regular price filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "paid regular price filter")
-
-    elif settings.get_settings().regular_price == "free":
-        filterusername = list(
-            filter(lambda x: x.final_regular_price == 0, filterusername)
-        )
-        log.debug(f"Free regular price filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "free regular price filter")
-    log.debug(f"Promo price filter: {settings.get_settings().promo_price}")
-    if settings.get_settings().promo_price == "paid":
-        filterusername = list(
-            filter(
-                lambda x: x.final_promo_price > 0,
-                filterusername,
-            )
-        )
-
-        log.debug(f"Paid promo price filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "paid promo price filter")
-
-    elif settings.get_settings().promo_price == "free":
-        filterusername = list(
-            filter(
-                lambda x: x.final_promo_price == 0,
-                filterusername,
-            )
-        )
-        log.debug(f"Free promo price filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "free promo price filter")
-
-    filterusername = priceMinMaxFilters(filterusername)
-
-    return filterusername
+def _min_max_filter(users, bound, attr, op, label):
+    # as on main, a bound of 0 is skipped like an unset one
+    if not bound:
+        return users
+    return filter_users(
+        users,
+        lambda x: op(getattr(x, attr), bound),
+        f"{label} filter",
+    )
 
 
 def priceMinMaxFilters(filterusername):
-    log = logging.getLogger("shared")
-    log.debug(f"Promo price min filter: {settings.get_settings().promo_price_min}")
-    if settings.get_settings().promo_price_min:
-        filterusername = list(
-            filter(
-                lambda x: x.final_promo_price
-                >= settings.get_settings().promo_price_min,
-                filterusername,
-            )
-        )
-        log.debug(f"Promo price min filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "promo price min filter")
-
-    log.debug(f"Promo price max filter: {settings.get_settings().promo_price_max}")
-    if settings.get_settings().promo_price_max:
-        filterusername = list(
-            filter(
-                lambda x: x.final_promo_price
-                <= settings.get_settings().promo_price_max,
-                filterusername,
-            )
-        )
-        log.debug(f"Promo price max filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "promo price max filter")
-
-    log.debug(f"Regular price min filter: {settings.get_settings().regular_price_min}")
-    if settings.get_settings().regular_price_min:
-        filterusername = list(
-            filter(
-                lambda x: x.final_regular_price
-                >= settings.get_settings().regular_price_min,
-                filterusername,
-            )
-        )
-        log.debug(f"Regular price min filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "regular price min filter")
-    log.debug(f"Regular price max filter: {settings.get_settings().regular_price_max}")
-    if settings.get_settings().regular_price_max:
-        filterusername = list(
-            filter(
-                lambda x: x.final_regular_price
-                <= settings.get_settings().regular_price_max,
-                filterusername,
-            )
-        )
-        log.debug(f"Regular price max filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "regular price max filter")
-
-    log.debug(f"Renewal price min filter: {settings.get_settings().renewal_price_min}")
-    if settings.get_settings().renewal_price_min:
-        filterusername = list(
-            filter(
-                lambda x: x.final_renewal_price
-                >= settings.get_settings().renewal_price_min,
-                filterusername,
-            )
-        )
-        log.debug(f"Renewal price min filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "renewal price min filter")
-    log.debug(f"Renewal price max filter: {settings.get_settings().renewal_price_max}")
-    if settings.get_settings().renewal_price_max:
-        filterusername = list(
-            filter(
-                lambda x: x.final_renewal_price
-                <= settings.get_settings().renewal_price_max,
-                filterusername,
-            )
-        )
-        log.debug(f"Renewal price max filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "renewal price max filter")
-
-    log.debug(f"Current price min filter: {settings.get_settings().current_price_min}")
-    if settings.get_settings().current_price_min:
-        filterusername = list(
-            filter(
-                lambda x: x.final_current_price
-                >= settings.get_settings().current_price_min,
-                filterusername,
-            )
-        )
-        log.debug(f"Current price min filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "current price min filter")
-    log.debug(f"Current price max filter: {settings.get_settings().current_price_max}")
-    if settings.get_settings().current_price_max:
-        filterusername = list(
-            filter(
-                lambda x: x.final_current_price
-                <= settings.get_settings().current_price_max,
-                filterusername,
-            )
-        )
-        log.debug(f"current price max filter username count: {len(filterusername)}")
-        trace_log_user(filterusername, "current price max filter")
+    current = settings.get_settings()
+    for key, attr, op, label in MIN_MAX_FILTERS:
+        bound = getattr(current, key)
+        log.debug(f"{label} filter: {bound}")
+        filterusername = _min_max_filter(filterusername, bound, attr, op, label)
     return filterusername

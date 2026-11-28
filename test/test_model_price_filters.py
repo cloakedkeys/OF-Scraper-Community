@@ -82,6 +82,61 @@ def test_min_and_max_bounds_are_inclusive(monkeypatch, prefix, attr):
     assert [m.name for m in price_filters.priceMinMaxFilters(models)] == ["low", "mid"]
 
 
+@pytest.mark.parametrize(
+    "prefix, attr",
+    [
+        ("promo_price", "promo"),
+        ("regular_price", "regular"),
+        ("renewal_price", "renewal"),
+        ("current_price", "current"),
+    ],
+)
+def test_zero_bound_is_ignored(monkeypatch, prefix, attr):
+    # a bound of 0 is skipped as if unset, as on main
+    models = [_model("zero", **{attr: 0}), _model("low", **{attr: 5})]
+    _patch_settings(monkeypatch, **{f"{prefix}_max": 0})
+    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == [
+        "zero",
+        "low",
+    ]
+
+    _patch_settings(monkeypatch, **{f"{prefix}_min": 0})
+    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == [
+        "zero",
+        "low",
+    ]
+
+
+@pytest.mark.parametrize("bound", ["regular_price_min", "regular_price_max"])
+def test_zero_regular_bound_with_unknown_regular_price(monkeypatch, bound):
+    models = [_model("unknown", regular=None), _model("paid", regular=5)]
+    _patch_settings(monkeypatch, **{bound: 0})
+    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == [
+        "unknown",
+        "paid",
+    ]
+
+
+def test_missing_regular_price(monkeypatch):
+    # final_regular_price is None when the API leaves the price out
+    models = [_model("unknown", regular=None), _model("paid", regular=5)]
+
+    # paid/free: None counts as neither
+    _patch_settings(monkeypatch, regular_price="paid")
+    assert [m.name for m in price_filters.pricePaidFreeFilterHelper(models)] == ["paid"]
+    _patch_settings(monkeypatch, regular_price="free")
+    assert price_filters.pricePaidFreeFilterHelper(models) == []
+
+
+@pytest.mark.parametrize("bound", ["regular_price_min", "regular_price_max"])
+def test_regular_bound_with_unknown_regular_price(monkeypatch, bound):
+    # as on main, a non-zero bound compares None with an int and raises
+    models = [_model("unknown", regular=None), _model("paid", regular=5)]
+    _patch_settings(monkeypatch, **{bound: 1})
+    with pytest.raises(TypeError):
+        price_filters.priceMinMaxFilters(models)
+
+
 def test_combined_paid_and_bound_filters(monkeypatch):
     models = [
         _model("free", current=0, renewal=0),
