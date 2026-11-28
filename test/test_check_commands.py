@@ -321,6 +321,20 @@ def test_fetch_or_cache_fetches_and_caches(monkeypatch, cached, forced):
     assert saved == [([{"id": 2}], 111, "timeline")]
 
 
+def test_fetch_or_cache_uses_a_cache_the_caller_already_read(monkeypatch):
+    def no_second_read(*a):
+        raise AssertionError("read the cache again")
+
+    async def fetch():
+        raise AssertionError("fetched")
+
+    monkeypatch.setattr(check, "read_check", no_second_read)
+    result = asyncio.run(
+        check._fetch_or_cache(111, "creator1", "paid", fetch, False, cached=[])
+    )
+    assert result == ([], False)
+
+
 def test_msg_check_reads_username_with_digits_as_username(monkeypatch):
     checked, looked_up, _ = _run_msg_check(monkeypatch, ["user123"])
     assert looked_up == [("name", "user123")]
