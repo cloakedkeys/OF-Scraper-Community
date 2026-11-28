@@ -25,17 +25,20 @@ def _peek_current_model_manager(mgr):
         return None
     # Prefer peeking on an already-initialized ProfileManager so rendering
     # the menu never eagerly creates a ProfileManager or ModelManager.
-    if hasattr(mgr, "_profile_manager"):
-        pm = mgr._profile_manager
+    mgr_dict = vars(mgr) if hasattr(mgr, "__dict__") else {}
+    if "_profile_manager" in mgr_dict:
+        pm = mgr_dict["_profile_manager"]
         if pm is None:
             return None
         if hasattr(pm, "peek_model_manager"):
             return pm.peek_model_manager()
-        return getattr(pm, "current_model_manager", None)
-    pm = getattr(mgr, "profile_manager", None)
-    if pm is not None and hasattr(pm, "peek_model_manager"):
-        return pm.peek_model_manager()
-    return getattr(mgr, "current_model_manager", None)
+        return vars(pm).get("current_model_manager") if hasattr(pm, "__dict__") else None
+    pm = mgr_dict.get("profile_manager")
+    if pm is not None:
+        if hasattr(pm, "peek_model_manager"):
+            return pm.peek_model_manager()
+        return vars(pm).get("current_model_manager") if hasattr(pm, "__dict__") else None
+    return mgr_dict.get("current_model_manager")
 
 
 def _main_menu_status() -> str:

@@ -30,7 +30,7 @@ def _profile_choice(profile) -> Choice:
         if isinstance(profile, pathlib.Path)
         else common_paths.get_config_home() / str(profile)
     )
-    name = profile.stem if isinstance(profile, pathlib.Path) else str(profile)
+    name = profile.name if isinstance(profile, pathlib.Path) else str(profile)
     site_label = sites.site_name(sites.read_profile_site(profile_dir))
     return Choice(value=name, name=f"{name} [{site_label}]")
 
