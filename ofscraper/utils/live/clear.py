@@ -12,34 +12,28 @@ def clear():
     console.get_shared_console().line(2)
 
 
+# task group name -> the updater attribute holding its manager. Looked up when
+# clearing, not at import, so a replaced manager (as in tests) is the one cleared.
+TASK_CLEAR_MAP = {
+    "activity": "activity",
+    "api": "api",
+    "download": "download",
+    "metadata": "metadata",
+    "like": "like",
+    "userlist": "userlist",
+}
+
+
 def clear_all_tasks():
     """Hides all tasks from all progress managers."""
-    for manager in (
-        updater.activity,
-        updater.api,
-        updater.download,
-        updater.metadata,
-        updater.like,
-        updater.userlist,
-    ):
-        manager.clear()
-
-
-TASK_CLEAR_MAP = {
-    "api": updater.api.clear,
-    "download": updater.download.clear,
-    "metadata": updater.metadata.clear,
-    "like": updater.like.clear,
-    "userlist": updater.userlist.clear,
-    "all": clear_all_tasks,
-    "activity": updater.activity.clear,
-}
+    for attr in TASK_CLEAR_MAP.values():
+        getattr(updater, attr).clear()
 
 
 def clear_tasks_by_name(names: Union[str, List[str]]):
     """
-    Hides the tasks of each named progress group (see TASK_CLEAR_MAP).
-    Accepts a single string or a list of strings.
+    Hides the tasks of each named progress group (see TASK_CLEAR_MAP), or of
+    every group for "all". Accepts a single string or a list of strings.
 
     Args:
         names (Union[str, List[str]]): The name or names of the tasks to clear.
@@ -57,12 +51,13 @@ def clear_tasks_by_name(names: Union[str, List[str]]):
     # 2. Loop through the list and process each name
     for name in names_to_clear:
         task_name = name.lower()
-        clear_function = TASK_CLEAR_MAP.get(task_name)
-        if clear_function:
-            clear_function()
+        if task_name == "all":
+            clear_all_tasks()
+        elif task_name in TASK_CLEAR_MAP:
+            getattr(updater, TASK_CLEAR_MAP[task_name]).clear()
         else:
             # Raise an error on the first invalid name found
             raise ValueError(
                 f"'{name}' is not a valid task type. "
-                f"Valid options are: {list(TASK_CLEAR_MAP.keys())}"
+                f"Valid options are: {[*TASK_CLEAR_MAP, 'all']}"
             )

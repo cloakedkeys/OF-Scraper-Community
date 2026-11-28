@@ -50,15 +50,14 @@ def test_unknown_name_is_refused():
         clear.clear_tasks_by_name(["api", "nope"])
 
 
-def test_hide_tasks_swallows_a_failing_update():
-    class Broken:
-        tasks = [type("T", (), {"id": 1})()]
-
-        def update(self, *a, **k):
-            raise KeyError(1)
-
-    updater.hide_tasks(Broken())
-    updater.hide_tasks(None)
+@pytest.mark.parametrize("name", ["api", "all"])
+def test_clear_uses_the_current_manager(monkeypatch, name):
+    # resolved when clearing, so a replaced manager is the one cleared
+    cleared = []
+    stub = type("Stub", (), {"clear": lambda self: cleared.append(self)})()
+    monkeypatch.setattr(updater, "api", stub)
+    clear.clear_tasks_by_name(name)
+    assert cleared == [stub]
 
 
 def test_hide_tasks_hides_the_rest_after_one_fails():
@@ -75,3 +74,4 @@ def test_hide_tasks_hides_the_rest_after_one_fails():
     progress = Partly()
     updater.hide_tasks(progress)
     assert progress.hidden == [1, 3]
+    updater.hide_tasks(None)  # no progress: nothing to hide
