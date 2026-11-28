@@ -111,6 +111,14 @@ def test_transition_rows_fill_missing_optional_columns():
         rebuild.transition_rows(spec, [{"a": 1}])
 
 
+def test_spec_keeps_its_select_as_a_tuple():
+    columns = ["a", ("b", "NULL")]
+    spec = rebuild.TableSpec("t", "", "", columns, keys=("a",))
+    assert spec.select == ("a", ("b", "NULL"))
+    columns.append("c")  # the module's list changing later doesn't reach the spec
+    assert spec.select == ("a", ("b", "NULL"))
+
+
 def test_transition_read_fills_model_id(tmp_path):
     db = tmp_path / "user_data.db"
     # a table from before model_id
