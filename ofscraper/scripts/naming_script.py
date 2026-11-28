@@ -13,8 +13,10 @@ import ofscraper.utils.settings as settings
 from ofscraper.utils.system.subprocess import async_run  # Changed to async_run
 
 # isort: split
+# posts imports this module through filters -> db -> placeholder, so look
+# Post up when the script runs, not while posts is still loading
+import ofscraper.classes.of.posts as posts_
 from ofscraper.classes.of.media import Media
-from ofscraper.classes.of.posts import Post
 
 
 async def naming_script(dir, file, ele, formats=None): # Made async
@@ -68,7 +70,7 @@ async def naming_script(dir, file, ele, formats=None): # Made async
                     "download_type": ele.downloadtype,
                 }
             )
-        elif isinstance(ele, Post):
+        elif isinstance(ele, posts_.Post):
             payload_data.update(
                 {
                     "media": None,
