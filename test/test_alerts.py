@@ -28,9 +28,9 @@ def sent(monkeypatch, tmp_path):
     monkeypatch.setattr(profile_data, "get_active_profile", lambda: "main_profile")
     out = SimpleNamespace(discord=[], script=[], settings=s)
     monkeypatch.setattr(run_record, "send_discord", lambda text: out.discord.append(text))
-    import ofscraper.utils.system.subprocess as subprocess_
+    import ofscraper.scripts.runner as runner
 
-    monkeypatch.setattr(subprocess_, "run", lambda cmd, input=None, **k: out.script.append(json.loads(input)))
+    monkeypatch.setattr(runner, "run", lambda cmd, input=None, **k: out.script.append(json.loads(input)))
     alerts.reset()
     exit_status.reset()
     checkers.new_pass()
@@ -46,6 +46,34 @@ def test_alert_reaches_discord_and_the_script(sent):
         "kind": "login", "message": "OnlyFans rejected the login; update the auth",
         "site": "onlyfans", "profile": "main_profile",
     }]
+
+
+def test_alert_script_runs_in_a_dry_run_with_a_300s_timeout(sent, monkeypatch):
+    import ofscraper.scripts.runner as runner
+
+    seen = []
+    monkeypatch.setattr(runner.dry_run, "active", lambda: True)
+    monkeypatch.setattr(runner, "run", lambda cmd, **k: seen.append((cmd, k)))
+    assert alerts.failing(alerts.LOGIN, "rejected")
+    [(cmd, options)] = seen
+    assert cmd == [sent.settings.alert_script]
+    assert options["timeout"] == 300
+    assert json.loads(options["input"])["kind"] == "login"
+
+
+def test_failing_alert_script_does_not_break_the_run(sent, monkeypatch, caplog):
+    import logging
+
+    import ofscraper.scripts.runner as runner
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runner, "run", boom)
+    monkeypatch.setattr(logging.getLogger("shared"), "traceback_", lambda *a: None, raising=False)
+    with caplog.at_level(logging.INFO, logger="shared"):
+        assert alerts.failing(alerts.LOGIN, "rejected")
+    assert any("running alert script" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.parametrize("level", ["LOW", "NORMAL", "DEBUG"])

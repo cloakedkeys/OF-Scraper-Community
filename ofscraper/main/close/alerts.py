@@ -6,9 +6,7 @@ its input. Each kind is announced when it starts failing and again when it
 recovers, not on every daemon pass.
 """
 
-import json
 import logging
-import os
 import threading
 
 import ofscraper.utils.settings as settings
@@ -86,31 +84,18 @@ def _send(kind, message, profile=None):
             send_discord(f"⚠️ {label}, {profile or 'profile'}: {message}")
         except Exception as e:
             log.debug(f"alert not sent to Discord: {e}")
-    script = getattr(s, "alert_script", None)
-    if not script:
-        return
-    if not os.path.exists(script):
-        log.info(f"Alert script path is invalid: '{script}'")
-        return
-    try:
-        import ofscraper.utils.of_env.of_env as env
-        from ofscraper.utils.system.subprocess import run
+    import ofscraper.scripts.runner as runner
 
-        run(
-            [script],
-            input=json.dumps(
-                {"kind": kind, "message": message, "site": site, "profile": profile},
-                ensure_ascii=False,
-            ),
-            capture_output=True,
-            text=True,
-            check=True,
-            level=env.getattr("FINAL_SCRIPT_SUBPROCESS_LEVEL"),
-            name="Alert script",
+    script = getattr(s, "alert_script", None)
+    # an alert is sent in a dry run too; the runner logs a failure, never raises
+    if runner.script_ready(script, "alert script", skip_in_dry_run=False):
+        runner.run_user_script(
+            script,
+            lambda: {"kind": kind, "message": message, "site": site, "profile": profile},
+            name="alert script",
+            level_key="FINAL_SCRIPT_SUBPROCESS_LEVEL",
             timeout=300,
         )
-    except Exception as e:  # an alert must never break the run
-        log.info(f"Alert script failed: {e}")
 
 
 def _announce(kind, message, profile):
