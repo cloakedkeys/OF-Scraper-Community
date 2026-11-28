@@ -1,6 +1,7 @@
 import logging
 import pathlib
 import traceback
+import typing
 
 import ofscraper.sites as sites
 import ofscraper.utils.paths.db as paths_db
@@ -50,13 +51,49 @@ log = logging.getLogger("shared")
 FANSLY_IDS_FROM = 10**15
 
 
+def _keys(rows, columns):
+    """The set of the rows' values of `columns`."""
+    return {tuple(row[column] for column in columns) for row in rows}
+
+
+class _CopiedTable(typing.NamedTuple):
+    """A table merged by copying each source row whose key (its values of
+    `merge_key`) the merged database hasn't got yet."""
+
+    merge_key: tuple
+    read: typing.Callable
+    write: typing.Callable
+
+
+_POST_KEY = ("post_id", "model_id")
+# media, profiles and models are merged their own way
+COPIED_TABLES = {
+    "labels": _CopiedTable(
+        ("post_id", "label_id", "model_id"),
+        get_all_labels_transition,
+        write_labels_table_transition,
+    ),
+    "posts": _CopiedTable(_POST_KEY, get_all_posts_transition, write_post_table_transition),
+    "products": _CopiedTable(
+        _POST_KEY, get_all_products_transition, write_products_table_transition
+    ),
+    "others": _CopiedTable(
+        _POST_KEY, get_all_others_transition, write_others_table_transition
+    ),
+    "stories": _CopiedTable(
+        _POST_KEY, get_all_stories_transition, write_stories_table_transition
+    ),
+    "messages": _CopiedTable(
+        _POST_KEY, get_all_messages_transition, write_messages_table_transition
+    ),
+}
+
+
 class MergeDatabase:
     def __init__(self):
         self._data_init = False
         self._media_keys = ["media_id", "model_id"]
         self._media_row_keys = ["media_id", "model_id", "post_id"]
-        self._label_keys = ["post_id", "label_id", "model_id"]
-        self._common_key = ["post_id", "model_id"]
         self._profile_key = ["user_id", "username"]
         self._model_key = "model_id"
 
@@ -93,76 +130,23 @@ class MergeDatabase:
             self._site_open = not self._site_recorded and await self._nothing_in(
                 self._new_db
             )
-            self._curr_labels = set(
-                list(
-                    map(
-                        lambda x: tuple(x[key] for key in self._label_keys),
-                        await get_all_labels_transition(db_path=self._new_db),
-                    )
-                )
-            )
+            # the keys of the merged database's rows, for each copied table
+            self._seen = {
+                name: _keys(await table.read(db_path=self._new_db), table.merge_key)
+                for name, table in COPIED_TABLES.items()
+            }
             curr_medias = await get_all_medias_transition(db_path=self._new_db)
             self._curr_medias = set(map(self._media_row_key, curr_medias))
             self._downloaded_medias = {}
             for x in curr_medias:
                 if x["downloaded"]:
                     self._downloaded_medias.setdefault(self._media_key(x), x)
-            self._curr_posts = set(
-                list(
-                    map(
-                        lambda x: tuple(x[key] for key in self._common_key),
-                        await get_all_posts_transition(db_path=self._new_db),
-                    )
-                )
+            self._curr_profiles = _keys(
+                await get_all_profiles(db_path=self._new_db), self._profile_key
             )
-            self._curr_products = set(
-                list(
-                    map(
-                        lambda x: tuple(x[key] for key in self._common_key),
-                        await get_all_products_transition(db_path=self._new_db),
-                    )
-                )
-            )
-            self._curr_others = set(
-                list(
-                    map(
-                        lambda x: tuple(x[key] for key in self._common_key),
-                        await get_all_others_transition(db_path=self._new_db),
-                    )
-                )
-            )
-            self._curr_stories = set(
-                list(
-                    map(
-                        lambda x: tuple(x[key] for key in self._common_key),
-                        await get_all_stories_transition(db_path=self._new_db),
-                    )
-                )
-            )
-            self._curr_messages = set(
-                list(
-                    map(
-                        lambda x: tuple(x[key] for key in self._common_key),
-                        await get_all_messages_transition(db_path=self._new_db),
-                    )
-                )
-            )
-            self._curr_profiles = set(
-                list(
-                    map(
-                        lambda x: tuple(x[key] for key in self._profile_key),
-                        await get_all_profiles(db_path=self._new_db),
-                    )
-                )
-            )
-            self._curr_models = set(
-                list(
-                    map(
-                        lambda x: x[self._model_key],
-                        await get_all_models(db_path=self._new_db),
-                    )
-                )
-            )
+            self._curr_models = {
+                x[self._model_key] for x in await get_all_models(db_path=self._new_db)
+            }
         self._data_init = True
 
     async def merge_database(self):
@@ -272,14 +256,11 @@ class MergeDatabase:
 
     async def merge_individual(self, db_path):
         await self.merge_media_helper(db_path)
-        await self.merge_label_helper(db_path)
-        await self.merge_posts_helper(db_path)
-        await self.merge_products_helper(db_path)
-        await self.merge_others_helper(db_path)
-        await self.merge_stories_helper(db_path)
+        for name in ("labels", "posts", "products", "others", "stories"):
+            await self._merge_table(db_path, name)
         await self.merge_profiles_helper(db_path)
         await self.merge_models_helper(db_path)
-        await self.merge_messages_helper(db_path)
+        await self._merge_table(db_path, "messages")
 
     def _media_key(self, media):
         return tuple(media[key] for key in self._media_keys)
@@ -313,99 +294,29 @@ class MergeDatabase:
         self._curr_medias.update(map(self._media_row_key, inserts_old_db))
         self._downloaded_medias.update(new_downloads)
 
-    async def merge_label_helper(self, old_db):
-        keys = self._label_keys
-        inserts_old_db = await get_all_labels_transition(db_path=old_db)
-        await write_labels_table_transition(
-            list(
-                filter(
-                    lambda x: tuple(x[key] for key in keys) not in self._curr_labels,
-                    inserts_old_db,
-                )
-            ),
+    async def _merge_table(self, old_db, name):
+        """Copy the rows of one of COPIED_TABLES the merged database hasn't
+        got from old_db."""
+        table = COPIED_TABLES[name]
+        seen = self._seen[name]
+        inserts_old_db = await table.read(db_path=old_db)
+        await table.write(
+            [
+                x
+                for x in inserts_old_db
+                if tuple(x[key] for key in table.merge_key) not in seen
+            ],
             db_path=self._new_db,
         )
-        self._curr_labels.update(
-            map(lambda x: tuple(x[key] for key in keys), inserts_old_db)
-        )
-
-    async def merge_posts_helper(self, old_db):
-        keys = self._common_key
-
-        inserts_old_db = await get_all_posts_transition(db_path=old_db)
-        await write_post_table_transition(
-            list(
-                filter(
-                    lambda x: tuple(x[key] for key in keys) not in self._curr_posts,
-                    inserts_old_db,
-                )
-            ),
-            db_path=self._new_db,
-        )
-        self._curr_posts.update(
-            map(lambda x: tuple(x[key] for key in keys), inserts_old_db)
-        )
-
-    async def merge_products_helper(self, old_db):
-        keys = self._common_key
-        inserts_old_db = await get_all_products_transition(db_path=old_db)
-        await write_products_table_transition(
-            list(
-                filter(
-                    lambda x: tuple(x[key] for key in keys) not in self._curr_products,
-                    inserts_old_db,
-                )
-            ),
-            db_path=self._new_db,
-        )
-        self._curr_products.update(
-            map(lambda x: tuple(x[key] for key in keys), inserts_old_db)
-        )
-
-    async def merge_others_helper(self, old_db):
-        keys = self._common_key
-
-        inserts_old_db = await get_all_others_transition(db_path=old_db)
-        await write_others_table_transition(
-            list(
-                filter(
-                    lambda x: tuple(x[key] for key in keys) not in self._curr_others,
-                    inserts_old_db,
-                )
-            ),
-            db_path=self._new_db,
-        )
-        self._curr_others.update(
-            map(lambda x: tuple(x[key] for key in keys), inserts_old_db)
-        )
-
-    async def merge_stories_helper(self, old_db):
-        global curr_stories
-        keys = self._common_key
-        inserts_old_db = await get_all_stories_transition(db_path=old_db)
-        await write_stories_table_transition(
-            list(
-                filter(
-                    lambda x: tuple(x[key] for key in keys) not in self._curr_stories,
-                    inserts_old_db,
-                )
-            ),
-            db_path=self._new_db,
-        )
-
-        self._curr_stories.update(
-            map(lambda x: tuple(x[key] for key in keys), inserts_old_db)
-        )
+        # remember this source only once its writes succeeded
+        seen.update(_keys(inserts_old_db, table.merge_key))
 
     async def merge_profiles_helper(self, old_db):
-        keys = self._profile_key
         inserts_old_db = await get_all_profiles(db_path=old_db)
         # every name, also the ones the merged database has: such a name
         # keeps its row there, and gets the dates of both
         await write_profile_table_transition(inserts_old_db, db_path=self._new_db)
-        self._curr_profiles.update(
-            map(lambda x: tuple(x[key] for key in keys), inserts_old_db)
-        )
+        self._curr_profiles.update(_keys(inserts_old_db, self._profile_key))
 
     async def merge_models_helper(self, old_db):
         inserts_old_db = get_single_model_via_profile(db_path=old_db)
@@ -418,19 +329,3 @@ class MergeDatabase:
             else None
         )
         self._curr_models.add(inserts_old_db)
-
-    async def merge_messages_helper(self, old_db):
-        keys = self._common_key
-        inserts_old_db = await get_all_messages_transition(db_path=old_db)
-        await write_messages_table_transition(
-            list(
-                filter(
-                    lambda x: tuple(x[key] for key in keys) not in self._curr_messages,
-                    inserts_old_db,
-                )
-            ),
-            db_path=self._new_db,
-        )
-        self._curr_messages.update(
-            map(lambda x: tuple(x[key] for key in keys), inserts_old_db)
-        )

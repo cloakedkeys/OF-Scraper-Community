@@ -23,7 +23,6 @@ import ofscraper.db.utils.columns as db_columns
 import ofscraper.db.utils.rebuild as rebuild
 import ofscraper.utils.settings as settings
 from ofscraper.db.operations_.others import schemaInsert
-from ofscraper.db.operations_.profile import get_single_model_via_profile
 from ofscraper.utils.context.run_async import run
 
 console = Console()
@@ -276,118 +275,33 @@ def create_media_table(model_id=None, username=None, conn=None, db_path=None, **
 
 
 @wrapper.operation_wrapper_async
-def add_column_media_hash(
-    model_id=None, username=None, conn=None, db_path=None, **kwargs
-):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('medias') WHERE name = 'hash') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE medias ADD COLUMN hash VARCHAR;")
-                # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+def add_column_media_hash(conn=None, **kwargs):
+    db_columns.add_column(conn, "medias", "hash", "VARCHAR")
 
 
 @wrapper.operation_wrapper_async
-def add_column_media_unlocked(model_id=None, username=None, conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('medias') WHERE name = 'unlocked') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE medias ADD COLUMN unlocked BOOL;")
-                # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+def add_column_media_unlocked(conn=None, **kwargs):
+    db_columns.add_column(conn, "medias", "unlocked", "BOOL")
 
 
 @wrapper.operation_wrapper_async
 def add_column_media_posted_at(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('medias') WHERE name = 'posted_at') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE medias ADD COLUMN posted_at TIMESTAMP;")
-            # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+    db_columns.add_column(conn, "medias", "posted_at", "TIMESTAMP")
 
 
 @wrapper.operation_wrapper_async
-def add_column_media_ID(model_id=None, username=None, conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('medias') WHERE name = 'model_id') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE medias ADD COLUMN model_id INTEGER;")
-
-                # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+def add_column_media_ID(conn=None, **kwargs):
+    db_columns.add_column(conn, "medias", "model_id", "INTEGER")
 
 
 @wrapper.operation_wrapper_async
 def add_column_media_skip_permanent(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('medias') WHERE name = 'skip_permanent') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            if cur.fetchone()[0] == 0:
-                cur.execute("ALTER TABLE medias ADD COLUMN skip_permanent BOOL;")
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    db_columns.add_column(conn, "medias", "skip_permanent", "BOOL")
 
 
 @wrapper.operation_wrapper_async
-def add_column_media_duration(model_id=None, username=None, conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('medias') WHERE name = 'duration') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE medias ADD COLUMN duration VARCHAR;")
-                # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+def add_column_media_duration(conn=None, **kwargs):
+    db_columns.add_column(conn, "medias", "duration", "VARCHAR")
 
 
 @wrapper.operation_wrapper_async
@@ -639,8 +553,12 @@ def update_media_table_via_api_batch(
         conn.commit()
 
 
-def media_transition_rows(inputData) -> list:
-    ordered_keys = [
+MEDIAS = rebuild.TableSpec(
+    "medias",
+    mediaCreate,
+    mediaInsertTransition,
+    mediaSelectTransition,
+    keys=(
         "media_id",
         "post_id",
         "link",
@@ -658,13 +576,15 @@ def media_transition_rows(inputData) -> list:
         "model_id",
         "duration",
         "unlocked",
-    ]
-    inputData = _media_cleaup_helper(inputData)
-    # optional column: a row read before it existed has no value
-    return [
-        tuple([data[key] for key in ordered_keys] + [data.get("skip_permanent")])
-        for data in inputData
-    ]
+    ),
+    optional=("skip_permanent",),
+)
+
+
+def media_transition_rows(inputData) -> list:
+    """The insert parameters for these rows, the rows of one media item in
+    one post merged into one first (see _media_cleaup_helper)."""
+    return rebuild.transition_rows(MEDIAS, _media_cleaup_helper(inputData))
 
 
 @wrapper.operation_wrapper_async
@@ -694,13 +614,7 @@ def update_media_table_download_transition(
 
 @wrapper.operation_wrapper_async
 def replace_media_table(inputData, model_id=None, conn=None, **kwargs):
-    rebuild.replace_table(
-        conn,
-        "medias",
-        mediaCreate,
-        mediaInsertTransition,
-        media_transition_rows(inputData),
-    )
+    rebuild.replace_spec_table(conn, MEDIAS, media_transition_rows(inputData))
 
 
 def _media_cleaup_helper(inputData):
@@ -739,18 +653,7 @@ def execute_area_media(cur, query, model_id, columns=None):
 def get_all_medias_transition(
     model_id=None, username=None, conn=None, database_model=None, **kwargs
 ) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(db_columns.select_all(cur, "medias", mediaSelectTransition))
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                row,
-                model_id=row.get("model_id") or database_model,
-                duration=row.get("duration"),
-                unlocked=row.get("unlocked"),
-            )
-            for row in data
-        ]
+    return rebuild.read_transition(conn, MEDIAS, database_model)
 
 
 @wrapper.operation_wrapper_async
@@ -790,118 +693,87 @@ def get_post_info(model_id=None, username=None, conn=None, **kwargs) -> dict:
     return info
 
 
+def _area_media(conn, query, model_id, arrow_dates=False):
+    """One area's media (query is getTimelineMedia or another per-area
+    query), with posted_at the date it was posted, or created when that's
+    not known: an Arrow with arrow_dates, a float timestamp without."""
+    with contextlib.closing(conn.cursor()) as cur:
+        execute_area_media(cur, query, model_id)
+        data = [dict(row) for row in cur.fetchall()]
+    output = []
+    for ele in data:
+        posted_at = arrow.get(ele["posted_at"] or ele["created_at"] or 0)
+        output.append(
+            dict(ele, posted_at=posted_at if arrow_dates else posted_at.float_timestamp)
+        )
+    return output
+
+
 @run
 @wrapper.operation_wrapper_async
 def get_messages_media(conn=None, model_id=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        execute_area_media(cur, getMessagesMedia, model_id)
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                ele,
-                posted_at=arrow.get(
-                    ele["posted_at"] or ele["created_at"] or 0
-                ).float_timestamp,
-            )
-            for ele in data
-        ]
+    return _area_media(conn, getMessagesMedia, model_id)
 
 
 @run
 @wrapper.operation_wrapper_async
 def get_archived_media(conn=None, model_id=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        execute_area_media(cur, getArchivedMedia, model_id)
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                ele,
-                posted_at=arrow.get(
-                    ele["posted_at"] or ele["created_at"] or 0
-                ).float_timestamp,
-            )
-            for ele in data
-        ]
+    return _area_media(conn, getArchivedMedia, model_id)
 
 
 @run
 @wrapper.operation_wrapper_async
 def get_pinned_media(conn=None, model_id=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        execute_area_media(cur, getPinnedMedia, model_id)
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                ele,
-                posted_at=arrow.get(
-                    ele["posted_at"] or ele["created_at"] or 0
-                ).float_timestamp,
-            )
-            for ele in data
-        ]
+    return _area_media(conn, getPinnedMedia, model_id)
 
 
 @run
 @wrapper.operation_wrapper_async
 def get_stories_media(conn=None, model_id=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        execute_area_media(cur, getStoriesMedia, model_id)
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                ele,
-                posted_at=arrow.get(
-                    ele["posted_at"] or ele["created_at"] or 0
-                ).float_timestamp,
-            )
-            for ele in data
-        ]
+    return _area_media(conn, getStoriesMedia, model_id)
 
 
 @run
 @wrapper.operation_wrapper_async
 def get_highlights_media(conn=None, model_id=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        execute_area_media(cur, getHighlightsMedia, model_id)
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                ele,
-                posted_at=arrow.get(
-                    ele["posted_at"] or ele["created_at"] or 0
-                ).float_timestamp,
-            )
-            for ele in data
-        ]
+    return _area_media(conn, getHighlightsMedia, model_id)
 
 
 @run
 @wrapper.operation_wrapper_async
 def get_streams_media(conn=None, model_id=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        execute_area_media(cur, getStreamsMedia, model_id)
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                ele,
-                posted_at=arrow.get(
-                    ele["posted_at"] or ele["created_at"] or 0
-                ).float_timestamp,
-            )
-            for ele in data
-        ]
+    return _area_media(conn, getStreamsMedia, model_id)
 
 
 @run
 @wrapper.operation_wrapper_async
 def get_timeline_media(model_id=None, username=None, conn=None, **kwargs) -> list:
+    """As the other areas' reads, but posted_at is an Arrow."""
+    return _area_media(conn, getTimelineMedia, model_id, arrow_dates=True)
+
+
+def post_info(conn, query, model_id):
+    """The created_at and post_id rows `query` reads for model_id, with
+    created_at a float timestamp (0 for an undated row)."""
     with contextlib.closing(conn.cursor()) as cur:
-        execute_area_media(cur, getTimelineMedia, model_id)
+        cur.execute(query, [model_id])
         data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(ele, posted_at=arrow.get(ele["posted_at"] or ele["created_at"] or 0))
-            for ele in data
-        ]
+    return [
+        dict(ele, created_at=arrow.get(ele.get("created_at") or 0).float_timestamp)
+        for ele in data
+    ]
+
+
+async def area_date(read, model_id=None, username=None, newest=False):
+    """The posted_at of the oldest of one area's media (`read` is that
+    area's get_*_media), or with newest, of the newest. None when the area
+    has no media."""
+    data = await read(model_id=model_id, username=username)
+    if not data:
+        return None
+    # the last of the newest, as the last item of a sort by date was
+    pick, rows = (max, reversed(data)) if newest else (min, data)
+    return pick(rows, key=lambda x: arrow.get(x["posted_at"] or 0))["posted_at"]
 
 
 @run
@@ -1021,17 +893,8 @@ async def batch_mediainsert(media, **kwargs):
 
 
 async def rebuild_media_table(model_id=None, username=None, db_path=None, **kwargs):
-    database_model = get_single_model_via_profile(
-        model_id=model_id, username=username, db_path=db_path
-    )
-    data = await get_all_medias_transition(
-        model_id=model_id,
-        username=username,
-        database_model=database_model,
-        db_path=db_path,
-    )
-    await replace_media_table(
-        data, model_id=model_id, username=username, db_path=db_path
+    await rebuild.rebuild_table(
+        get_all_medias_transition, replace_media_table, model_id, username, db_path
     )
 
 

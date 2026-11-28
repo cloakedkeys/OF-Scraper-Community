@@ -23,7 +23,6 @@ import ofscraper.db.utils.columns as db_columns
 import ofscraper.db.utils.convert as convert
 import ofscraper.db.utils.rebuild as rebuild
 import ofscraper.utils.settings as settings
-from ofscraper.db.operations_.profile import get_single_model_via_profile
 
 console = Console()
 log = logging.getLogger("shared")
@@ -121,9 +120,13 @@ def update_labels_table(
         conn.commit()
 
 
-def labels_transition_rows(inputData: list) -> list:
-    ordered_keys = ["label_id", "name", "type", "post_id", "model_id"]
-    return [tuple([data[key] for key in ordered_keys]) for data in inputData]
+LABELS = rebuild.TableSpec(
+    "labels",
+    labelsCreate,
+    labelInsert,
+    labelSelectTransition,
+    keys=("label_id", "name", "type", "post_id", "model_id"),
+)
 
 
 @wrapper.operation_wrapper_async
@@ -131,15 +134,13 @@ def write_labels_table_transition(
     inputData: list, model_id=None, username=None, conn=None, **kwargs
 ):
     with contextlib.closing(conn.cursor()) as curr:
-        curr.executemany(labelInsert, labels_transition_rows(inputData))
+        curr.executemany(labelInsert, rebuild.transition_rows(LABELS, inputData))
         conn.commit()
 
 
 @wrapper.operation_wrapper_async
 def replace_labels_table(inputData: list, model_id=None, conn=None, **kwargs):
-    rebuild.replace_table(
-        conn, "labels", labelsCreate, labelInsert, labels_transition_rows(inputData)
-    )
+    rebuild.replace_spec_table(conn, LABELS, rebuild.transition_rows(LABELS, inputData))
 
 
 @wrapper.operation_wrapper_async
@@ -151,52 +152,19 @@ def get_all_labels_posts(label, model_id=None, username=None, conn=None, **kwarg
 
 @wrapper.operation_wrapper_async
 def add_column_labels_ID(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('labels') WHERE name = 'model_id') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE labels ADD COLUMN model_id INTEGER;")
-            # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Raise the error for handling
+    db_columns.add_column(conn, "labels", "model_id", "INTEGER")
 
 
 @wrapper.operation_wrapper_async
 def get_all_labels_transition(
     model_id=None, username=None, conn=None, database_model=None, **kwargs
 ) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(db_columns.select_all(cur, "labels", labelSelectTransition))
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                row,
-                label_id=row.get("label_id") or row.get("id"),
-                model_id=row.get("model_id") or database_model,
-            )
-            for row in data
-        ]
+    return rebuild.read_transition(conn, LABELS, database_model)
 
 
 async def rebuild_labels_table(model_id=None, username=None, db_path=None, **kwargs):
-    database_model = get_single_model_via_profile(
-        model_id=model_id, username=username, db_path=db_path
-    )
-    data = await get_all_labels_transition(
-        model_id=model_id,
-        username=username,
-        database_model=database_model,
-        db_path=db_path,
-    )
-    await replace_labels_table(
-        data, model_id=model_id, username=username, db_path=db_path
+    await rebuild.rebuild_table(
+        get_all_labels_transition, replace_labels_table, model_id, username, db_path
     )
 
 

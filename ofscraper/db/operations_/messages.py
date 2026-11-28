@@ -14,7 +14,6 @@ r"""
 import contextlib
 import logging
 
-import arrow
 from rich.console import Console
 
 import ofscraper.db.operations_.media as media
@@ -23,7 +22,6 @@ import ofscraper.db.utils.columns as db_columns
 import ofscraper.db.utils.convert as convert
 import ofscraper.db.utils.rebuild as rebuild
 import ofscraper.utils.settings as settings
-from ofscraper.db.operations_.profile import get_single_model_via_profile
 
 console = Console()
 log = logging.getLogger("shared")
@@ -169,8 +167,12 @@ def write_messages_table(messages: dict, model_id=None, conn=None, **kwargs):
         conn.commit()
 
 
-def messages_transition_rows(inputData: list) -> list:
-    ordered_keys = [
+MESSAGES = rebuild.TableSpec(
+    "messages",
+    messagesCreate,
+    messagesInsertTransition,
+    messagesSelectTransition,
+    keys=(
         "post_id",
         "text",
         "price",
@@ -180,12 +182,9 @@ def messages_transition_rows(inputData: list) -> list:
         "user_id",
         "model_id",
         "is_deleted",
-    ]
-    # optional column: a row read before it existed has no value
-    return [
-        tuple([data[key] for key in ordered_keys] + [data.get("group_id")])
-        for data in inputData
-    ]
+    ),
+    optional=("group_id",),
+)
 
 
 @wrapper.operation_wrapper_async
@@ -194,19 +193,15 @@ def write_messages_table_transition(
 ):
     with contextlib.closing(conn.cursor()) as cur:
         cur.executemany(
-            messagesInsertTransition, messages_transition_rows(inputData)
+            messagesInsertTransition, rebuild.transition_rows(MESSAGES, inputData)
         )
         conn.commit()
 
 
 @wrapper.operation_wrapper_async
 def replace_messages_table(inputData: list, model_id=None, conn=None, **kwargs):
-    rebuild.replace_table(
-        conn,
-        "messages",
-        messagesCreate,
-        messagesInsertTransition,
-        messages_transition_rows(inputData),
+    rebuild.replace_spec_table(
+        conn, MESSAGES, rebuild.transition_rows(MESSAGES, inputData)
     )
 
 
@@ -224,57 +219,22 @@ def get_all_messages_ids(model_id=None, username=None, conn=None, **kwargs) -> l
 def get_all_messages_transition(
     model_id=None, username=None, conn=None, database_model=None, **kwargs
 ) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(db_columns.select_all(cur, "messages", messagesSelectTransition))
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(row, model_id=row.get("model_id") or database_model) for row in data
-        ]
+    return rebuild.read_transition(conn, MESSAGES, database_model)
 
 
 @wrapper.operation_wrapper_async
 def get_messages_post_info(model_id=None, username=None, conn=None, **kwargs) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(messagesData, [model_id])
-        conn.commit()
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(ele, created_at=arrow.get(ele.get("created_at") or 0).float_timestamp)
-            for ele in data
-        ]
+    return media.post_info(conn, messagesData, model_id)
 
 
 @wrapper.operation_wrapper_async
 def add_column_messages_ID(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Separate statements with conditional execution
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('messages') WHERE name = 'model_id') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]
-            if alter_required == 0:
-                cur.execute("ALTER TABLE messages ADD COLUMN model_id INTEGER;")
-
-            # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    db_columns.add_column(conn, "messages", "model_id", "INTEGER")
 
 
 async def rebuild_messages_table(model_id=None, username=None, db_path=None, **kwargs):
-    database_model = get_single_model_via_profile(
-        model_id=model_id, username=username, db_path=db_path
-    )
-    data = await get_all_messages_transition(
-        model_id=model_id,
-        username=username,
-        database_model=database_model,
-        db_path=db_path,
-    )
-    await replace_messages_table(
-        data, model_id=model_id, username=username, db_path=db_path
+    await rebuild.rebuild_table(
+        get_all_messages_transition, replace_messages_table, model_id, username, db_path
     )
 
 
@@ -313,15 +273,12 @@ async def make_messages_table_changes(
 
 
 async def get_oldest_message_date(model_id=None, username=None, **kwargs):
-    data = await media.get_messages_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"] or 0))[0]
-    return last_item["posted_at"]
+    return await media.area_date(media.get_messages_media, model_id, username)
 
 
 async def get_newest_message_date(model_id=None, username=None, **kwargs):
-    data = await media.get_messages_media(model_id=model_id, username=username)
-    last_item = sorted(data, key=lambda x: arrow.get(x["posted_at"] or 0))[-1]
-    return last_item["posted_at"]
+    read = media.get_messages_media
+    return await media.area_date(read, model_id, username, newest=True)
 
 
 @wrapper.operation_wrapper_async
@@ -361,32 +318,10 @@ def get_deleted_messages_ids(model_id=None, username=None, conn=None, **kwargs) 
 
 @wrapper.operation_wrapper_async
 def add_column_message_is_deleted(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('messages') WHERE name = 'is_deleted') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            if cur.fetchone()[0] == 0:
-                log.info("Adding is_deleted column to messages table")
-                cur.execute(
-                    "ALTER TABLE messages ADD COLUMN is_deleted BOOLEAN DEFAULT 0;"
-                )
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    if db_columns.add_column(conn, "messages", "is_deleted", "BOOLEAN DEFAULT 0"):
+        log.info("Added is_deleted column to messages table")
 
 
 @wrapper.operation_wrapper_async
 def add_column_message_group_id(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('messages') WHERE name = 'group_id') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            if cur.fetchone()[0] == 0:
-                cur.execute("ALTER TABLE messages ADD COLUMN group_id VARCHAR;")
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    db_columns.add_column(conn, "messages", "group_id", "VARCHAR")

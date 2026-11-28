@@ -19,7 +19,6 @@ from rich.console import Console
 import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.utils.columns as db_columns
 import ofscraper.db.utils.rebuild as rebuild
-from ofscraper.db.operations_.profile import get_single_model_via_profile
 
 console = Console()
 log = logging.getLogger("shared")
@@ -118,42 +117,12 @@ def create_others_table(
 
 @wrapper.operation_wrapper_async
 def add_column_other_ID(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-
-        try:
-            # Separate statements with conditional execution
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('others') WHERE name = 'model_id') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]
-            if alter_required == 0:
-                cur.execute("ALTER TABLE others ADD COLUMN model_id INTEGER;")
-
-            # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    db_columns.add_column(conn, "others", "model_id", "INTEGER")
 
 
 @wrapper.operation_wrapper_async
 def add_column_products_ID(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-
-        try:
-            # Separate statements with conditional execution
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('products') WHERE name = 'model_id') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]
-            if alter_required == 0:
-                cur.execute("ALTER TABLE products ADD COLUMN model_id INTEGER;")
-
-            # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    db_columns.add_column(conn, "products", "model_id", "INTEGER")
 
 
 @wrapper.operation_wrapper_async
@@ -204,61 +173,19 @@ def get_site_flag(model_id=None, username=None, conn=None, db_path=None, **kwarg
         return row[0] if row else None
 
 
-@wrapper.operation_wrapper_async
-def get_all_others_transition(
-    model_id=None, username=None, conn=None, database_model=None, **kwargs
-):
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(db_columns.select_all(cur, "others", othersSelectTransition))
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(row, model_id=row.get("model_id") or database_model) for row in data
-        ]
-
-
-def others_transition_rows(inputData) -> list:
-    ordered_keys = [
-        "post_id",
-        "text",
-        "price",
-        "paid",
-        "archived",
-        "created_at",
-        "model_id",
-    ]
-    return [tuple([data[key] for key in ordered_keys]) for data in inputData]
-
-
-@wrapper.operation_wrapper_async
-def write_others_table_transition(
-    inputData, model_id=None, conn=None, **kwargs
-) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.executemany(othersInsert, others_transition_rows(inputData))
-        conn.commit()
-
-
-@wrapper.operation_wrapper_async
-def replace_others_table(inputData, model_id=None, conn=None, **kwargs):
-    rebuild.replace_table(
-        conn, "others", otherCreate, othersInsert, others_transition_rows(inputData)
-    )
-
-
-@wrapper.operation_wrapper_async
-def get_all_products_transition(
-    model_id=None, username=None, conn=None, database_model=None, **kwargs
-):
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(db_columns.select_all(cur, "products", productsSelectTransition))
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(row, model_id=row.get("model_id") or database_model) for row in data
-        ]
-
-
-def products_transition_rows(inputData) -> list:
-    ordered_keys = [
+OTHERS = rebuild.TableSpec(
+    "others",
+    otherCreate,
+    othersInsert,
+    othersSelectTransition,
+    keys=("post_id", "text", "price", "paid", "archived", "created_at", "model_id"),
+)
+PRODUCTS = rebuild.TableSpec(
+    "products",
+    productCreate,
+    productsInsert,
+    productsSelectTransition,
+    keys=(
         "post_id",
         "text",
         "price",
@@ -267,8 +194,38 @@ def products_transition_rows(inputData) -> list:
         "created_at",
         "title",
         "model_id",
-    ]
-    return [tuple([data[key] for key in ordered_keys]) for data in inputData]
+    ),
+)
+
+
+@wrapper.operation_wrapper_async
+def get_all_others_transition(
+    model_id=None, username=None, conn=None, database_model=None, **kwargs
+):
+    return rebuild.read_transition(conn, OTHERS, database_model)
+
+
+@wrapper.operation_wrapper_async
+def write_others_table_transition(
+    inputData, model_id=None, conn=None, **kwargs
+) -> list:
+    with contextlib.closing(conn.cursor()) as cur:
+        cur.executemany(othersInsert, rebuild.transition_rows(OTHERS, inputData))
+        conn.commit()
+
+
+@wrapper.operation_wrapper_async
+def replace_others_table(inputData, model_id=None, conn=None, **kwargs):
+    rebuild.replace_spec_table(
+        conn, OTHERS, rebuild.transition_rows(OTHERS, inputData)
+    )
+
+
+@wrapper.operation_wrapper_async
+def get_all_products_transition(
+    model_id=None, username=None, conn=None, database_model=None, **kwargs
+):
+    return rebuild.read_transition(conn, PRODUCTS, database_model)
 
 
 @wrapper.operation_wrapper_async
@@ -276,46 +233,24 @@ def write_products_table_transition(
     inputData, model_id=None, conn=None, **kwargs
 ) -> list:
     with contextlib.closing(conn.cursor()) as cur:
-        cur.executemany(productsInsert, products_transition_rows(inputData))
+        cur.executemany(productsInsert, rebuild.transition_rows(PRODUCTS, inputData))
         conn.commit()
 
 
 @wrapper.operation_wrapper_async
 def replace_products_table(inputData, model_id=None, conn=None, **kwargs):
-    rebuild.replace_table(
-        conn,
-        "products",
-        productCreate,
-        productsInsert,
-        products_transition_rows(inputData),
+    rebuild.replace_spec_table(
+        conn, PRODUCTS, rebuild.transition_rows(PRODUCTS, inputData)
     )
 
 
 async def rebuild_others_table(model_id=None, username=None, db_path=None, **kwargs):
-    database_model = get_single_model_via_profile(
-        model_id=model_id, username=username, db_path=db_path
-    )
-    data = await get_all_others_transition(
-        model_id=model_id,
-        username=username,
-        database_model=database_model,
-        db_path=db_path,
-    )
-    await replace_others_table(
-        data, model_id=model_id, username=username, db_path=db_path
+    await rebuild.rebuild_table(
+        get_all_others_transition, replace_others_table, model_id, username, db_path
     )
 
 
 async def rebuild_products_table(model_id=None, username=None, db_path=None, **kwargs):
-    database_model = get_single_model_via_profile(
-        model_id=model_id, username=username, db_path=db_path
-    )
-    data = await get_all_products_transition(
-        model_id=model_id,
-        username=username,
-        database_model=database_model,
-        db_path=db_path,
-    )
-    await replace_products_table(
-        data, model_id=model_id, username=username, db_path=db_path
+    await rebuild.rebuild_table(
+        get_all_products_transition, replace_products_table, model_id, username, db_path
     )
