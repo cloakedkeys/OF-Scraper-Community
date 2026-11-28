@@ -8,9 +8,10 @@ from types import SimpleNamespace
 import pytest
 from rich.console import Console
 
-import ofscraper.main.open.load  # noqa: F401  (import order, see conftest)
 import ofscraper.commands.db as db
+import ofscraper.main.open.load  # noqa: F401  (import order, see conftest)
 import ofscraper.utils.auth.utils.warning.warning as auth_warning
+import ofscraper.utils.console as shared_console
 import ofscraper.utils.me as me
 import ofscraper.utils.paths.manage as manage
 import ofscraper.utils.profiles.manage as profile_manage
@@ -57,7 +58,7 @@ def test_deleted_log_file_path_with_brackets(monkeypatch, tmp_path):
 
 def test_profile_names_with_brackets(monkeypatch):
     con, buf = _console()
-    monkeypatch.setattr(profile_tools.console, "get_console", lambda: con)
+    monkeypatch.setattr(shared_console, "get_console", lambda: con)
     monkeypatch.setattr(
         profile_tools.profile_data, "get_profile_names", lambda: [TRICKY]
     )
@@ -155,7 +156,7 @@ def test_saving_files_to_line(monkeypatch, save, dirformat, filled):
 
 def test_auth_file_path_with_brackets(monkeypatch):
     con, buf = _console()
-    monkeypatch.setattr(auth_warning.console, "get_console", lambda: con)
+    monkeypatch.setattr(shared_console, "get_console", lambda: con)
     auth_warning.authwarning("C:/cfg [/b]/auth.json")
     assert "C:/cfg [/b]/auth.json" in buf.getvalue()
 
