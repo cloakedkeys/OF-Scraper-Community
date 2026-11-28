@@ -4,6 +4,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+import ofscraper.data.api.common.offset_pages as offset_pages
 import ofscraper.data.api.common.pending as pending
 import ofscraper.data.api.labels as labels
 
@@ -151,6 +152,8 @@ def warnings_logged(monkeypatch):
         warning=logged.append,
     )
     monkeypatch.setattr(labels, "log", log)
+    # the shared pager logs the traceback of a request that raised
+    monkeypatch.setattr(offset_pages, "log", log)
     # a cut-short scan is reported by incomplete.mark_incomplete
     monkeypatch.setattr(labels.incomplete, "log", log)
     return logged

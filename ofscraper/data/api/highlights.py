@@ -20,6 +20,7 @@ import ofscraper.utils.live.updater as progress_utils
 import ofscraper.utils.of_env.of_env as of_env
 from ofscraper.commands.scraper.actions.download import stop
 from ofscraper.data.api.common.logs.logs import trace_log_raw, trace_progress_log
+from ofscraper.data.api.common.offset_pages import PageEnd, offset_paginate
 from ofscraper.data.api.tasks import collect_pages
 from ofscraper.utils.context.run_async import run
 
@@ -134,35 +135,25 @@ async def process_task_highlights(generators):
     return highlightResponse
 
 
-async def scrape_highlight_list(c, user_id, offset=0):
-    current_offset = offset
-    while True:
-        url = of_env.getattr("highlightsWithStoriesEP").format(user_id, current_offset)
-        task = None
-        try:
-            task = progress_utils.api.add_job_task(
-                f"[Highlights] offset-> {current_offset}", visible=True
-            )
-            async with c.requests_async(url) as r:
-                if not (200 <= r.status < 300):
-                    log.debug(f"Highlights List API Error: {r.status} for {url}")
-                    incomplete.mark_incomplete(user_id, API_H, f"HTTP {r.status}")
-                    break
-                resp_data = await r.json_()
-                data = get_highlightList(resp_data)
-                if not data:
-                    break
-                yield data
-                if not resp_data.get("hasMore"):
-                    break
-                current_offset += len(data)
-        except Exception as E:
-            log.traceback_(E)
-            incomplete.mark_incomplete(user_id, API_H, f"{type(E).__name__}: {E}")
-            break
-        finally:
-            if task:
-                progress_utils.api.remove_job_task(task)
+def scrape_highlight_list(c, user_id, offset=0):
+    """A model's highlight ids, page by page."""
+
+    def on_end(end):
+        # a response that isn't a JSON object reads as no highlights, as before
+        if end.status is not None:
+            log.debug(f"Highlights List API Error: {end.status} for {end.url}")
+        if end.request_failed:
+            incomplete.mark_incomplete(user_id, API_H, end.reason)
+
+    return offset_paginate(
+        c,
+        PageEnd(),
+        lambda offset: of_env.getattr("highlightsWithStoriesEP").format(user_id, offset),
+        lambda offset: f"[Highlights] offset-> {offset}",
+        offset,
+        items=get_highlightList,
+        on_end=on_end,
+    )
 
 
 async def scrape_highlights_from_list(c, id):

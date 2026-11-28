@@ -29,6 +29,7 @@ from ofscraper.commands.scraper.actions.download import stop
 from ofscraper.data.api.common.after import get_after_pre_checks
 from ofscraper.data.api.common.check import update_check
 from ofscraper.data.api.common.logs.logs import trace_log_raw, trace_progress_log
+from ofscraper.data.api.common.offset_pages import PageEnd, offset_paginate
 from ofscraper.data.api.common.pending import get_posts_missing_media
 from ofscraper.data.api.tasks import collect_pages, consume_pages
 from ofscraper.db.operations_.labels import get_all_labels_posts
@@ -258,56 +259,42 @@ async def process_tasks_get_posts_for_labels(generators, labels):
     return list(responseDict.values())
 
 
-async def scrape_labels(c, model_id, offset=0):
-    current_offset = offset
-    while True:
-        url = of_env.getattr("labelsEP").format(model_id, current_offset)
-        task = None
+def scrape_labels(c, model_id, offset=0):
+    """A model's labels, page by page."""
+    end = PageEnd()
+
+    def logged_url(offset):
+        # also logs the attempt: the pager asks for each page's url just
+        # before requesting it
+        page_url = of_env.getattr("labelsEP").format(model_id, offset)
+        log.debug(f"trying to access label names with url:{page_url}  offset:{offset}")
+        return page_url
+
+    def on_page(data, batch):
         log.debug(
-            f"trying to access label names with url:{url}  offset:{current_offset}"
+            f"successfully access label names with url:{end.url}  offset:{end.offset}"
         )
-        try:
-            task = progress_utils.api.add_job_task(
-                f"labels offset -> {current_offset}", visible=True
-            )
-            async with c.requests_async(url) as r:
-                if not (200 <= r.status < 300):
-                    log.debug(f"Labels API Error: {r.status} for {url}")
-                    incomplete.mark_incomplete(model_id, API, f"HTTP {r.status}")
-                    break
+        log.debug(f"offset:{end.offset} -> labels names found {len(batch)}")
+        log.debug(
+            f"offset:{end.offset} -> hasMore value in json {data.get('hasMore','undefined')}"
+        )
+        trace_progress_log(f"{API} names requests", data)
 
-                data = await r.json_()
-                log.debug(
-                    f"successfully access label names with url:{url}  offset:{current_offset}"
-                )
+    def on_end(end):
+        if end.status is not None:
+            log.debug(f"Labels API Error: {end.status} for {end.url}")
+        if not end.finished:
+            incomplete.mark_incomplete(model_id, API, end.reason)
 
-                media_lists = list(filter(lambda x: isinstance(x, list), data.values()))
-                batch = media_lists[0] if media_lists else []
-
-                log.debug(f"offset:{current_offset} -> labels names found {len(batch)}")
-                log.debug(
-                    f"offset:{current_offset} -> hasMore value in json {data.get('hasMore','undefined')}"
-                )
-
-                trace_progress_log(f"{API} names requests", data)
-
-                if not batch:
-                    break
-
-                yield batch
-
-                if not data.get("hasMore"):
-                    break
-
-                current_offset += len(batch)
-        except Exception as E:
-            log.traceback_(E)
-            log.traceback_(traceback.format_exc())
-            incomplete.mark_incomplete(model_id, API, f"{type(E).__name__}: {E}")
-            break
-        finally:
-            if task:
-                progress_utils.api.remove_job_task(task)
+    return offset_paginate(
+        c,
+        end,
+        logged_url,
+        lambda offset: f"labels offset -> {offset}",
+        offset,
+        on_page=on_page,
+        on_end=on_end,
+    )
 
 
 async def scrape_posts_labels(c, label, model_id, offset=0, known=None, track=False):
@@ -318,76 +305,56 @@ async def scrape_posts_labels(c, label, model_id, offset=0, known=None, track=Fa
             async for item in walls:
                 yield item
         return
-    current_offset = offset
     known = known or set()
     # Marked incomplete until paging reaches its end and the run has saved
     # the results, so a scan cut short by an error, a 429 or a killed run
     # gets a full scan next time.
     if track:
         cache.set(label_complete_key(model_id, label["id"]), False)
-    finished = False
-    while True:
-        url = of_env.getattr("labelledPostsEP").format(
-            model_id, current_offset, label["id"]
-        )
-        task = None
+    end = PageEnd()
+
+    def logged_url(offset):
+        # also logs the attempt: the pager asks for each page's url just
+        # before requesting it
+        page_url = of_env.getattr("labelledPostsEP").format(model_id, offset, label["id"])
+        log.debug(f"trying to access label content with url:{page_url}  offset:{offset}")
+        return page_url
+
+    def on_page(data, batch):
         log.debug(
-            f"trying to access label content with url:{url}  offset:{current_offset}"
+            f"successfully access label content with url:{end.url}  offset:{end.offset}"
         )
-        try:
-            task = progress_utils.api.add_job_task(
-                f": getting posts from label -> {label['name']}", visible=True
+        log.debug(f"offset:{end.offset} -> labelled posts found {len(batch)}")
+        log.debug(
+            f"offset:{end.offset} -> hasMore value in json {data.get('hasMore','undefined')}"
+        )
+        trace_progress_log(f"{API} content requests", data)
+
+    def all_known(batch):
+        # Pages come newest first: once a whole page is already recorded
+        # under this label, the older pages are too.
+        if known and all(str(post.get("id")) in known for post in batch):
+            log.debug(
+                f"offset:{end.offset} -> every post already recorded for label {label['id']}, stopping"
             )
-            async with c.requests_async(url) as r:
-                if not (200 <= r.status < 300):
-                    log.debug(f"Labels Post API Error: {r.status} for {url}")
-                    break
+            return True
+        return False
 
-                data = await r.json_()
-                log.debug(
-                    f"successfully access label content with url:{url}  offset:{current_offset}"
-                )
-
-                media_lists = list(filter(lambda x: isinstance(x, list), data.values()))
-                batch = media_lists[0] if media_lists else []
-
-                log.debug(
-                    f"offset:{current_offset} -> labelled posts found {len(batch)}"
-                )
-                log.debug(
-                    f"offset:{current_offset} -> hasMore value in json {data.get('hasMore','undefined')}"
-                )
-
-                trace_progress_log(f"{API} content requests", data)
-
-                if not batch:
-                    finished = True
-                    break
-
-                yield label, batch
-
-                if not data.get("hasMore"):
-                    finished = True
-                    break
-
-                # Pages come newest first: once a whole page is already
-                # recorded under this label, the older pages are too.
-                if known and all(str(post.get("id")) in known for post in batch):
-                    log.debug(
-                        f"offset:{current_offset} -> every post already recorded for label {label['id']}, stopping"
-                    )
-                    finished = True
-                    break
-
-                current_offset += len(batch)
-        except Exception as E:
-            log.traceback_(E)
-            log.traceback_(traceback.format_exc())
-            break
-        finally:
-            if task:
-                progress_utils.api.remove_job_task(task)
-    if not finished:
+    pages = offset_paginate(
+        c,
+        end,
+        logged_url,
+        lambda offset: f": getting posts from label -> {label['name']}",
+        offset,
+        on_page=on_page,
+        should_stop=all_known,
+    )
+    async with contextlib.aclosing(pages) as pages:
+        async for batch in pages:
+            yield label, batch
+    if end.status is not None:
+        log.debug(f"Labels Post API Error: {end.status} for {end.url}")
+    if not end.finished:
         incomplete.mark_incomplete(
             model_id, API, f"label {label['name']}, some of its posts may be missing"
         )

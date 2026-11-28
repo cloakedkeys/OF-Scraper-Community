@@ -3,13 +3,14 @@ import asyncio
 import pytest
 
 import ofscraper.data.api.paid as paid
+import ofscraper.utils.live.updater as progress_utils
 
 
 @pytest.fixture
 def cached(monkeypatch):
-    monkeypatch.setattr(paid.progress_utils.api, "add_overall_task", lambda *a, **k: None, raising=False)
-    monkeypatch.setattr(paid.progress_utils.api, "update_overall_task", lambda *a, **k: None, raising=False)
-    monkeypatch.setattr(paid.progress_utils.api, "remove_overall_task", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(progress_utils.api, "add_overall_task", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(progress_utils.api, "update_overall_task", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(progress_utils.api, "remove_overall_task", lambda *a, **k: None, raising=False)
     monkeypatch.setattr(paid, "trace_progress_log", lambda *a, **k: None)
     monkeypatch.setattr(paid, "trace_log_raw", lambda *a, **k: None)
     monkeypatch.setattr(paid.log, "traceback_", lambda *a, **k: None, raising=False)
