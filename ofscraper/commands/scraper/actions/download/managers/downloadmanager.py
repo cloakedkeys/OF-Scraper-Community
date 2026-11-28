@@ -18,12 +18,16 @@ from functools import partial
 
 import aiofiles
 import aiohttp
+import arrow
 import psutil
 from humanfriendly import format_size
 
+import ofscraper.commands.scraper.actions.utils.general as common
 import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.commands.scraper.actions.utils.log as common_logs
+import ofscraper.commands.scraper.actions.utils.paths as common_paths
 import ofscraper.utils.cache.cache as cache
+import ofscraper.utils.dates as dates
 import ofscraper.utils.events as events
 import ofscraper.utils.live.updater as progress_updater
 import ofscraper.utils.of_env.of_env as of_env
@@ -43,6 +47,8 @@ from ofscraper.scripts.skip_download_script import (
     retry_permanent_skips,
     skip_download_script,
 )
+from ofscraper.utils.cache.profile import set_profile_cache
+from ofscraper.utils.system.ffprobe import verify_media_integrity
 
 
 class StartOver(Exception):
@@ -136,6 +142,57 @@ class DownloadManager:
                 )
                 raise E
         return written
+
+    async def _verify_integrity(self, path, ele):
+        """Whether the media file at path is whole, checked with ffprobe
+        against ele.duration on the thread pool, so the event loop keeps
+        running meanwhile. With no expected duration, any file ffprobe
+        reads a duration from passes. The callers decide whether a file is
+        checked at all."""
+        return await asyncio.get_event_loop().run_in_executor(
+            self.ctx.thread, partial(verify_media_integrity, path, ele.duration)
+        )
+
+    async def _move_download(self, temp, target, ele, username, model_id):
+        """Move a finished download from temp to target and return where it
+        ended up: under another name if a different file already has this
+        one (#48)."""
+        return await asyncio.get_event_loop().run_in_executor(
+            self.ctx.thread,
+            partial(
+                common_paths.moveHelper,
+                temp,
+                target,
+                ele,
+                username=username,
+                model_id=model_id,
+            ),
+        )
+
+    async def _record_download(self, path_to_file, ele, username, model_id):
+        """Record a download saved at path_to_file: note its folder, set its
+        date, mark it downloaded and cache it if it's an avatar or header."""
+        common_paths.addGlobalDir(path_to_file.parent, self.ctx.dirSet)
+        if ele.postdate:
+            newDate = dates.convert_local_time(ele.postdate)
+            self.ctx.log.debug(
+                f"{get_medialog(ele)} Attempt to set Date to {arrow.get(newDate).format('YYYY-MM-DD HH:mm')}"
+            )
+            await asyncio.get_event_loop().run_in_executor(
+                self.ctx.thread,
+                partial(common_paths.set_time, path_to_file, newDate),
+            )
+        if ele.id:
+            await mark_media_as_downloaded(
+                ele,
+                filepath=path_to_file,
+                model_id=model_id,
+                username=username,
+                downloaded=True,
+                hashdata=await common.get_hash(path_to_file, self.ctx.thread),
+                size=path_to_file.stat().st_size,
+            )
+        await set_profile_cache(ele, self.ctx.thread)
 
     async def _get_cached_reply(self, key):
         """The reply data saved under key when its part was started."""

@@ -25,11 +25,8 @@ from urllib.parse import urlsplit, urlunsplit
 from humanfriendly import format_size
 
 import ofscraper.classes.placeholder as placeholder
-import ofscraper.commands.scraper.actions.utils.general as common
 import ofscraper.commands.scraper.actions.utils.globals as common_globals
 import ofscraper.commands.scraper.actions.utils.log as common_logs
-import ofscraper.commands.scraper.actions.utils.paths as common_paths
-import ofscraper.utils.dates as dates
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 from ofscraper.commands.scraper.actions.download.managers.downloadmanager import (
@@ -44,7 +41,6 @@ from ofscraper.commands.scraper.actions.download.utils.refresh import (
     refresh_media_link,
 )
 from ofscraper.commands.scraper.actions.download.utils.retries import download_retry
-from ofscraper.db.operations_.media import mark_media_as_downloaded
 from ofscraper.managers.sessionmanager.sessionmanager import (
     HEADERS,
     is_provided_exception_number,
@@ -52,9 +48,7 @@ from ofscraper.managers.sessionmanager.sessionmanager import (
 from ofscraper.sites.fansly import auth as fansly_auth
 from ofscraper.sites.fansly import headers as fansly_headers
 from ofscraper.sites.fansly import video as fansly_video
-from ofscraper.utils.cache.profile import set_profile_cache
 from ofscraper.utils.system.ffmpeg import get_ffmpeg, get_ffprobe, stop_reason
-from ofscraper.utils.system.ffprobe import get_media_duration, verify_media_integrity
 
 # Backstop for the whole ffmpeg run, in seconds: at least the floor, or this
 # many seconds per second of video. A connection that stops sending is caught
@@ -1079,29 +1073,17 @@ class FanslyStreamDownloadManager(DownloadManager):
     async def _integrity_check(self, temp, ele):
         if not settings.get_settings().verify_all_integrity:
             return
-        expected = ele.duration
-        loop = asyncio.get_event_loop()
-        if expected:
-            ok = await loop.run_in_executor(
-                self.ctx.thread, partial(verify_media_integrity, temp, expected)
-            )
-        else:
-            ok = (
-                await loop.run_in_executor(
-                    self.ctx.thread, partial(get_media_duration, temp)
-                )
-            ) is not None
-        if not ok:
+        # with no expected duration, any duration ffprobe reads passes
+        if not await self._verify_integrity(temp, ele):
             temp.unlink(missing_ok=True)
             raise Exception("Fansly stream download failed the integrity check")
 
     async def _finish(self, temp, placeholderObj, ele, username, model_id, total):
-        loop = asyncio.get_event_loop()
         old = getattr(ele, "replace_silent", None)
         if old:
             # a silent copy downloaded again with sound takes its place
             try:
-                path_to_file = await loop.run_in_executor(
+                path_to_file = await asyncio.get_event_loop().run_in_executor(
                     self.ctx.thread, partial(self._replace_in_place, temp, old)
                 )
             except OSError as E:
@@ -1110,39 +1092,10 @@ class FanslyStreamDownloadManager(DownloadManager):
                 ele.not_kept = f"the saved copy could not be replaced ({type(E).__name__})"
                 raise
         else:
-            # can end up under another name if a different file already has this one (#48)
-            path_to_file = await loop.run_in_executor(
-                self.ctx.thread,
-                partial(
-                    common_paths.moveHelper,
-                    temp,
-                    placeholderObj.trunicated_filepath,
-                    ele,
-                    username=username,
-                    model_id=model_id,
-                ),
+            path_to_file = await self._move_download(
+                temp, placeholderObj.trunicated_filepath, ele, username, model_id
             )
-        common_paths.addGlobalDir(path_to_file.parent, self.ctx.dirSet)
-        if ele.postdate:
-            await loop.run_in_executor(
-                self.ctx.thread,
-                partial(
-                    common_paths.set_time,
-                    path_to_file,
-                    dates.convert_local_time(ele.postdate),
-                ),
-            )
-        if ele.id:
-            await mark_media_as_downloaded(
-                ele,
-                filepath=path_to_file,
-                model_id=model_id,
-                username=username,
-                downloaded=True,
-                hashdata=await common.get_hash(path_to_file, self.ctx.thread),
-                size=path_to_file.stat().st_size,
-            )
-        await set_profile_cache(ele, self.ctx.thread)
+        await self._record_download(path_to_file, ele, username, model_id)
         await self._remember_sound(model_id, ele, path_to_file)
         ele.add_filepath(path_to_file)
         ele.add_size(total)

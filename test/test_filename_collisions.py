@@ -426,8 +426,9 @@ def test_disappearing_reservation_is_not_an_error(tmp_path, monkeypatch):
 def test_downloaders_record_and_use_final_path(tmp_path, monkeypatch, downloader):
     import asyncio
     from unittest.mock import AsyncMock, Mock
-    import ofscraper.commands.scraper.actions.download.managers.main_download as normal
     import ofscraper.commands.scraper.actions.download.managers.alt_download as drm
+    import ofscraper.commands.scraper.actions.download.managers.downloadmanager as dm
+    import ofscraper.commands.scraper.actions.download.managers.main_download as normal
 
     module = normal if downloader == "normal" else drm
     target = tmp_path / "caption.jpg"
@@ -444,25 +445,24 @@ def test_downloaders_record_and_use_final_path(tmp_path, monkeypatch, downloader
         return target.name
 
     ele.final_filename = filename() if downloader == "normal" else None
-    # the unbound methods run on this stand-in, which uses the current context
-    manager = SimpleNamespace(
-        _size_checker=AsyncMock(), _after_download_script=AsyncMock(),
-        ctx=module.common_globals.current(),
-    )
+    # the manager uses the current context
+    manager = (normal.MainDownloadManager if downloader == "normal" else drm.AltDownloadManager)()
+    manager._size_checker = AsyncMock()
+    manager._after_download_script = AsyncMock()
     database = AsyncMock()
     hashing = AsyncMock(return_value="new-hash")
     dating = Mock()
     monkeypatch.setattr(module.common_globals, "thread", None, raising=False)
     monkeypatch.setattr(module.common_globals, "log", Mock())
-    monkeypatch.setattr(module, "mark_media_as_downloaded", database)
-    monkeypatch.setattr(module.common, "get_hash", hashing)
-    monkeypatch.setattr(module.common_paths, "set_time", dating)
-    monkeypatch.setattr(module.common_paths, "addGlobalDir", Mock())
+    monkeypatch.setattr(dm, "mark_media_as_downloaded", database)
+    monkeypatch.setattr(dm.common, "get_hash", hashing)
+    monkeypatch.setattr(dm.common_paths, "set_time", dating)
+    monkeypatch.setattr(dm.common_paths, "addGlobalDir", Mock())
+    monkeypatch.setattr(dm, "set_profile_cache", AsyncMock())
     if downloader == "normal":
         temp.write_bytes(payload)
-        monkeypatch.setattr(normal, "set_profile_cache", AsyncMock())
-        asyncio.run(normal.MainDownloadManager._handle_result_main(
-            manager, (len(payload), temp, placeholder), ele, "model", 10
+        asyncio.run(manager._handle_result_main(
+            (len(payload), temp, placeholder), ele, "model", 10
         ))
     else:
         monkeypatch.setattr(drm.placeholder, "tempFilePlaceholder", lambda *a: SimpleNamespace(
@@ -475,9 +475,9 @@ def test_downloaders_record_and_use_final_path(tmp_path, monkeypatch, downloader
 
         monkeypatch.setattr(drm, "async_run", merge)
         monkeypatch.setattr(drm, "get_ffmpeg", lambda: "ffmpeg")
-        monkeypatch.setattr(drm, "verify_media_integrity", lambda *a: True)
-        asyncio.run(drm.AltDownloadManager._handle_result_alt(
-            manager, placeholder, ele, None, None, "model", 10
+        monkeypatch.setattr(dm, "verify_media_integrity", lambda *a: True)
+        asyncio.run(manager._handle_result_alt(
+            placeholder, ele, None, None, "model", 10
         ))
     assert target.read_bytes() == b"existing owner"
     assert final.read_bytes() == payload

@@ -1,4 +1,3 @@
-import asyncio
 import pathlib
 import traceback
 from functools import partial
@@ -12,8 +11,6 @@ import ofscraper.commands.scraper.actions.utils.general as common
 # and tests that reach the current context through this module
 import ofscraper.commands.scraper.actions.utils.globals as common_globals  # noqa: F401
 import ofscraper.commands.scraper.actions.utils.log as common_logs
-import ofscraper.commands.scraper.actions.utils.paths as common_paths
-import ofscraper.utils.dates as dates
 import ofscraper.utils.host_allowlist as host_allowlist
 import ofscraper.utils.settings as settings
 from ofscraper.classes.of.media import Media
@@ -34,11 +31,8 @@ from ofscraper.commands.scraper.actions.download.utils.retries import (
     get_download_retries,
 )
 from ofscraper.commands.scraper.actions.utils.chunk import send_chunk_msg
-from ofscraper.db.operations_.media import mark_media_as_downloaded
 from ofscraper.managers.sessionmanager.sessionmanager import is_signed_cdn_forbidden
-from ofscraper.utils.cache.profile import set_profile_cache
 from ofscraper.utils.logs.utils.sensitive import hide_links
-from ofscraper.utils.system.ffprobe import verify_media_integrity
 
 
 class MainDownloadManager(DownloadManager):
@@ -122,17 +116,14 @@ class MainDownloadManager(DownloadManager):
                     else:
                         await self._fresh_data_handler_main(ele, tempholderObj)
                     if not status:
-                        try:
-                            return await self._main_download_sendreq(
-                                c,
-                                ele,
-                                tempholderObj,
-                                placeholderObj=placeholderObj,
-                                total=total,
-                                validator=validator,
-                            )
-                        except Exception as E:
-                            raise E
+                        return await self._main_download_sendreq(
+                            c,
+                            ele,
+                            tempholderObj,
+                            placeholderObj=placeholderObj,
+                            total=total,
+                            validator=validator,
+                        )
                     else:
                         return (
                             total,
@@ -164,29 +155,24 @@ class MainDownloadManager(DownloadManager):
     async def _main_download_sendreq(
         self, c, ele, tempholderObj, placeholderObj=None, total=None, validator=None
     ):
+        self.ctx.log.debug(
+            f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] download temp path {tempholderObj.tempfilepath}"
+        )
         try:
-            self.ctx.log.debug(
-                f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] download temp path {tempholderObj.tempfilepath}"
+            return await self._send_req_inner(
+                c,
+                ele,
+                tempholderObj,
+                placeholderObj=placeholderObj,
+                total=total,
+                validator=validator,
             )
-            try:
-                return await self._send_req_inner(
-                    c,
-                    ele,
-                    tempholderObj,
-                    placeholderObj=placeholderObj,
-                    total=total,
-                    validator=validator,
-                )
-            except StartOver as E:
-                # the part was deleted; ask for the whole file, without a range
-                self.ctx.log.debug(f"{common_logs.get_medialog(ele)} {E}")
-                return await self._send_req_inner(
-                    c, ele, tempholderObj, placeholderObj=placeholderObj, total=None
-                )
-        except OSError as E:
-            raise E
-        except Exception as E:
-            raise E
+        except StartOver as E:
+            # the part was deleted; ask for the whole file, without a range
+            self.ctx.log.debug(f"{common_logs.get_medialog(ele)} {E}")
+            return await self._send_req_inner(
+                c, ele, tempholderObj, placeholderObj=placeholderObj, total=None
+            )
 
     async def _send_req_inner(
         self, c, ele, tempholderObj, placeholderObj=None, total=None, validator=None
@@ -237,7 +223,10 @@ class MainDownloadManager(DownloadManager):
                     self._resume_cleaner(resume_size, total, tempholderObj.tempfilepath)
                     # the part and its saved size and validator are replaced
                     # only once the reply's first bytes arrive (#271)
-                    written = await self._download_fileobject_writer(
+                    self.ctx.log.debug(
+                        f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] writing media to disk"
+                    )
+                    written = await self._download_fileobject_writer_streamer(
                         r,
                         ele,
                         tempholderObj,
@@ -245,6 +234,9 @@ class MainDownloadManager(DownloadManager):
                         total,
                         resume_size,
                         partial(self._set_data, ele, data),
+                    )
+                    self.ctx.log.debug(
+                        f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] finished writing media to disk"
                     )
                     if total is None:
                         total = self._size_written(ele, written)
@@ -262,27 +254,6 @@ class MainDownloadManager(DownloadManager):
         except Exception as E:
             await self._total_change_helper(0)
             raise E
-
-    async def _download_fileobject_writer(
-        self,
-        r,
-        ele,
-        tempholderObj,
-        placeholderObj,
-        total,
-        resume_size=0,
-        on_first_chunk=None,
-    ):
-        self.ctx.log.debug(
-            f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] writing media to disk"
-        )
-        written = await self._download_fileobject_writer_streamer(
-            r, ele, tempholderObj, placeholderObj, total, resume_size, on_first_chunk
-        )
-        self.ctx.log.debug(
-            f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] finished writing media to disk"
-        )
-        return written
 
     async def _download_fileobject_writer_streamer(
         self,
@@ -327,8 +298,7 @@ class MainDownloadManager(DownloadManager):
             ele.mediatype.lower() in {"videos", "audios"}
             and settings.get_settings().verify_all_integrity
         ):
-            expected_duration = ele.duration
-            valid = verify_media_integrity(temp, expected_duration)
+            valid = await self._verify_integrity(temp, ele)
             stop.check()
             if not valid:
                 self.ctx.log.warning(
@@ -342,46 +312,15 @@ class MainDownloadManager(DownloadManager):
         )
 
         stop.check()
-        # 3. Move the verified file to final path; it can end up under another
-        # name if a different file already has this one (#48)
-        path_to_file = await asyncio.get_event_loop().run_in_executor(
-            self.ctx.thread,
-            partial(
-                common_paths.moveHelper,
-                temp,
-                path_to_file,
-                ele,
-                username=username,
-                model_id=model_id,
-            ),
+        # 3. Move the verified file to its final path, date it and mark it
+        # downloaded
+        path_to_file = await self._move_download(
+            temp, path_to_file, ele, username, model_id
         )
-
-        (common_paths.addGlobalDir(path_to_file.parent, self.ctx.dirSet))
-
-        # 4. Set File Dates
-        if ele.postdate:
-            newDate = dates.convert_local_time(ele.postdate)
-            await asyncio.get_event_loop().run_in_executor(
-                self.ctx.thread,
-                partial(common_paths.set_time, path_to_file, newDate),
-            )
-
-        # 5. Mark as Downloaded in Database
-        if ele.id:
-            await mark_media_as_downloaded(
-                ele,
-                filepath=path_to_file,
-                model_id=model_id,
-                username=username,
-                downloaded=True,
-                hashdata=await common.get_hash(path_to_file, self.ctx.thread),
-                size=path_to_file.stat().st_size,
-            )
-
-        await set_profile_cache(ele, self.ctx.thread)
+        await self._record_download(path_to_file, ele, username, model_id)
         ele.add_filepath(path_to_file)
 
-        # 6. Run Post-Download Scripts
+        # 4. Run Post-Download Scripts
         await self._after_download_script(path_to_file, ele)
 
         return ele.mediatype, total
@@ -437,7 +376,5 @@ class MainDownloadManager(DownloadManager):
                 f"{common_logs.get_medialog(ele)} total==resume_size skipping download"
             )
             common_logs.path_to_file_logger(placeholderObj, ele, self.ctx.log, self.ctx.attempt)
-            if self.ctx.attempt.get() == 0:
-                pass
             check = True
         return total, placeholderObj, check
