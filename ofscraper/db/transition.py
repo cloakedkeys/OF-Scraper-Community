@@ -13,8 +13,6 @@ r"""
 
 import logging
 
-from rich.console import Console
-
 import ofscraper.classes.placeholder as placeholder
 from ofscraper.db.backup import (
     create_backup_transition,
@@ -69,7 +67,6 @@ from ofscraper.db.operations_.stories import (
 )
 from ofscraper.utils.context.run_async import run
 
-console = Console()
 log = logging.getLogger("shared")
 
 

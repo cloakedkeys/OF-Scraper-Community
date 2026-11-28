@@ -15,14 +15,12 @@ import contextlib
 import logging
 
 import arrow
-from rich.console import Console
 
 import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.utils.columns as db_columns
 import ofscraper.db.utils.rebuild as rebuild
 import ofscraper.utils.of_env.of_env as of_env
 
-console = Console()
 log = logging.getLogger("shared")
 
 # user_id==modes.id cause of legacy

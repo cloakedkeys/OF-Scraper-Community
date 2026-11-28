@@ -16,7 +16,6 @@ import logging
 from collections import defaultdict
 
 import arrow
-from rich.console import Console
 
 import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.db.utils.columns as db_columns
@@ -26,7 +25,6 @@ from ofscraper.db.operations_.others import schemaInsert
 from ofscraper.db.operations_.profile import get_single_model_via_profile
 from ofscraper.utils.context.run_async import run
 
-console = Console()
 log = logging.getLogger("shared")
 
 mediaCreate = """
