@@ -61,7 +61,7 @@ async def get_posts(m, model_id, username, c=None, post_id=None):
         generators = m.get_tasks(splitArrays, c, model_id, username, after)
         data = await m.process_tasks_batch(generators)
         incomplete.save_scan(model_id, area.api, after, username)
-    elif len(post_id) <= of_env.getattr(area.max_individual):
+    else:
         data = m.process_posts_as_individual()
     m.update_check(data, model_id, after, area.api)
     return data
@@ -109,12 +109,13 @@ async def process_tasks_batch(m, generators):
 
 
 def split_posts(m, oldposts, after):
-    if len(oldposts) == 0:
+    dated_posts = [x for x in oldposts if x.get("created_at") not in (None, "")]
+    if len(dated_posts) == 0:
         return []
-    min_posts = m.get_min_posts_batch(len(oldposts), m.AREA.api)
-    postsDataArray = sorted(oldposts, key=lambda x: float(x.get("created_at") or 0))
+    min_posts = m.get_min_posts_batch(len(dated_posts), m.AREA.api)
+    postsDataArray = sorted(dated_posts, key=lambda x: float(x["created_at"]))
     filteredArray = [
-        x for x in postsDataArray if float(x.get("created_at") or 0) >= after
+        x for x in postsDataArray if float(x["created_at"]) >= after
     ]
 
     splitArrays = [
@@ -288,7 +289,7 @@ async def scrape_posts(
                     log.debug("Passed the user's '--before' upper boundary. Exiting.")
                     yield [
                         x
-                        for x, ts in zip(batch, batch_timestamps)
+                        for x, ts in zip(batch, batch_timestamps, strict=True)
                         if ts is None or ts <= before
                     ]
                     break

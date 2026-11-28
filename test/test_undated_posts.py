@@ -173,6 +173,46 @@ def test_timeline_worker_error_is_logged(log):
     assert any("Timeline" in w and "boom" in w for w in log.warnings)
 
 
+def test_split_posts_excludes_undated_rows_when_after_is_zero():
+    oldposts = [
+        {"post_id": 1, "created_at": None},
+        {"post_id": 2, "created_at": ""},
+        {"post_id": 3, "created_at": 1_700_000_000.25},
+    ]
+    splits = dated_posts.split_posts(timeline, oldposts, after=0)
+    assert splits == [[{"post_id": 3, "created_at": 1_700_000_000.25}]]
+    calls = []
+
+    def fake_scrape(*args, **kwargs):
+        calls.append(kwargs)
+        return kwargs
+
+    tasks = dated_posts.get_tasks(fake_scrape, splits, None, 1, "u", after=0)
+    assert len(tasks) == 2
+    assert calls[0]["timestamp"] == 0
+    assert calls[1]["timestamp"] == 1_700_000_000.25
+
+
+def test_split_posts_only_undated_rows_returns_empty_and_single_task():
+    oldposts = [
+        {"post_id": 1, "created_at": None},
+        {"post_id": 2, "created_at": ""},
+    ]
+    splits = dated_posts.split_posts(timeline, oldposts, after=0)
+    assert splits == []
+    calls = []
+
+    def fake_scrape(*args, **kwargs):
+        calls.append(kwargs)
+        return kwargs
+
+    tasks = dated_posts.get_tasks(fake_scrape, splits, None, 1, "u", after=0)
+    assert len(tasks) == 1
+    assert calls[0]["timestamp"] == 0
+    assert calls[0]["is_last_chunk"] is True
+
+
+
 # ---------------------------------------------------------------- messages
 
 

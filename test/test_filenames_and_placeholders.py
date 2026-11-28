@@ -970,3 +970,31 @@ def test_a_broken_live_template_doesnt_hide_the_other_warnings(path_options, mon
     naming_check.report()
     assert any(line.startswith('file_options.dir_format "{nope}/x"') for line in lines), lines
     assert any(line.startswith('live_options.file_format "{date"') for line in lines)
+
+
+def test_placeholder_methods_do_not_pollute_module_globals(path_options):
+    sentinel_keys = (
+        "model_username",
+        "model_id",
+        "post_id",
+        "media_id",
+        "file_name",
+        "first_letter",
+        "save_location",
+    )
+    for key in sentinel_keys:
+        vars(placeholder).pop(key, None)
+
+    post = _two_media_post()
+    media_holder = placeholder.Placeholders(post.all_media[0], "jpg")
+    text_holder = placeholder.Textholders(post, "txt")
+    db_holder = placeholder.databasePlaceholder(create=False)
+
+    db_holder.databasePathHelper(1, "test_creator")
+    asyncio.run(media_holder.getmediadir(create=False))
+    asyncio.run(media_holder.createfilename())
+    asyncio.run(text_holder.createfilename())
+
+    leaked = [key for key in sentinel_keys if key in vars(placeholder)]
+    assert leaked == []
+
