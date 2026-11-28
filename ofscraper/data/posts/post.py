@@ -118,202 +118,132 @@ async def clean_stray_media(username, model_id, postcollection):
         batch_set_media_downloaded(strays_to_lock, model_id=model_id, username=username)
 
 
+async def _process_area(
+    model_id,
+    username,
+    area,
+    api,
+    fetch,
+    save,
+    responsetype=None,
+    keep=None,
+    after_checks=False,
+):
+    """Fetch one area's posts, save them and return ``(posts, api)``.
+
+    ``fetch`` is a zero-argument callable returning the fetch coroutine. It is
+    called inside the ``try``, so the fetcher (and the Fansly/OnlyFans choice)
+    is looked up on each call, and a fetch error is logged as ``area``.
+    ``keep`` filters the posts before they are saved and returned.
+    """
+    try:
+        posts = [
+            posts_.Post(x, model_id, username, responsetype) for x in await fetch()
+        ]
+        if keep:
+            posts = keep(posts)
+        await save(posts, model_id=model_id, username=username)
+        if after_checks:
+            set_after_checks(model_id, api)
+        return posts, api
+    except Exception as E:
+        log_area_failure(username, area, E)
+
+
+def _post_id():
+    return settings.get_settings().post_id
+
+
 @free.space_checker
 async def process_paid_post(model_id, username, c):
-    try:
+    def fetch():
         if sites.is_fansly():
-            paid_content = await fansly_scrape.get_paid_posts(model_id, username, c=c)
-        else:
-            paid_content = await paid.get_paid_posts(username, model_id, c=c)
-        paid_content = list(
-            map(
-                lambda x: posts_.Post(x, model_id, username, responsetype="Paid"),
-                paid_content,
-            )
-        )
-        await operations.make_post_table_changes(
-            paid_content,
-            model_id=model_id,
-            username=username,
-            from_api=True,
-        )
-        return (paid_content, paid.API)
-    except Exception as E:
-        log_area_failure(username, "Purchased", E)
+            return fansly_scrape.get_paid_posts(model_id, username, c=c)
+        return paid.get_paid_posts(username, model_id, c=c)
+
+    return await _process_area(
+        model_id, username, "Purchased", paid.API, fetch,
+        partial(operations.make_post_table_changes, from_api=True),
+        responsetype="Paid",
+    )
 
 
 @free.space_checker
 async def process_messages(model_id, username, c):
-    try:
-        get_messages = (
-            fansly_scrape.get_messages if sites.is_fansly() else messages.get_messages
-        )
-        messages_ = await get_messages(
-            model_id, username, c=c, post_id=settings.get_settings().post_id
-        )
-        messages_ = list(map(lambda x: posts_.Post(x, model_id, username), messages_))
-        await operations.make_messages_table_changes(
-            messages_,
-            model_id=model_id,
-            username=username,
-            from_api=True,
-        )
-        set_after_checks(model_id, messages.API)
+    def fetch():
+        site = fansly_scrape if sites.is_fansly() else messages
+        return site.get_messages(model_id, username, c=c, post_id=_post_id())
 
-        return messages_, messages.API
-    except Exception as E:
-        log_area_failure(username, "Messages", E)
+    return await _process_area(
+        model_id, username, "Messages", messages.API, fetch,
+        partial(operations.make_messages_table_changes, from_api=True),
+        after_checks=True,
+    )
 
 
 @free.space_checker
 async def process_stories(model_id, username, c):
-    try:
-        stories = await highlights.get_stories_post(model_id, c=c)
-        stories = list(
-            map(
-                lambda x: posts_.Post(
-                    x, model_id, username, responsetype=highlights.API_S
-                ),
-                stories,
-            )
-        )
-        await operations.make_stories_table_changes(
-            stories,
-            model_id=model_id,
-            username=username,
-        )
-
-        return stories, highlights.API_S
-    except Exception as E:
-        log_area_failure(username, "Stories", E)
+    return await _process_area(
+        model_id, username, "Stories", highlights.API_S,
+        lambda: highlights.get_stories_post(model_id, c=c),
+        operations.make_stories_table_changes,
+        responsetype=highlights.API_S,
+    )
 
 
 @free.space_checker
 async def process_highlights(model_id, username, c):
-    try:
-        highlights_ = await highlights.get_highlight_post(model_id, c=c)
-        highlights_ = list(
-            map(
-                lambda x: posts_.Post(
-                    x, model_id, username, responsetype=highlights.API_H
-                ),
-                highlights_,
-            )
-        )
-        await operations.make_stories_table_changes(
-            highlights_,
-            model_id=model_id,
-            username=username,
-        )
-
-        return (highlights_, highlights.API_H)
-    except Exception as E:
-        log_area_failure(username, "Highlights", E)
+    return await _process_area(
+        model_id, username, "Highlights", highlights.API_H,
+        lambda: highlights.get_highlight_post(model_id, c=c),
+        operations.make_stories_table_changes,
+        responsetype=highlights.API_H,
+    )
 
 
 @free.space_checker
 async def process_timeline_posts(model_id, username, c):
-    try:
-        get_timeline_posts = (
-            fansly_scrape.get_timeline_posts
-            if sites.is_fansly()
-            else timeline.get_timeline_posts
-        )
-        timeline_posts = await get_timeline_posts(
-            model_id, username, c=c, post_id=settings.get_settings().post_id
-        )
+    def fetch():
+        site = fansly_scrape if sites.is_fansly() else timeline
+        return site.get_timeline_posts(model_id, username, c=c, post_id=_post_id())
 
-        timeline_posts = list(
-            map(
-                lambda x: posts_.Post(x, model_id, username, timeline.API),
-                timeline_posts,
-            )
-        )
-        timeline_only_posts = timeline.filter_timeline_post(timeline_posts)
-
-        await operations.make_post_table_changes(
-            timeline_only_posts,
-            model_id=model_id,
-            username=username,
-            from_api=True,
-        )
-        set_after_checks(model_id, timeline.API)
-        return (timeline_only_posts, timeline.API)
-    except Exception as E:
-        log_area_failure(username, "Timeline", E)
+    return await _process_area(
+        model_id, username, "Timeline", timeline.API, fetch,
+        partial(operations.make_post_table_changes, from_api=True),
+        responsetype=timeline.API,
+        keep=timeline.filter_timeline_post, after_checks=True,
+    )
 
 
 @free.space_checker
 async def process_archived_posts(model_id, username, c):
-    try:
-        archived_posts = await archive.get_archived_posts(
-            model_id, username, c=c, post_id=settings.get_settings().post_id
-        )
-        archived_posts = list(
-            map(
-                lambda x: posts_.Post(x, model_id, username, archive.API),
-                archived_posts,
-            )
-        )
-
-        await operations.make_post_table_changes(
-            archived_posts,
-            model_id=model_id,
-            username=username,
-            from_api=True,
-        )
-
-        set_after_checks(model_id, archive.API)
-        return (archived_posts, archive.API)
-    except Exception as E:
-        log_area_failure(username, "Archived", E)
+    return await _process_area(
+        model_id, username, "Archived", archive.API,
+        lambda: archive.get_archived_posts(model_id, username, c=c, post_id=_post_id()),
+        partial(operations.make_post_table_changes, from_api=True),
+        responsetype=archive.API,
+        after_checks=True,
+    )
 
 
 @free.space_checker
 async def process_streamed_posts(model_id, username, c):
-    try:
-        streams_posts = await streams.get_streams_posts(
-            model_id, username, c=c, post_id=settings.get_settings().post_id
-        )
-        streams_posts = list(
-            map(
-                lambda x: posts_.Post(x, model_id, username, streams.API),
-                streams_posts,
-            )
-        )
-
-        await operations.make_post_table_changes(
-            streams_posts,
-            model_id=model_id,
-            username=username,
-            from_api=True,
-        )
-
-        set_after_checks(model_id, streams.API)
-        return (streams_posts, streams.API)
-    except Exception as E:
-        log_area_failure(username, "Streams", E)
+    return await _process_area(
+        model_id, username, "Streams", streams.API,
+        lambda: streams.get_streams_posts(model_id, username, c=c, post_id=_post_id()),
+        partial(operations.make_post_table_changes, from_api=True),
+        responsetype=streams.API,
+        after_checks=True,
+    )
 
 
 @free.space_checker
 async def process_pinned_posts(model_id, username, c):
-    try:
-        pinned_posts = await pinned.get_pinned_posts(
-            model_id, c=c, post_id=settings.get_settings().post_id
-        )
-        pinned_posts = list(
-            map(lambda x: posts_.Post(x, model_id, username), pinned_posts)
-        )
-        await operations.make_post_table_changes(
-            pinned_posts,
-            model_id=model_id,
-            username=username,
-            from_api=True,
-        )
-
-        return (pinned_posts, pinned.API)
-    except Exception as E:
-        log_area_failure(username, "Pinned", E)
+    return await _process_area(
+        model_id, username, "Pinned", pinned.API,
+        lambda: pinned.get_pinned_posts(model_id, c=c, post_id=_post_id()),
+        partial(operations.make_post_table_changes, from_api=True),
+    )
 
 
 @free.space_checker
@@ -609,106 +539,45 @@ async def process_tasks(model_id, username, ele, c=None):
     sem = asyncio.Semaphore(max_count)
     postcollection = PostCollection(username=username, model_id=model_id)
 
+    def schedule(area, func, *args, **kwargs):
+        tasks.append(
+            stop.create_fetch_task(
+                process_single_task(partial(func, *args, **kwargs), username, area)(
+                    sem=sem
+                )
+            )
+        )
+
     with progress_utils.setup_live("api"):
         # --- PERMANENTLY UNLOCKED / METADATA AREAS ---
         # These are always scanned because purchased content and profile info
         # remain accessible after expiration.
         if "Profile" in final_post_areas:
-            tasks.append(
-                stop.create_fetch_task(
-                    process_single_task(
-                        partial(process_profile, username), username, "Profile"
-                    )(sem=sem)
-                )
-            )
+            schedule("Profile", process_profile, username)
         if "Purchased" in final_post_areas:
-            tasks.append(
-                stop.create_fetch_task(
-                    process_single_task(
-                        partial(process_paid_post, model_id, username, c), username, "Purchased"
-                    )(sem=sem)
-                )
-            )
+            schedule("Purchased", process_paid_post, model_id, username, c)
         if "Messages" in final_post_areas:
-            tasks.append(
-                stop.create_fetch_task(
-                    process_single_task(
-                        partial(process_messages, model_id, username, c), username, "Messages"
-                    )(sem=sem)
-                )
-            )
+            schedule("Messages", process_messages, model_id, username, c)
 
         # --- "WALL" CONTENT AREAS ---
         # These are skipped if the account is expired beyond the grace period.
         if not skip_wall_:
             if "Pinned" in final_post_areas:
-                tasks.append(
-                    stop.create_fetch_task(
-                        process_single_task(
-                            partial(process_pinned_posts, model_id, username, c), username, "Pinned"
-                        )(sem=sem)
-                    )
-                )
-
+                schedule("Pinned", process_pinned_posts, model_id, username, c)
             if "Timeline" in final_post_areas:
-                tasks.append(
-                    stop.create_fetch_task(
-                        process_single_task(
-                            partial(process_timeline_posts, model_id, username, c=c),
-                            username,
-                            "Timeline",
-                        )(sem=sem)
-                    )
-                )
-
+                schedule("Timeline", process_timeline_posts, model_id, username, c=c)
             if "Archived" in final_post_areas:
-                tasks.append(
-                    stop.create_fetch_task(
-                        process_single_task(
-                            partial(process_archived_posts, model_id, username, c=c),
-                            username,
-                            "Archived",
-                        )(sem=sem)
-                    )
-                )
-
+                schedule("Archived", process_archived_posts, model_id, username, c=c)
             if "Highlights" in final_post_areas:
-                tasks.append(
-                    stop.create_fetch_task(
-                        process_single_task(
-                            partial(process_highlights, model_id, username, c), username, "Highlights"
-                        )(sem=sem)
-                    )
-                )
-
+                schedule("Highlights", process_highlights, model_id, username, c)
             if "Stories" in final_post_areas:
-                tasks.append(
-                    stop.create_fetch_task(
-                        process_single_task(
-                            partial(process_stories, model_id, username, c), username, "Stories"
-                        )(sem=sem)
-                    )
-                )
-
+                schedule("Stories", process_stories, model_id, username, c)
             if "Labels" in final_post_areas and wall_visible_:
-                tasks.append(
-                    stop.create_fetch_task(
-                        process_single_task(
-                            partial(process_labels, model_id, username, c), username, "Labels"
-                        )(sem=sem)
-                    )
-                )
+                schedule("Labels", process_labels, model_id, username, c)
             elif "Labels" in final_post_areas:
                 log_skipped_labels(username)
-
             if "Streams" in final_post_areas and ele.active:
-                tasks.append(
-                    stop.create_fetch_task(
-                        process_single_task(
-                            partial(process_streamed_posts, model_id, username, c), username, "Streams"
-                        )(sem=sem)
-                    )
-                )
+                schedule("Streams", process_streamed_posts, model_id, username, c)
         else:
             log_skipped_wall(username)
 
