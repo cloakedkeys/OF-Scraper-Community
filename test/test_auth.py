@@ -244,19 +244,22 @@ def test_onlyfans_edit_auth_clears_my_info_cache_on_save(monkeypatch):
     import ofscraper.utils.profiles.data as profile_data
 
     cleared = []
+    hidden = []
     monkeypatch.setattr(auth_file.sites, "is_fansly", lambda: False)
     monkeypatch.setattr(auth_file.auth_dict, "get_auth_dict", lambda: {"sess": "old"})
     monkeypatch.setattr(
         auth_file.make,
         "make_auth",
-        lambda current, include_main_menu=False: ({"sess": "new"}, "saved"),
+        lambda current, include_main_menu=False: ({"sess": "new", "x-bc": "new-bc"}, "saved"),
     )
+    monkeypatch.setattr(auth_file, "hide_secrets", lambda auth: hidden.append(auth))
     monkeypatch.setattr(profile_data, "clear_my_info", lambda: cleared.append(True))
     monkeypatch.setattr(auth_file.console, "print", lambda *a, **k: None)
 
     result = auth_file.edit_auth()
-    assert result == {"sess": "new"}
+    assert result == {"sess": "new", "x-bc": "new-bc"}
     assert cleared == [True]
+    assert hidden == [{"sess": "new", "x-bc": "new-bc"}]
 
 
 @pytest.mark.parametrize("choice", ["quit", "main"])

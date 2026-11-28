@@ -108,15 +108,26 @@ async def process_tasks_batch(m, generators):
     return responseArray
 
 
+def _parse_created_at(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def split_posts(m, oldposts, after):
-    dated_posts = [x for x in oldposts if x.get("created_at") not in (None, "")]
+    dated_posts = [
+        (ts, x)
+        for x in oldposts
+        if (ts := _parse_created_at(x.get("created_at"))) is not None
+    ]
     if len(dated_posts) == 0:
         return []
     min_posts = m.get_min_posts_batch(len(dated_posts), m.AREA.api)
-    postsDataArray = sorted(dated_posts, key=lambda x: float(x["created_at"]))
-    filteredArray = [
-        x for x in postsDataArray if float(x["created_at"]) >= after
-    ]
+    dated_posts.sort(key=lambda pair: pair[0])
+    filteredArray = [x for ts, x in dated_posts if ts >= after]
 
     splitArrays = [
         filteredArray[i : i + min_posts]

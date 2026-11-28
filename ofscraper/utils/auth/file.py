@@ -112,6 +112,7 @@ def edit_auth():
 
     import ofscraper.utils.profiles.data as profile_data
 
+    hide_secrets(new_auth)
     profile_data.clear_my_info()
     console.print("Your `auth.json` file has been edited.")
     return new_auth

@@ -998,3 +998,32 @@ def test_placeholder_methods_do_not_pollute_module_globals(path_options):
     leaked = [key for key in sentinel_keys if key in vars(placeholder)]
     assert leaked == []
 
+
+def test_placeholder_trace_omits_config_and_skips_when_disabled(monkeypatch):
+    logged = []
+    enabled = [False]
+    monkeypatch.setattr(
+        placeholder,
+        "log",
+        SimpleNamespace(
+            trace=logged.append,
+            isEnabledFor=lambda level: enabled[0],
+        ),
+    )
+
+    variables = {
+        "model_username": "creator",
+        "config": {"discord": "https://discord.com/api/webhooks/secret"},
+        "args": SimpleNamespace(action="download"),
+    }
+
+    placeholder._trace_placeholders("mediadir placeholders", variables)
+    assert logged == []
+
+    enabled[0] = True
+    placeholder._trace_placeholders("mediadir placeholders", variables)
+    assert len(logged) == 1
+    assert "creator" in logged[0]
+    assert "webhooks/secret" not in logged[0]
+    assert "'config'" not in logged[0]
+    assert "'args'" not in logged[0]

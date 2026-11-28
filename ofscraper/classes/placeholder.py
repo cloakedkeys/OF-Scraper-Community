@@ -410,6 +410,17 @@ class tempFilePlaceholder(basePlaceholder):
         return pathlib.Path(self._tempfilepath).name
 
 
+_TRACE_EXCLUDED_KEYS = frozenset({"config", "args"})
+
+
+def _trace_placeholders(prefix, variables):
+    is_enabled = getattr(log, "isEnabledFor", None)
+    if is_enabled is not None and not is_enabled(getattr(logging, "TRACE", 5)):
+        return
+    safe = {k: v for k, v in variables.items() if k not in _TRACE_EXCLUDED_KEYS}
+    log.trace(f"{prefix} {safe}")
+
+
 class databasePlaceholder(basePlaceholder):
     def __init__(self, create=True) -> None:
         """create=False works out the database path without making the
@@ -424,7 +435,9 @@ class databasePlaceholder(basePlaceholder):
         self._variables.update({"first_letter": model_username[0].capitalize()})
         self._variables.update({"model_id": model_id})
         self.add_no_underline()
-        log.trace(f"modelid:{model_id}  database placeholders {self._variables}")
+        _trace_placeholders(
+            f"modelid:{model_id}  database placeholders", self._variables
+        )
         metadata_format = data.get_metadata()
         formatStr = metadata_format.format(**self._variables)
         if sites.is_fansly() and not _is_site_specific(metadata_format):
@@ -602,7 +615,9 @@ class _ContentPlaceholder(basePlaceholder):
         # Windows; a date fills one folder, so its "/" adds none
         if "date" in self._variables:
             self._variables["date"] = name_safe(self._variables["date"])
-        log.trace(f"modelid:{model_id}  mediadir placeholders {self._variables}")
+        _trace_placeholders(
+            f"modelid:{model_id}  mediadir placeholders", self._variables
+        )
         mediadir = _template_folder(root, _safe_format(dir_fmt, self._variables))
         log.trace(f"final mediadir path {mediadir}")
         self._mediadir = mediadir
@@ -617,7 +632,9 @@ class _ContentPlaceholder(basePlaceholder):
         # the date setting can hold "/", which a folder can use but a file
         # name can't
         self._variables["date"] = name_safe(self._variables["date"])
-        log.trace(f"model_id:{ele.model_id}  filename placeholders {self._variables}")
+        _trace_placeholders(
+            f"model_id:{ele.model_id}  filename placeholders", self._variables
+        )
         return file_fmt
 
     @property
