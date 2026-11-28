@@ -14,13 +14,18 @@ class TableSpec:
     create: str
     # the insert of a whole row: rebuilds and merges
     insert: str
-    # what the transition read selects (see db_columns.select_all)
-    select: list
+    # what the transition read selects (see db_columns.select_all); stored
+    # as a tuple so the frozen spec can't be changed through it
+    select: tuple
     # the insert's columns, in its order
     keys: tuple
     # the insert's last columns, which a row read before a later version
     # added them may lack
     optional: tuple = ()
+
+    def __post_init__(self):
+        # the specs are built from the modules' select lists
+        object.__setattr__(self, "select", tuple(self.select))
 
 
 def transition_rows(spec, rows):
