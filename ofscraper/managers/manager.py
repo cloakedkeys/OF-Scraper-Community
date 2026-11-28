@@ -1,17 +1,19 @@
 import time
 from typing import Union
 
-import ofscraper.commands.check as check
-import ofscraper.commands.manual as manual
-import ofscraper.commands.metadata.metadata as metadata
-import ofscraper.commands.scraper.scraper as actions
 import ofscraper.main.close.exit as exit_manager
 import ofscraper.utils.console as console
 import ofscraper.utils.logs.logs as logs
 import ofscraper.utils.settings as settings
 import ofscraper.utils.system.system as system
-from ofscraper.commands.db import db
 from ofscraper.managers.model import ModelManager
+
+# isort: split
+import ofscraper.commands.check as check
+import ofscraper.commands.manual as manual
+import ofscraper.commands.metadata.metadata as metadata
+import ofscraper.commands.scraper.scraper as actions
+from ofscraper.commands.db import db
 
 
 # Forward declarations for type hinting to prevent circular imports

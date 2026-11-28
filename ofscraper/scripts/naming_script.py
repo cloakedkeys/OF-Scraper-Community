@@ -12,13 +12,14 @@ import ofscraper.utils.of_env.of_env as env
 import ofscraper.utils.settings as settings
 from ofscraper.utils.system.subprocess import async_run  # Changed to async_run
 
+# isort: split
+from ofscraper.classes.of.media import Media
+from ofscraper.classes.of.posts import Post
+
 
 async def naming_script(dir, file, ele, formats=None): # Made async
     """formats: the (dir_format, file_format) the file was named with, which
     a type_options entry can set; file_options' when not given"""
-    from ofscraper.classes.of.media import Media
-    from ofscraper.classes.of.posts import Post
-
     log = logging.getLogger("shared")
     script_path = settings.get_settings().naming_script
 

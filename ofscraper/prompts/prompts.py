@@ -17,6 +17,8 @@ from ofscraper.prompts.prompt_groups.auth import *
 from ofscraper.prompts.prompt_groups.config import *
 from ofscraper.prompts.prompt_groups.menu import *
 from ofscraper.prompts.prompt_groups.merge import *
-from ofscraper.prompts.prompt_groups.misc import *
 from ofscraper.prompts.prompt_groups.model import *
 from ofscraper.prompts.prompt_groups.profile import *
+
+# isort: split
+from ofscraper.prompts.prompt_groups.misc import *

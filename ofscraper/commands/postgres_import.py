@@ -215,6 +215,9 @@ def _app():
     """The app's database code, imported late: the app reads the command line
     the first time its settings are read, and this command has its own."""
     sys.argv = sys.argv[:1]
+    import ofscraper.main.open.load  # noqa: F401  (import order)
+
+    # isort: split
     import ofscraper.db.backup as backup
     import ofscraper.db.difference as difference
     import ofscraper.db.operations as operations
@@ -223,7 +226,6 @@ def _app():
     import ofscraper.db.operations_.profile as profile
     import ofscraper.db.operations_.wrapper as wrapper
     import ofscraper.db.transition as transition
-    import ofscraper.main.open.load  # noqa: F401  (import order)
     import ofscraper.sites as sites
 
     return argparse.Namespace(
