@@ -1,15 +1,10 @@
 import inspect
 import json
-import pathlib
-import platform
 import re
-import string
 
 import arrow
-from pathvalidate import validate_filename, validate_filepath
 from prompt_toolkit.validation import ValidationError, Validator
 
-import ofscraper.classes.placeholder as placeholders
 import ofscraper.utils.profiles.data as profiles_data
 import ofscraper.utils.profiles.tools as profiles_tools
 import ofscraper.utils.settings as settings
@@ -127,98 +122,6 @@ def namevalitator():
     )
 
 
-def dirformatvalidator():
-    def callable(x):
-        try:
-            testplaceholders = list(
-                filter(
-                    lambda x: x is not None, [v[1] for v in string.Formatter().parse(x)]
-                )
-            )
-            validplaceholders = placeholders.all_placeholders()
-            if (
-                len(
-                    list(
-                        filter(
-                            lambda x: x not in validplaceholders
-                            or not x.find("custom"),
-                            testplaceholders,
-                        )
-                    )
-                )
-                > 0
-            ):
-                return
-            result = {}
-
-            for d in list(map(lambda x: {x: "placeholder"}, placeholders)):
-                result.update(d)
-            validate_filepath(
-                str(pathlib.Path(x.format(**result))), platform=platform.system()
-            )
-
-            return True
-        except:
-            return
-
-    return validatorCallableHelper(
-        callable,
-        inspect.cleandoc("""
-Improper syntax or invalid placeholder
-""").strip(),
-        move_cursor_to_end=True,
-    )
-
-
-def fileformatvalidator():
-    def callable(x):
-        try:
-            placeholders = list(
-                filter(
-                    lambda x: x is not None, [v[1] for v in string.Formatter().parse(x)]
-                )
-            )
-            validplaceholders = set(
-                [
-                    "date",
-                    "responsetype",
-                    "mediatype",
-                    "model_id",
-                    "first_letter",
-                    "sitename",
-                    "model_username",
-                    "post_id",
-                    "filename",
-                    "value",
-                    "text",
-                    "ext",
-                ]
-            )
-
-            if (
-                len(list(filter(lambda x: x not in validplaceholders, placeholders)))
-                > 0
-            ):
-                return
-            result = {}
-
-            for d in list(map(lambda x: {x: "placeholder"}, placeholders)):
-                result.update(d)
-            validate_filename(x.format(**result), platform=platform.system())
-
-            return True
-        except:
-            return
-
-    return validatorCallableHelper(
-        callable,
-        inspect.cleandoc("""
-Improper syntax or invalid placeholder
-""").strip(),
-        move_cursor_to_end=True,
-    )
-
-
 def dateplaceholdervalidator():
     def callable(x):
         try:
@@ -272,50 +175,6 @@ def like_area_validator_posts():
         inspect.cleandoc("""
 You must select at least one of the following Timeline,Pinned, Archived
 When like/unlike is action is on
-""").strip(),
-        move_cursor_to_end=True,
-    )
-
-
-def metadatavalidator():
-    def callable(x):
-        try:
-            placeholders = list(
-                filter(
-                    lambda x: x is not None, [v[1] for v in string.Formatter().parse(x)]
-                )
-            )
-            validplaceholders = set(
-                [
-                    "sitename",
-                    "first_letter",
-                    "model_username",
-                    "model_id",
-                    "configpath",
-                    "profile",
-                ]
-            )
-            if (
-                len(list(filter(lambda x: x not in validplaceholders, placeholders)))
-                > 0
-            ):
-                return
-            result = {}
-
-            for d in list(map(lambda x: {x: "placeholder"}, placeholders)):
-                result.update(d)
-            validate_filepath(
-                str(pathlib.Path(x.format(**result))), platform=platform.system()
-            )
-
-            return True
-        except:
-            return
-
-    return validatorCallableHelper(
-        callable,
-        inspect.cleandoc("""
-Improper syntax or invalid placeholder
 """).strip(),
         move_cursor_to_end=True,
     )
