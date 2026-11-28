@@ -161,6 +161,26 @@ def test_site_option_is_parsed():
     assert params["site"] is None
 
 
+def test_resolve_site_is_side_effect_free(profiles, monkeypatch):
+    monkeypatch.setattr(sites, "_session_site", None)
+    monkeypatch.setattr(sites, "_session_profile", None)
+    (profiles / "fans_profile").mkdir()
+    sites.write_profile_site(profiles / "fans_profile", "fansly")
+    (profiles / "other_profile").mkdir()
+
+    assert sites.resolve_site(SimpleNamespace(site=None, profile="fans_profile")) == "fansly"
+    assert sites._session_site is None
+    assert sites._session_profile is None
+
+    monkeypatch.setattr(sites, "_session_site", sites.FANSLY)
+    monkeypatch.setattr(sites, "_session_profile", "main_profile")
+
+    assert sites.resolve_site(SimpleNamespace(site=None, profile="other_profile")) == "onlyfans"
+    assert sites._session_site == sites.FANSLY
+    assert sites._session_profile == "main_profile"
+    assert sites.resolve_site(SimpleNamespace(site=None, profile="main_profile")) == "fansly"
+
+
 # ------------------------------------------------------------------ auth file and token check
 
 def test_auth_file_round_trip_and_validation(tmp_path):
