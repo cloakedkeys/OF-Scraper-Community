@@ -1,10 +1,31 @@
+import contextlib
+
+
 def table_columns(cur, table):
     """The names of the columns `table` has."""
-    # imported here: this module has no imports of its own, and so can be
-    # imported before anything else
+    # imported here: this module has no ofscraper imports of its own, and so
+    # can be imported before anything else
     import ofscraper.db.operations_.wrapper as wrapper
 
     return wrapper.backend_of(cur).table_columns(cur, table)
+
+
+def add_column(conn, table, column, sqltype):
+    """Add `column` (of type `sqltype`) to an SQLite `table` that hasn't got
+    it yet, for an upgrade of an older database. Commits either way; on an
+    error, rolls back and raises it. Returns whether the column was added."""
+    import ofscraper.db.operations_.wrapper as wrapper
+
+    with contextlib.closing(conn.cursor()) as cur:
+        try:
+            added = column not in table_columns(cur, table)
+            if added:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sqltype};")
+            conn.commit()
+            return added
+        except wrapper.DB_ERRORS:
+            conn.rollback()
+            raise
 
 
 def creator_filter(cur, table, model_id, joiner="AND"):

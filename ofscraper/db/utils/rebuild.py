@@ -1,5 +1,73 @@
 import contextlib
+import dataclasses
 import re
+
+import ofscraper.db.utils.columns as db_columns
+
+
+@dataclasses.dataclass(frozen=True)
+class TableSpec:
+    """A creator table, as the upgrade's transition read and rebuild see it."""
+
+    name: str
+    create: str
+    # the insert of a whole row: rebuilds and merges
+    insert: str
+    # what the transition read selects (see db_columns.select_all); stored
+    # as a tuple so the frozen spec can't be changed through it
+    select: tuple
+    # the insert's columns, in its order
+    keys: tuple
+    # the insert's last columns, which a row read before a later version
+    # added them may lack
+    optional: tuple = ()
+
+    def __post_init__(self):
+        # the specs are built from the modules' select lists
+        object.__setattr__(self, "select", tuple(self.select))
+
+
+def transition_rows(spec, rows):
+    """The insert parameters for `rows` (dicts) of spec's table."""
+    return [
+        tuple([data[key] for key in spec.keys] + [data.get(key) for key in spec.optional])
+        for data in rows
+    ]
+
+
+def read_transition(conn, spec, database_model=None):
+    """Every row of spec's table, as dicts with each of spec.select's
+    columns. A row with no model_id gets database_model."""
+    with contextlib.closing(conn.cursor()) as cur:
+        cur.execute(db_columns.select_all(cur, spec.name, spec.select))
+        return [
+            dict(row, model_id=row.get("model_id") or database_model)
+            for row in map(dict, cur.fetchall())
+        ]
+
+
+def replace_spec_table(conn, spec, rows):
+    """replace_table for spec's table, with these insert parameters."""
+    replace_table(conn, spec.name, spec.create, spec.insert, rows)
+
+
+async def rebuild_table(read, replace, model_id=None, username=None, db_path=None):
+    """Rebuild a table from its rows: `read` is the table's wrapped
+    transition read, `replace` its wrapped replace. A row with no model_id
+    gets the database's one creator, if it has exactly one."""
+    # imported here: profile.py imports this module
+    from ofscraper.db.operations_.profile import get_single_model_via_profile
+
+    database_model = get_single_model_via_profile(
+        model_id=model_id, username=username, db_path=db_path
+    )
+    data = await read(
+        model_id=model_id,
+        username=username,
+        database_model=database_model,
+        db_path=db_path,
+    )
+    await replace(data, model_id=model_id, username=username, db_path=db_path)
 
 
 def replace_table(conn, table, create_sql, insert_sql, rows):

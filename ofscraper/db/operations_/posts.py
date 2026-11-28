@@ -24,7 +24,6 @@ import ofscraper.db.utils.columns as db_columns
 import ofscraper.db.utils.convert as convert
 import ofscraper.db.utils.rebuild as rebuild
 import ofscraper.utils.settings as settings
-from ofscraper.db.operations_.profile import get_single_model_via_profile
 
 console = Console()
 log = logging.getLogger("shared")
@@ -149,8 +148,12 @@ def write_post_table(posts: list, model_id=None, username=None, conn=None, **kwa
         conn.commit()
 
 
-def posts_transition_rows(inputData: list) -> list:
-    ordered_keys = (
+POSTS = rebuild.TableSpec(
+    "posts",
+    postCreate,
+    postInsertTransition,
+    postsSelectTransition,
+    keys=(
         "post_id",
         "text",
         "price",
@@ -162,13 +165,9 @@ def posts_transition_rows(inputData: list) -> list:
         "created_at",
         "model_id",
         "is_deleted",
-    )
-    # optional columns: a row read before they existed has no value
-    optional_keys = ("purchase_type", "mentions")
-    return [
-        tuple([data[key] for key in ordered_keys] + [data.get(key) for key in optional_keys])
-        for data in inputData
-    ]
+    ),
+    optional=("purchase_type", "mentions"),
+)
 
 
 @wrapper.operation_wrapper_async
@@ -176,15 +175,13 @@ def write_post_table_transition(
     inputData: list, model_id=None, username=None, conn=None, **kwargs
 ):
     with contextlib.closing(conn.cursor()) as cur:
-        cur.executemany(postInsertTransition, posts_transition_rows(inputData))
+        cur.executemany(postInsertTransition, rebuild.transition_rows(POSTS, inputData))
         conn.commit()
 
 
 @wrapper.operation_wrapper_async
 def replace_posts_table(inputData: list, model_id=None, conn=None, **kwargs):
-    rebuild.replace_table(
-        conn, "posts", postCreate, postInsertTransition, posts_transition_rows(inputData)
-    )
+    rebuild.replace_spec_table(conn, POSTS, rebuild.transition_rows(POSTS, inputData))
 
 
 @wrapper.operation_wrapper_async
@@ -259,99 +256,27 @@ def get_all_post_ids(model_id=None, username=None, conn=None, **kwargs) -> list:
 def get_all_posts_transition(
     model_id=None, username=None, conn=None, database_model=None, **kwargs
 ) -> list:
-    with contextlib.closing(conn.cursor()) as cur:
-        cur.execute(db_columns.select_all(cur, "posts", postsSelectTransition))
-        data = [dict(row) for row in cur.fetchall()]
-        return [
-            dict(
-                row,
-                pinned=row.get("pinned"),
-                model_id=row.get("model_id") or database_model,
-                is_deleted=row.get("is_deleted"),
-            )
-            for row in data
-        ]
+    return rebuild.read_transition(conn, POSTS, database_model)
 
 
 @wrapper.operation_wrapper_async
 def add_column_post_ID(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('posts') WHERE name = 'model_id') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE posts ADD COLUMN model_id INTEGER;")
-            # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+    db_columns.add_column(conn, "posts", "model_id", "INTEGER")
 
 
 @wrapper.operation_wrapper_async
 def add_column_post_pinned(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('posts') WHERE name = 'pinned') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE posts ADD COLUMN pinned BOOLEAN;")
-            # Commit changes
-            conn.commit()
-
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+    db_columns.add_column(conn, "posts", "pinned", "BOOLEAN")
 
 
 @wrapper.operation_wrapper_async
 def add_column_post_stream(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('posts') WHERE name = 'stream') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE posts ADD COLUMN stream BOOLEAN;")
-            # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+    db_columns.add_column(conn, "posts", "stream", "BOOLEAN")
 
 
 @wrapper.operation_wrapper_async
 def add_column_post_opened(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            # Check if column exists (separate statement)
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('posts') WHERE name = 'opened') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            alter_required = cur.fetchone()[0]  # Fetch the result (0 or 1)
-
-            # Add column if necessary (conditional execution)
-            if alter_required == 0:
-                cur.execute("ALTER TABLE posts ADD COLUMN opened BOOLEAN;")
-            # Commit changes
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e  # Rollback in case of errors
+    db_columns.add_column(conn, "posts", "opened", "BOOLEAN")
 
 
 @wrapper.operation_wrapper_async
@@ -375,49 +300,17 @@ def unmark_post_as_deleted(post_ids, username=None, conn=None, model_id=None, **
 
 @wrapper.operation_wrapper_async
 def add_column_post_is_deleted(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('posts') WHERE name = 'is_deleted') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            if cur.fetchone()[0] == 0:
-                cur.execute(
-                    "ALTER TABLE posts ADD COLUMN is_deleted BOOLEAN DEFAULT 0;"
-                )
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    db_columns.add_column(conn, "posts", "is_deleted", "BOOLEAN DEFAULT 0")
 
 
 @wrapper.operation_wrapper_async
 def add_column_post_purchase_type(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('posts') WHERE name = 'purchase_type') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            if cur.fetchone()[0] == 0:
-                cur.execute("ALTER TABLE posts ADD COLUMN purchase_type VARCHAR;")
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    db_columns.add_column(conn, "posts", "purchase_type", "VARCHAR")
 
 
 @wrapper.operation_wrapper_async
 def add_column_post_mentions(conn=None, **kwargs):
-    with contextlib.closing(conn.cursor()) as cur:
-        try:
-            cur.execute(
-                "SELECT CASE WHEN EXISTS (SELECT 1 FROM PRAGMA_TABLE_INFO('posts') WHERE name = 'mentions') THEN 1 ELSE 0 END AS alter_required;"
-            )
-            if cur.fetchone()[0] == 0:
-                cur.execute("ALTER TABLE posts ADD COLUMN mentions VARCHAR;")
-            conn.commit()
-        except wrapper.DB_ERRORS as e:
-            conn.rollback()
-            raise e
+    db_columns.add_column(conn, "posts", "mentions", "VARCHAR")
 
 
 @wrapper.operation_wrapper_async
@@ -445,17 +338,8 @@ def get_streams_post_info(model_id=None, username=None, conn=None, **kwargs) -> 
 
 
 async def rebuild_posts_table(model_id=None, username=None, db_path=None, **kwargs):
-    database_model = get_single_model_via_profile(
-        model_id=model_id, username=username, db_path=db_path
-    )
-    data = await get_all_posts_transition(
-        model_id=model_id,
-        username=username,
-        database_model=database_model,
-        db_path=db_path,
-    )
-    await replace_posts_table(
-        data, model_id=model_id, username=username, db_path=db_path
+    await rebuild.rebuild_table(
+        get_all_posts_transition, replace_posts_table, model_id, username, db_path
     )
 
 
