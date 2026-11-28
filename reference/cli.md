@@ -45,7 +45,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 | [`post_check`](#post_check) (56 options) | Produces a media table from posts with filterable entries and quick downloads |
 | [`metadata`](#metadata) (87 options) | Modify metadata or db files |
 | [`db`](#db) (61 options) | Print information from the database |
-| [`live_tui`](#live_tui) (55 options) | Interactive TUI dashboard for monitoring and recording livestreams |
+| [`live_tui`](#live_tui) (45 options) | Interactive TUI dashboard for monitoring and recording livestreams |
 | [`creator_names`](#creator_names-separate-entry-point) (argparse) | List and record the usernames each creator account has had. |
 | [`doctor`](#doctor-separate-entry-point) (argparse) | Check the setup without running a scrape. |
 | [`health`](#health-separate-entry-point) (argparse) | Check whether an unattended daemon is healthy from its status file. |
@@ -124,7 +124,7 @@ The run reads `auth.json` and `config.json` from the profile. It writes media un
 
 ### `live_tui`
 
-**Options:** 55 · **`--help` summary:** Open an interactive terminal dashboard (TUI) to monitor and record Fansly or OnlyFans livestreams in real time. Polls continuously by default; pass --once / --live for a single check.
+**Options:** 45 · **`--help` summary:** Open an interactive terminal dashboard (TUI) to monitor and record Fansly or OnlyFans livestreams in real time. Polls continuously by default; pass --once / --live for a single check.
 
 `ofscraper live_tui`, with livestream options (`--once`/`--live`, `--live-interval`, `--live-jitter`, `--live-max`, `--live-chat`, `--refresh-users`) and the usual user selection and filter options. Opens an interactive Textual dashboard to monitor and record Fansly or OnlyFans livestreams in real time. Polls continuously by default; pass `--once` / `--live` for a single check. Cannot be combined with `--no-live` / `--no-rich`.
 
@@ -864,7 +864,7 @@ Comma- or space-separated profiles to run one after another on each --daemon pas
 
 Record the selected creators (all followed creators without -u) who are live now, then continue. OnlyFans needs the optional live install (a Chromium browser)
 
-**Dest:** `live` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`, `ofscraper/utils/args/parse/commands/live_tui.py`
+**Dest:** `live` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`, `ofscraper/utils/args/parse/group_bundles/live_tui.py`
 
 #### `--live-watch`
 
@@ -1154,7 +1154,7 @@ Filter accounts by subscription date being at or before the given date (YYYY-MM-
 
 #### `--sort`
 
-**Also:** `-st` · **Type:** one of `name`, `subscribed`, `expired`, `current-price`, `renewal-price`, `regular-price`, `promo-price`, `last-seen` · **Default:** `'Name'` · **Commands:** main program, `metadata`, `db`, `live_tui`
+**Also:** `-st` · **Type:** one of `name`, `subscribed`, `expired`, `current-price`, `renewal-price`, `regular-price`, `promo-price`, `last-seen` · **Default:** `'Name'` · **Commands:** main program, `metadata`, `db`
 
 What to sort the model list by
 
@@ -1162,7 +1162,7 @@ What to sort the model list by
 
 #### `--desc`
 
-**Also:** `-ds` · **Type:** flag · **Default:** off · **Commands:** main program, `metadata`, `db`, `live_tui`
+**Also:** `-ds` · **Type:** flag · **Default:** off · **Commands:** main program, `metadata`, `db`
 
 Sort the model list in descending order
 
@@ -1172,7 +1172,7 @@ Sort the model list in descending order
 
 #### `--users-first`
 
-**Also:** `-uf`, `--user-first`, `--usersfirst`, `--userfirst` · **Type:** flag · **Default:** off · **Commands:** main program, `metadata`, `live_tui`
+**Also:** `-uf`, `--user-first`, `--usersfirst`, `--userfirst` · **Type:** flag · **Default:** off · **Commands:** main program, `metadata`
 
 Process all users first rather than one at a time (affects --action)
 
@@ -1250,7 +1250,7 @@ Stops treating files skipped for good by `skip_download_script` (`medias.skip_pe
 
 #### `--no-cache`
 
-**Also:** `-nc` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui`
+**Also:** `-nc` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 
 Disable cache and force a fresh sequential API scan
 
@@ -1260,7 +1260,7 @@ Disables both the general cache and the API cache for the run, and turns off inc
 
 #### `--no-api-cache`
 
-**Also:** `-nca` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui`
+**Also:** `-nca` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 
 Force a fresh sequential API scan
 
@@ -1270,7 +1270,7 @@ Disables only the API response cache. Setting `advanced_options.cache-mode` to `
 
 #### `--key-mode`
 
-**Also:** `-k` · **Type:** one of `cdrm`, `manual` · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui` · **Config fallback:** `cdm_options.key-mode-default`
+**Also:** `-k` · **Type:** one of `cdrm`, `manual` · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata` · **Config fallback:** `cdm_options.key-mode-default`
 
 Key mode for decrypting content (cdrm is deprecated: its service no longer works)
 
@@ -1280,7 +1280,7 @@ Key mode for decrypting content (cdrm is deprecated: its service no longer works
 
 #### `--private-key`
 
-**Also:** `-pk` · **Type:** text · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui` · **Config fallback:** `cdm_options.private-key`
+**Also:** `-pk` · **Type:** text · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata` · **Config fallback:** `cdm_options.private-key`
 
 Private key path for manual key mode
 
@@ -1288,7 +1288,7 @@ Private key path for manual key mode
 
 #### `--client-id`
 
-**Also:** `-ci` · **Type:** text · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui` · **Config fallback:** `cdm_options.client-id`
+**Also:** `-ci` · **Type:** text · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata` · **Config fallback:** `cdm_options.client-id`
 
 Client ID path for manual key mode
 
@@ -1304,7 +1304,7 @@ Dynamic signing rule source
 
 #### `--update-profile`
 
-**Also:** `-up` · **Type:** flag · **Default:** off · **Commands:** all
+**Also:** `-up` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `db`
 
 Get up-to-date profile info instead of using cache
 
@@ -1312,7 +1312,7 @@ Get up-to-date profile info instead of using cache
 
 #### `--auth-fail`
 
-**Also:** `-al`, `--auth-quit` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui`
+**Also:** `-al`, `--auth-quit` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
 
 Quit on authentication failure rather than prompting
 
@@ -1508,5 +1508,5 @@ Change the sort order of the table to ascending
 
 Check who is live right now, record active streams until they end, and exit without polling again
 
-**Dest:** `live` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`, `ofscraper/utils/args/parse/commands/live_tui.py`
+**Dest:** `live` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`, `ofscraper/utils/args/parse/group_bundles/live_tui.py`
 
