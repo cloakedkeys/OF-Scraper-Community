@@ -13,13 +13,12 @@ from dataclasses import dataclass
 
 from InquirerPy.base import Choice
 from InquirerPy.validator import EmptyInputValidator
-from rich.console import Console
 
 import ofscraper.prompts.promptConvert as promptClasses
+import ofscraper.utils.console as console
 
 WHOLE_NUMBERS = "Whole numbers only (0, 1, 2, ...). Enter 0 for no limit."
 
-console = Console()
 
 
 @dataclass(frozen=True)
@@ -162,5 +161,5 @@ def ask_size(
             error = check(size)
         if error is None:
             return size
-        console.print(f"[bold red]{error} Enter it again.[/bold red]")
+        console.get_console().print(f"[bold red]{error} Enter it again.[/bold red]")
         number = amount

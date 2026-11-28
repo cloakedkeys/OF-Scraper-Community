@@ -57,7 +57,7 @@ def test_deleted_log_file_path_with_brackets(monkeypatch, tmp_path):
 
 def test_profile_names_with_brackets(monkeypatch):
     con, buf = _console()
-    monkeypatch.setattr(profile_tools, "console", con)
+    monkeypatch.setattr(profile_tools.console, "get_console", lambda: con)
     monkeypatch.setattr(
         profile_tools.profile_data, "get_profile_names", lambda: [TRICKY]
     )
@@ -155,6 +155,32 @@ def test_saving_files_to_line(monkeypatch, save, dirformat, filled):
 
 def test_auth_file_path_with_brackets(monkeypatch):
     con, buf = _console()
-    monkeypatch.setattr(auth_warning, "console", con)
+    monkeypatch.setattr(auth_warning.console, "get_console", lambda: con)
     auth_warning.authwarning("C:/cfg [/b]/auth.json")
     assert "C:/cfg [/b]/auth.json" in buf.getvalue()
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "ofscraper.prompts.prompt_groups.model",
+        "ofscraper.prompts.utils.prompt_helpers",
+        "ofscraper.prompts.utils.size_prompt",
+        "ofscraper.sites.fansly.auth",
+        "ofscraper.utils.auth.file",
+        "ofscraper.utils.auth.make",
+        "ofscraper.utils.auth.utils.error",
+        "ofscraper.utils.auth.utils.prompt",
+        "ofscraper.utils.auth.utils.warning.warning",
+        "ofscraper.utils.merge",
+        "ofscraper.utils.profiles.tools",
+    ],
+)
+def test_prints_go_through_the_shared_console_module(module):
+    # a rich Console() of their own skipped the shared console's quiet and
+    # test hooks (#872)
+    import importlib
+
+    source = Path(importlib.import_module(module).__file__).read_text(encoding="utf-8")
+    assert "Console(" not in source
+    assert "ofscraper.utils.console" in source

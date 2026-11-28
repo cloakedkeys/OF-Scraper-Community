@@ -15,17 +15,14 @@ import json
 import logging
 import re
 
-from rich.console import Console
-
 import ofscraper.sites as sites
 import ofscraper.utils.auth.make as make
 import ofscraper.utils.auth.schema as auth_schema
 import ofscraper.utils.auth.utils.dict as auth_dict
 import ofscraper.utils.auth.utils.error as auth_error
+import ofscraper.utils.console as console
 import ofscraper.utils.logs.utils.sensitive as sensitive
 import ofscraper.utils.paths.common as common_paths
-
-console = Console()
 
 
 def read_auth():
@@ -114,7 +111,7 @@ def edit_auth():
 
     hide_secrets(new_auth)
     profile_data.clear_my_info()
-    console.print("Your `auth.json` file has been edited.")
+    console.get_console().print("Your `auth.json` file has been edited.")
     return new_auth
 
 

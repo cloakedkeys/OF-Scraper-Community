@@ -152,9 +152,8 @@ def store_device_id(device_id: str, path=None, now=None) -> dict:
 
 def make_auth(auth=None) -> dict:
     """Ask for the token and user agent, then save them."""
-    from rich.console import Console
-
     import ofscraper.prompts.prompts as prompts
+    import ofscraper.utils.console as console_
     import ofscraper.utils.settings as settings
 
     if settings.get_settings().auth_fail:
@@ -163,7 +162,7 @@ def make_auth(auth=None) -> dict:
         log.info("auth failed quitting on error")
         raise SystemExit(exit_status.AUTH)
     auth = normalize(auth or read_auth())
-    console = Console()
+    console = console_.get_console()
     console.print(
         "Fansly needs your authorization token and the browser's user agent.\n"
         "Token: in the browser's devtools on fansly.com, Application > Local Storage >\n"
@@ -185,7 +184,7 @@ def make_auth(auth=None) -> dict:
 
 def edit_auth() -> dict:
     """Edit ``fansly_auth.json`` from the interactive menu."""
-    from rich.console import Console
+    import ofscraper.utils.console as console_
 
     try:
         current = read_auth()
@@ -196,7 +195,7 @@ def edit_auth() -> dict:
     import ofscraper.utils.profiles.data as profile_data
 
     profile_data.clear_my_info()
-    Console().print("Your `fansly_auth.json` file has been edited.")
+    console_.get_console().print("Your `fansly_auth.json` file has been edited.")
     return updated
 
 

@@ -14,23 +14,21 @@ r"""
 import logging
 import re
 
-from rich.console import Console
-
+import ofscraper.utils.console as console
 import ofscraper.utils.profiles.data as profile_data
 from ofscraper.utils.markup import escape_text
 
 log = logging.getLogger("shared")
-console = Console()
 currentData = None
 currentProfile = None
 
 
 def print_profiles() -> list:
-    console.print("\n\nCurrent Profiles\n")
+    console.get_console().print("\n\nCurrent Profiles\n")
     profile_fmt = "Profile: [cyan]{}"
     for name in profile_data.get_profile_names():
-        console.print(profile_fmt.format(escape_text(name)))
-    console.print("\n")
+        console.get_console().print(profile_fmt.format(escape_text(name)))
+    console.get_console().print("\n")
     print_current_profile()
     print_default_profile()
 
@@ -38,10 +36,10 @@ def print_profiles() -> list:
 
 def print_current_profile():
     current_profile = profile_data.get_active_profile()
-    console.print("Active profile: [cyan]{}[/cyan]".format(escape_text(current_profile)))
+    console.get_console().print("Active profile: [cyan]{}[/cyan]".format(escape_text(current_profile)))
 def print_default_profile():
     current_profile = profile_data.get_current_config_profile()
-    console.print("Default config profile: [cyan]{}[/cyan]".format(escape_text(current_profile)))
+    console.get_console().print("Default config profile: [cyan]{}[/cyan]".format(escape_text(current_profile)))
 
 
 def profile_name_fixer(input):

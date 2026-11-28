@@ -3,23 +3,21 @@ import re
 
 import pynumparser
 from InquirerPy.base import Choice
-from rich.console import Console
 
 import ofscraper.managers.manager as manager
 import ofscraper.prompts.prompt_strings as prompt_strings
 import ofscraper.prompts.promptConvert as promptConvert
 import ofscraper.prompts.utils.model_helpers as modelHelpers
 import ofscraper.utils.config.data as config_data
+import ofscraper.utils.console as console
 import ofscraper.utils.context.stdout as stdout
 import ofscraper.utils.settings as settings
 from ofscraper.prompts.promptConvert import prompt
 
-console = Console()
-
 
 def model_details(prompt_):
     selected = prompt_.content_control.selection["value"]
-    console.print(
+    console.get_console().print(
         inspect.cleandoc(
             f"""
         ========================================================================================================================================
@@ -65,7 +63,7 @@ def model_details(prompt_):
 
 
 def price_info(prompt_):
-    console.print(
+    console.get_console().print(
         inspect.cleandoc(
             f"""
 ========================================================================================================================================
@@ -96,7 +94,7 @@ PRESS ENTER TO RETURN
 
 
 def sort_info(prompt_):
-    console.print(
+    console.get_console().print(
         inspect.cleandoc(
             f"""
 ========================================================================================================================================
@@ -119,7 +117,7 @@ def model_funct(prompt):
         # _get_choices shows the filter menu, so keep stdout visible
         choices = _get_choices()
         if len(choices) == 0:
-            console.print("Current filters returned zero models")
+            console.get_console().print("Current filters returned zero models")
             continue
         with stdout.nostdout():
             selectedSet = set(
@@ -221,7 +219,7 @@ Default Black Lists : {config_data.get_default_blacklist() or 'No Default List S
 
 
 def get_current_filters(prompt_):
-    console.print(
+    console.get_console().print(
         inspect.cleandoc(
             f"""
 ========================================================================================================================================

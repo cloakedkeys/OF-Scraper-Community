@@ -4,6 +4,7 @@ import builtins
 import http.cookiejar
 import importlib
 import sys
+from types import SimpleNamespace
 
 import ofscraper.utils.auth.utils.prompt as auth_prompt
 
@@ -58,7 +59,7 @@ def test_browser_cookie_helper_without_requests(monkeypatch):
     monkeypatch.setattr(module.browser_cookie3, "chrome", fake_browser, raising=False)
     monkeypatch.setattr(module.prompts, "xbc_prompt", lambda current: "xbc-value")
     monkeypatch.setattr(module.prompts, "user_agent_prompt", lambda current: "ua")
-    monkeypatch.setattr(module.console, "print", lambda *a, **k: None)
+    monkeypatch.setattr(module.console, "get_console", lambda: SimpleNamespace(print=lambda *a, **k: None))
 
     auth = {"sess": "", "auth_id": "", "auth_uid": "", "x-bc": "", "user_agent": ""}
     module.browser_cookie_helper(auth, "Chrome")
@@ -81,7 +82,7 @@ def test_browser_cookie_helper_keeps_existing_values(monkeypatch):
     )
     monkeypatch.setattr(auth_prompt.prompts, "xbc_prompt", lambda current: current)
     monkeypatch.setattr(auth_prompt.prompts, "user_agent_prompt", lambda current: current)
-    monkeypatch.setattr(auth_prompt.console, "print", lambda *a, **k: None)
+    monkeypatch.setattr(auth_prompt.console, "get_console", lambda: SimpleNamespace(print=lambda *a, **k: None))
 
     auth = {"sess": "already-set", "auth_id": "", "auth_uid": "", "x-bc": "x", "user_agent": "u"}
     auth_prompt.browser_cookie_helper(auth, "Firefox")
@@ -108,7 +109,7 @@ def test_browser_choice_fills_the_saved_auth_layout(monkeypatch):
     )
     monkeypatch.setattr(auth_prompt.prompts, "xbc_prompt", lambda current: "xbc")
     monkeypatch.setattr(auth_prompt.prompts, "user_agent_prompt", lambda current: "ua")
-    monkeypatch.setattr(auth_prompt.console, "print", lambda *a, **k: None)
+    monkeypatch.setattr(auth_prompt.console, "get_console", lambda: SimpleNamespace(print=lambda *a, **k: None))
 
     auth = auth_schema.auth_schema(auth_dict.get_empty())
     result = auth_prompt.browser_cookie_helper(auth, "Chrome")

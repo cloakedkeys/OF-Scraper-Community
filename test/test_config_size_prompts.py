@@ -27,7 +27,7 @@ class _Answers:
         self.asked = []
         monkeypatch.setattr(size_prompt.promptClasses, "batchConverter", self)
         monkeypatch.setattr(config_prompts.promptClasses, "batchConverter", self)
-        monkeypatch.setattr(size_prompt.console, "print", self.printed)
+        monkeypatch.setattr(size_prompt.console, "get_console", lambda: SimpleNamespace(print=self.printed))
         self.messages = []
 
     def printed(self, text, *a, **k):
