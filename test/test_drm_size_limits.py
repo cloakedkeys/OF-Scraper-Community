@@ -247,6 +247,9 @@ def _run(
         monkeypatch.setattr(dm, "skip_download_script", _script)
 
     async def _mark(ele, filepath=None, downloaded=None, skip_permanent=None, **kwargs):
+        if real_merge and filepath is not None:
+            # the real merge saving the video it made
+            return
         # the database row the real _force_download saves
         assert filepath is None and downloaded is True
         merged["marked"] = "permanent" if skip_permanent else True

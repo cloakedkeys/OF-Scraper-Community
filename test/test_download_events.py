@@ -297,11 +297,11 @@ def _drm_run(tmp_path, monkeypatch, **kwargs):
 
     monkeypatch.setattr(ad, "async_run", merge)
     monkeypatch.setattr(ad, "get_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(ad, "verify_media_integrity", lambda *a: True)
-    monkeypatch.setattr(ad.common_paths, "moveHelper", move)
-    monkeypatch.setattr(ad.common_paths, "addGlobalDir", lambda *a: None)
-    monkeypatch.setattr(ad.common, "get_hash", no_hash)
-    monkeypatch.setattr(ad, "mark_media_as_downloaded", mark)
+    monkeypatch.setattr(dm, "verify_media_integrity", lambda *a: True)
+    monkeypatch.setattr(dm.common_paths, "moveHelper", move)
+    monkeypatch.setattr(dm.common_paths, "addGlobalDir", lambda *a: None)
+    monkeypatch.setattr(dm.common, "get_hash", no_hash)
+    # _run stubs the database
     monkeypatch.setattr(dm, "after_download_script", mark)
     counted, *_ = _run(tmp_path, monkeypatch, real_merge=True, **kwargs)
     return counted, final

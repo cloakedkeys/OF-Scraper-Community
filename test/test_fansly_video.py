@@ -222,8 +222,8 @@ def env(monkeypatch, tmp_path):
         raise AssertionError("normal downloader used")
 
     monkeypatch.setattr(run_mod.MainDownloadManager, "main_download", no_main_download)
-    monkeypatch.setattr(stream_mod, "mark_media_as_downloaded", mark)
-    monkeypatch.setattr(stream_mod, "set_profile_cache", noop)
+    monkeypatch.setattr(dm, "mark_media_as_downloaded", mark)
+    monkeypatch.setattr(dm, "set_profile_cache", noop)
     monkeypatch.setattr(dm, "after_download_script", noop)
     monkeypatch.setattr(dm, "skip_download_script", no_skip)
     monkeypatch.setattr(dm.system, "check_free_size", lambda *a: True)

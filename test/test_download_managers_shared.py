@@ -6,7 +6,9 @@ key each uses and what each does with a saved reply."""
 import asyncio
 import contextvars
 import logging
+import threading
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
@@ -294,3 +296,175 @@ def test_resume_with_no_saved_size(tmp_path, monkeypatch, fake_cache, drm):
     else:
         assert result[0] is None and result[2] is None
         assert fake_cache == {"track_1_u_headers": {"old": 1}, "1_u_headers": {"old": 1}}
+
+
+# --- the integrity check and the finishing steps all three managers share
+
+
+@pytest.mark.parametrize(
+    "duration, fallback, call, ok",
+    [
+        (5, False, ("verify", "f.mp4", 5), True),
+        (5, True, ("verify", "f.mp4", 5), True),
+        (None, False, ("verify", "f.mp4", None), True),
+        # Fansly's: with no expected duration, the file needs only a duration
+        (None, True, ("duration", "f.mp4"), False),
+    ],
+)
+def test_integrity_check_runs_off_the_event_loop(monkeypatch, duration, fallback, call, ok):
+    calls = []
+
+    def verify(path, expected):
+        calls.append(("verify", path, expected, threading.get_ident()))
+        return True
+
+    def duration_of(path):
+        calls.append(("duration", path, threading.get_ident()))
+        return None
+
+    monkeypatch.setattr(dm, "verify_media_integrity", verify)
+    monkeypatch.setattr(dm, "get_media_duration", duration_of)
+
+    async def go():
+        result = await md.MainDownloadManager()._verify_integrity(
+            "f.mp4", SimpleNamespace(duration=duration), duration_fallback=fallback
+        )
+        return threading.get_ident(), result
+
+    loop_thread, result = asyncio.run(go())
+    ((*made, thread),) = calls
+    assert tuple(made) == call
+    # ffprobe doesn't block the downloads running on the event loop
+    assert thread != loop_thread
+    assert result is ok
+
+
+async def _name():
+    return "f.mp4"
+
+
+@pytest.mark.parametrize(
+    "mediatype, verify_all, checked",
+    [
+        ("Videos", False, False),
+        ("Videos", True, True),
+        ("Audios", True, True),
+        ("Images", True, False),
+    ],
+)
+def test_normal_downloader_checks_integrity_only_when_asked(
+    tmp_path, monkeypatch, mediatype, verify_all, checked
+):
+    monkeypatch.setattr(
+        settings, "get_settings", lambda *a, **k: SimpleNamespace(verify_all_integrity=verify_all)
+    )
+    checks = []
+    monkeypatch.setattr(
+        dm, "verify_media_integrity", lambda path, expected: checks.append(path) or True
+    )
+    part = tmp_path / "f.part"
+    part.write_bytes(b"x")
+    holder = SimpleNamespace(trunicated_filepath=tmp_path / "f.mp4")
+    ele = SimpleNamespace(mediatype=mediatype, duration=1, final_filename=_name())
+    mgr = md.MainDownloadManager()
+    mgr._size_checker = AsyncMock()
+    mgr._finalize_download = AsyncMock()
+    assert asyncio.run(mgr._handle_result_main((1, part, holder), ele, "u", 1)) == (mediatype, 1)
+    assert checks == ([part] if checked else [])
+    mgr._finalize_download.assert_awaited_once_with(part, holder.trunicated_filepath, ele, "u", 1)
+
+
+def test_drm_merge_is_always_checked_and_skips_the_profile_cache(tmp_path, monkeypatch):
+    # a merge can come out truncated: checked even without verify_all_integrity
+    monkeypatch.setattr(
+        settings, "get_settings", lambda *a, **k: SimpleNamespace(verify_all_integrity=False)
+    )
+    merged = tmp_path / "merged.mp4"
+    checks = []
+    monkeypatch.setattr(
+        dm, "verify_media_integrity", lambda path, expected: checks.append(path) or True
+    )
+    monkeypatch.setattr(
+        ad.placeholder,
+        "tempFilePlaceholder",
+        lambda *a: SimpleNamespace(init=AsyncMock(return_value=SimpleNamespace(tempfilepath=merged))),
+    )
+    monkeypatch.setattr(ad, "get_ffmpeg", lambda: "ffmpeg")
+
+    async def merge(*a, **k):
+        merged.write_bytes(b"merged")
+        return SimpleNamespace(stderr=b"")
+
+    monkeypatch.setattr(ad, "async_run", merge)
+    holder = SimpleNamespace(trunicated_filepath=tmp_path / "f.mp4")
+    mgr = ad.AltDownloadManager()
+    mgr._finalize_download = AsyncMock()
+    ele = SimpleNamespace(id=1, post_id=2, mediatype="Videos", duration=1)
+    assert asyncio.run(mgr._handle_result_alt(holder, ele, None, None, "u", 1)) == ("Videos", 0)
+    assert checks == [merged]
+    mgr._finalize_download.assert_awaited_once_with(
+        merged, holder.trunicated_filepath, ele, "u", 1, profile_cache=False
+    )
+
+
+@pytest.mark.parametrize("profile_cache", [True, False])
+@pytest.mark.parametrize("own_move", [False, True], ids=["move", "own-move"])
+def test_finalize_download_steps_in_order(tmp_path, monkeypatch, profile_cache, own_move):
+    steps = []
+    temp = tmp_path / "f.part"
+    temp.write_bytes(b"data")
+    target = tmp_path / "f.mp4"
+
+    def move_helper(src, dest, ele, username=None, model_id=None):
+        steps.append(("move", username, model_id))
+        src.replace(dest)
+        return dest
+
+    async def own(src, dest):
+        steps.append("own move")
+        src.replace(dest)
+        return dest
+
+    async def get_hash(path, thread):
+        return "hash"
+
+    async def mark(ele, **kwargs):
+        steps.append(("mark", kwargs["filepath"], kwargs["size"], kwargs["hashdata"]))
+
+    async def profile(ele, thread):
+        steps.append("profile")
+
+    async def saved(path):
+        steps.append(("saved", path))
+
+    async def after(path, ele):
+        steps.append(("after", path))
+
+    monkeypatch.setattr(dm.common_paths, "moveHelper", move_helper)
+    monkeypatch.setattr(dm.common_paths, "addGlobalDir", lambda folder, dirs: steps.append("dir"))
+    monkeypatch.setattr(dm.common_paths, "set_time", lambda path, date: steps.append("time"))
+    monkeypatch.setattr(dm.common, "get_hash", get_hash)
+    monkeypatch.setattr(dm, "mark_media_as_downloaded", mark)
+    monkeypatch.setattr(dm, "set_profile_cache", profile)
+    mgr = md.MainDownloadManager()
+    mgr._after_download_script = after
+    ele = SimpleNamespace(
+        id=1, postdate="2020-01-01T00:00:00", add_filepath=lambda p: steps.append(("filepath", p))
+    )
+    path = asyncio.run(
+        mgr._finalize_download(
+            temp, target, ele, "u", 1,
+            move=own if own_move else None, profile_cache=profile_cache, on_saved=saved,
+        )
+    )
+    assert path == target and target.read_bytes() == b"data"
+    assert steps == [
+        "own move" if own_move else ("move", "u", 1),
+        "dir",
+        "time",
+        ("mark", target, 4, "hash"),
+        *(["profile"] if profile_cache else []),
+        ("saved", target),
+        ("filepath", target),
+        ("after", target),
+    ]

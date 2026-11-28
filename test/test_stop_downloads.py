@@ -14,7 +14,7 @@ import pytest
 import ofscraper.classes.table.app as table
 import ofscraper.commands.scraper.scraper as scraper
 from ofscraper.commands.scraper.actions.download import download, run as workers
-from ofscraper.commands.scraper.actions.download.managers import main_download, alt_download
+from ofscraper.commands.scraper.actions.download.managers import main_download, alt_download, downloadmanager
 from ofscraper.managers.stats import DownloadStats, StatsManager
 
 
@@ -86,8 +86,8 @@ def test_stop_running_batch_keeps_part_and_never_finalises(
     monkeypatch.setattr(workers, "log_download_progress", Mock())
     module = alt_download if drm else main_download
     cls = module.AltDownloadManager if drm else module.MainDownloadManager
-    monkeypatch.setattr(module, "mark_media_as_downloaded", marked)
-    monkeypatch.setattr(module.common_paths, "moveHelper", moved)
+    monkeypatch.setattr(downloadmanager, "mark_media_as_downloaded", marked)
+    monkeypatch.setattr(downloadmanager.common_paths, "moveHelper", moved)
     monkeypatch.setattr(cls, "_after_download_script", after)
     monkeypatch.setattr(module, "send_chunk_msg", Mock())
     monkeypatch.setattr(cls, "_add_download_job_task", AsyncMock(return_value=1))
@@ -359,7 +359,7 @@ def test_drm_merge_failure_cleans_parts_unless_stopped(
     # manual key mode is the default: without CDM files on this machine (CI)
     # the video would be skipped before the merge this test is about
     monkeypatch.setattr(alt_download.keyhelpers, "missing_cdm_keys", lambda: None)
-    monkeypatch.setattr(alt_download, "verify_media_integrity", Mock(return_value=False))
+    monkeypatch.setattr(downloadmanager, "verify_media_integrity", Mock(return_value=False))
     monkeypatch.setattr(cls, "_alt_download_downloader", AsyncMock(side_effect=lambda item, *a, **k: item))
     monkeypatch.setattr(cls, "_media_item_post_process_alt", AsyncMock(return_value=None))
 
@@ -401,9 +401,9 @@ def test_drm_merge_failure_cleans_parts_unless_stopped(
         assert all(part.read_bytes() == b"encrypted track" for part in parts)
         if key_failure:
             assert not stop_signal.requested.is_set()
-            alt_download.verify_media_integrity.assert_not_called()
+            downloadmanager.verify_media_integrity.assert_not_called()
     else:
-        alt_download.verify_media_integrity.assert_called_once_with(merged, 1)
+        downloadmanager.verify_media_integrity.assert_called_once_with(merged, 1)
 
 
 def test_stop_preserves_parts_during_batch_cleanup(monkeypatch, tmp_path, stop_signal):
@@ -428,7 +428,7 @@ def test_stop_during_integrity_check_keeps_part(monkeypatch, tmp_path, stop_sign
     def verify(*args):
         stop_signal.request()
         return False
-    monkeypatch.setattr(main_download, "verify_media_integrity", verify)
+    monkeypatch.setattr(downloadmanager, "verify_media_integrity", verify)
     async def filename():
         return "file.mp4"
     async def go():

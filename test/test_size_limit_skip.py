@@ -139,8 +139,7 @@ def env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(md.MainDownloadManager, "_get_data", get_data)
     monkeypatch.setattr(md.MainDownloadManager, "_set_data", set_data)
-    for module in (md, stream_mod):
-        monkeypatch.setattr(module, "set_profile_cache", _noop)
+    monkeypatch.setattr(dm, "set_profile_cache", _noop)
     monkeypatch.setattr(dm, "after_download_script", _noop)
     monkeypatch.setattr(dm.system, "check_free_size", lambda *a: True)
     monkeypatch.setattr(filters.separate, "seperate_avatars", lambda m: m)
