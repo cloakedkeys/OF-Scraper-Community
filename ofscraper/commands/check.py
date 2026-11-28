@@ -754,15 +754,10 @@ def _site_areas(areas, user_name):
     return kept
 
 
-_UNREAD = object()
-
-
-async def _fetch_or_cache(model_id, user_name, api, fetch, forced, cached=_UNREAD):
+async def _fetch_or_cache(model_id, user_name, api, fetch, forced):
     """(posts, fresh) for one check area: the cached list unless ``forced``
-    or there is none, else ``await fetch()``, which is then cached. A caller
-    that already read the cache passes it as ``cached``."""
-    if cached is _UNREAD:
-        cached = read_check(model_id, api)
+    or there is none, else ``await fetch()``, which is then cached."""
+    cached = read_check(model_id, api)
     log.debug(f"[{user_name}] {len(cached or [])} items in cache for {api}")
     if cached is not None and not forced:
         log.info(f"[{user_name}] Using cache for {api}")
@@ -981,9 +976,8 @@ async def purchase_check_retriver(forced=False, only_model_id=None):
             # a cached list can be days older than the rows: --metadata
             # leaves them alone
             skip_update = None
-            cached = read_check(model_id, paid_.API)
             if user_name == of_env.getattr("DELETED_MODEL_PLACEHOLDER") and (
-                forced or cached is None
+                forced or read_check(model_id, paid_.API) is None
             ):
                 # a deleted model can't be fetched from the API
                 log.info(f"[{user_name}] Processing deleted model cache/data")
@@ -1001,7 +995,6 @@ async def purchase_check_retriver(forced=False, only_model_id=None):
                     paid_.API,
                     partial(_get_paid, user_name, model_id, c=c),
                     forced,
-                    cached=cached,
                 )
                 if not paid_fresh:
                     skip_update = True
