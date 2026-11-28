@@ -3,21 +3,18 @@ import logging
 import re
 from copy import deepcopy
 
-from rich.console import Console
-
 import ofscraper.main.close.exit_status as exit_status
 import ofscraper.prompts.prompts as prompts
 import ofscraper.utils.auth.schema as auth_schema
 import ofscraper.utils.auth.utils.dict as auth_dict
 import ofscraper.utils.auth.utils.prompt as auth_prompt
+import ofscraper.utils.console as console_
 import ofscraper.utils.paths.common as common_paths
 import ofscraper.utils.settings as settings
 from ofscraper.prompts.cancel import cancel_scope
 from ofscraper.utils.auth.utils.warning.check import check_auth_warning
 from ofscraper.utils.auth.utils.warning.warning import authwarning
 from ofscraper.utils.markup import escape_text
-
-console = Console()
 
 
 def make_auth(auth=None,include_main_menu=False):
@@ -36,6 +33,8 @@ def make_auth(auth=None,include_main_menu=False):
 
 
 def _make_auth_attempt(auth, browserSelect):
+    # auth messages show even while a screen has quieted the shared console
+    console = console_.get_other_console()
     auth = auth_schema.auth_schema(auth or auth_dict.get_empty())
     if browserSelect == "Paste From M-rcus' OnlyFans-Cookie-Helper":
         auth = auth_schema.auth_schema(auth_prompt.cookie_helper_extension())

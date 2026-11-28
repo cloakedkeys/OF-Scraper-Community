@@ -14,17 +14,15 @@ r"""
 import json
 import logging
 
-from rich.console import Console
-
 import ofscraper.prompts.prompts as prompts
 import ofscraper.utils.auth.make as make
 import ofscraper.utils.auth.utils.dict as auth_dict
+import ofscraper.utils.console as console_
 import ofscraper.utils.interactive as interactive
 import ofscraper.utils.paths.common as common_paths
 from ofscraper.prompts.cancel import back_to_menu
 from ofscraper.utils.markup import escape_text
 
-console = Console()
 log = logging.getLogger("shared")
 
 
@@ -40,6 +38,8 @@ def handle_auth_errors(e: Exception,include_main_menu:bool=False) -> str | None:
         str | None: "quit" or "main" if the user chooses to exit,
                     or None if the user fixes the issue and the operation should be retried.
     """
+    # auth messages show even while a screen has quieted the shared console
+    console = console_.get_other_console()
     if isinstance(e, FileNotFoundError):
         console.print("You don't seem to have an `auth.json` file. Creating one for you.")
         # make_auth will guide the user. It returns "quit" or "main" if the user backs out.

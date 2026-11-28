@@ -14,11 +14,10 @@ r"""
 import logging
 
 import browser_cookie3
-from rich.console import Console
 
 import ofscraper.prompts.prompts as prompts
+import ofscraper.utils.console as console
 
-console = Console()
 log = logging.getLogger("shared")
 
 
@@ -30,7 +29,7 @@ def browser_cookie_helper(auth, browserSelect):
     # the browser's cookie is named auth_uid_<user id>
     uid = next((v for k, v in temp.items() if k.startswith("auth_uid_")), "")
     auth["auth_uid"] = auth.get("auth_uid") or uid
-    console.print(
+    console.get_other_console().print(
         "You'll need to go to onlyfans.com and retrive/update header information\nGo to https://github.com/datawhores/OF-Scraper and find the section named 'Getting Your Auth Info'\nCookie information has been retived automatically\nSo You only need to retrive the x-bc header and the user-agent",
         style="yellow",
     )

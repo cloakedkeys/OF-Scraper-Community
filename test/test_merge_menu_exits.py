@@ -112,7 +112,7 @@ def test_confirm_yes_runs_the_merge(monkeypatch):
 def screen(monkeypatch):
     """What the merge screen prints, in a console wide enough not to wrap."""
     printed = io.StringIO()
-    monkeypatch.setattr(merge_utils, "console", Console(file=printed, width=1000))
+    monkeypatch.setattr(merge_utils.console_, "get_other_console", lambda: Console(file=printed, width=1000))
     return printed
 
 
@@ -141,7 +141,7 @@ def test_the_screen_says_it_works_on_sqlite_files_while_postgresql_is_on(monkeyp
 
 def test_the_import_command_is_one_line_with_the_file_the_merge_wrote(monkeypatch):
     printed = io.StringIO()
-    monkeypatch.setattr(merge_utils, "console", Console(file=printed, width=60))
+    monkeypatch.setattr(merge_utils.console_, "get_other_console", lambda: Console(file=printed, width=60))
     monkeypatch.setattr(postgres, "enabled", lambda: True)
     # a file name: the merge writes user_data.db in the folder it is in
     target = str(Path("a [b]", "a very long merge folder name", "merged.db"))

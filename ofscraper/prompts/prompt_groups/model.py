@@ -18,17 +18,16 @@ from typing import Union
 import arrow
 from InquirerPy.base import Choice
 from InquirerPy.separator import Separator
-from rich.console import Console
 
 import ofscraper.prompts.prompt_strings as prompt_strings
 import ofscraper.prompts.prompt_validators as prompt_validators
 import ofscraper.prompts.promptConvert as promptClasses
 import ofscraper.prompts.utils.model_helpers as modelHelpers
 import ofscraper.prompts.utils.prompt_helpers as prompt_helpers
+import ofscraper.utils.console as console_
 import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 
-console = Console()
 models = None
 
 
@@ -223,6 +222,7 @@ def modify_active_prompt(args):
 
 
 def modify_promo_prompt(args):
+    console = console_.get_console()
     answer = {}
     if (
         args.current_price is not None
@@ -336,6 +336,7 @@ def modify_promo_prompt(args):
 
 
 def modify_prices_prompt(args):
+    console = console_.get_console()
     if args.free_trial:
         console.print(inspect.cleandoc("""
             [bold yellow]Free trial is True

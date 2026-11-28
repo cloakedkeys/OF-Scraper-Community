@@ -254,7 +254,7 @@ def test_onlyfans_edit_auth_clears_my_info_cache_on_save(monkeypatch):
     )
     monkeypatch.setattr(auth_file, "hide_secrets", lambda auth: hidden.append(auth))
     monkeypatch.setattr(profile_data, "clear_my_info", lambda: cleared.append(True))
-    monkeypatch.setattr(auth_file.console, "print", lambda *a, **k: None)
+    monkeypatch.setattr(auth_file.console, "get_other_console", lambda: SimpleNamespace(print=lambda *a, **k: None))
 
     result = auth_file.edit_auth()
     assert result == {"sess": "new", "x-bc": "new-bc"}
@@ -296,7 +296,7 @@ def test_make_auth_attempt_masks_secrets_and_clears_my_info(monkeypatch, tmp_pat
         lambda current: {"sess": "fresh-sess", "x-bc": "fresh-xbc", "auth_id": "42", "user_agent": "ua"},
     )
     monkeypatch.setattr(auth_make, "check_auth_warning", lambda auth: True)
-    monkeypatch.setattr(auth_make.console, "print", lambda *a, **k: None)
+    monkeypatch.setattr(auth_make.console_, "get_other_console", lambda: SimpleNamespace(print=lambda *a, **k: None))
     monkeypatch.setattr(auth_file, "hide_secrets", lambda auth: hidden.append(dict(auth)))
     monkeypatch.setattr(profile_data, "clear_my_info", lambda: cleared.append(True))
 

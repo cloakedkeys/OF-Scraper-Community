@@ -1,17 +1,15 @@
-from rich.console import Console
-
 import ofscraper.db.merge as merge
 import ofscraper.db.postgres as postgres
 import ofscraper.prompts.prompts as prompts
+import ofscraper.utils.console as console_
 from ofscraper.utils.context.run_async import run
-
-console = Console()
 
 
 def merge_runner():
     # the merge works on user_data.db files, whichever engine is in use.
-    # Printed like the screen's other messages, so that it shows at every
-    # --output level
+    # Printed through the console that is never quiet, so that it shows at
+    # every --output level and while a screen has quieted the shared console
+    console = console_.get_other_console()
     if postgres.enabled():
         console.print(postgres.sqlite_files_notice("Merge Databases"))
     while True:
