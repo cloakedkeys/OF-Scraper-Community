@@ -7,8 +7,7 @@ import ofscraper.db.utils.columns as db_columns
 
 @dataclasses.dataclass(frozen=True)
 class TableSpec:
-    """A creator table, as the upgrade's transition read and rebuild and the
-    merge's copy see it."""
+    """A creator table, as the upgrade's transition read and rebuild see it."""
 
     name: str
     create: str
