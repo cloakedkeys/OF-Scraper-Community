@@ -123,7 +123,7 @@ def _open_in_vscode(folder: pathlib.Path) -> bool:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-    except OSError:
+    except Exception:
         return False
     threading.Thread(target=proc.wait, daemon=True).start()
     return True
@@ -867,20 +867,22 @@ class LiveStreamApp(App):
     def _open_entry_folder(self, entry: StreamRowState | None) -> None:
         import ofscraper.classes.table.utils.open_folder as open_folder
 
-        target = _resolve_entry_target(entry)
         try:
+            target = _resolve_entry_target(entry)
             open_folder.open_target(target)
             self.notify(f"Opened: {target.folder}", title="Open Folder", markup=False)
-        except open_folder.OpenError as e:
-            if _open_in_vscode(target.folder):
+        except Exception as e:
+            folder = getattr(locals().get("target"), "folder", None)
+            if isinstance(e, open_folder.OpenError) and folder is not None and _open_in_vscode(folder):
                 self.notify(
-                    f"Opened in VS Code: {target.folder}",
+                    f"Opened in VS Code: {folder}",
                     title="Open Folder",
                     markup=False,
                 )
                 return
+            suffix = f" ({folder})" if folder is not None else ""
             self.notify(
-                f"{e} ({target.folder})",
+                f"{e}{suffix}",
                 title="Open Folder",
                 severity="warning",
                 markup=False,
