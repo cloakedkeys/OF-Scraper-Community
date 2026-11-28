@@ -842,7 +842,9 @@ async def message_check_retriver(forced=False, only_model_id=None):
     links = list(url_helper())
     if settings.get_settings().force:
         forced = True
-    async with manager.Manager.session.aget_ofsession() as c:
+    async with manager.Manager.session.aget_ofsession(
+        sem_count=of_env.getattr("API_REQ_CHECK_MAX"),
+    ) as c:
         for item in links:
             if not item:
                 continue
