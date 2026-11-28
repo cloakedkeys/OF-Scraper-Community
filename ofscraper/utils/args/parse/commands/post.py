@@ -1,10 +1,19 @@
-import cloup as click
+from ofscraper.utils.args.parse.group_bundles.check import (
+    common_args_check,
+    main_check,
+    make_check_command,
+)
+from ofscraper.utils.args.parse.groups.check_content import (
+    content_check_options,
+    url_group,
+)
 
-from ofscraper.utils.args.parse.group_bundles.post_check import post_check_args
-
-
-@post_check_args
-@click.pass_context
-def post_check(ctx, *args, **kwargs):
-    # fix before for checking post
-    return ctx.params, ctx.info_name
+post_check = make_check_command(
+    "post_check",
+    short_help="""\b
+                Produces a media table from posts with filterable entries and quick downloads""",
+    help="""The post_check subcommand gathers information on media content from posts.
+    It presents this data in a table format with filtering options for focused searches.
+    Allows unlocked media entries to be directly downloaded through the table.""",
+    options=(url_group, main_check, common_args_check, content_check_options),
+)

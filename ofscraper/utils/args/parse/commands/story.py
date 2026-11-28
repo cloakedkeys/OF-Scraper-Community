@@ -1,9 +1,18 @@
-import cloup as click
+from ofscraper.utils.args.parse.arguments.check import force
+from ofscraper.utils.args.parse.group_bundles.check import (
+    common_args_check,
+    make_check_command,
+)
+from ofscraper.utils.args.parse.groups.check_content import username_group
 
-from ofscraper.utils.args.parse.group_bundles.story_check import story_check_args
-
-
-@story_check_args
-@click.pass_context
-def story_check(ctx, *args, **kwargs):
-    return ctx.params, ctx.info_name
+story_check = make_check_command(
+    "story_check",
+    short_help="""\b
+                Produces a media table from stories and highlights with filterable entries and quick downloads""",
+    help="""
+    The story_check subcommand gathers information on media content from stories and highlights.
+    It presents this data in a table format with filtering options for focused searches.
+    Allows unlocked media entries to be directly downloaded through the table.
+    """,
+    options=(username_group, force, common_args_check),
+)
