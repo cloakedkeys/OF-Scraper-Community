@@ -224,7 +224,7 @@ def get_all_messages_transition(
 
 @wrapper.operation_wrapper_async
 def get_messages_post_info(model_id=None, username=None, conn=None, **kwargs) -> list:
-    return media.post_info(conn, messagesData, model_id, commit=True)
+    return media.post_info(conn, messagesData, model_id)
 
 
 @wrapper.operation_wrapper_async

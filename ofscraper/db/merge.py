@@ -58,9 +58,9 @@ def _keys(rows, columns):
 
 class _CopiedTable(typing.NamedTuple):
     """A table merged by copying each source row whose key (its values of
-    `keys`) the merged database hasn't got yet."""
+    `merge_key`) the merged database hasn't got yet."""
 
-    keys: tuple
+    merge_key: tuple
     read: typing.Callable
     write: typing.Callable
 
@@ -132,7 +132,7 @@ class MergeDatabase:
             )
             # the keys of the merged database's rows, for each copied table
             self._seen = {
-                name: _keys(await table.read(db_path=self._new_db), table.keys)
+                name: _keys(await table.read(db_path=self._new_db), table.merge_key)
                 for name, table in COPIED_TABLES.items()
             }
             curr_medias = await get_all_medias_transition(db_path=self._new_db)
@@ -304,12 +304,12 @@ class MergeDatabase:
             [
                 x
                 for x in inserts_old_db
-                if tuple(x[key] for key in table.keys) not in seen
+                if tuple(x[key] for key in table.merge_key) not in seen
             ],
             db_path=self._new_db,
         )
         # remember this source only once its writes succeeded
-        seen.update(_keys(inserts_old_db, table.keys))
+        seen.update(_keys(inserts_old_db, table.merge_key))
 
     async def merge_profiles_helper(self, old_db):
         inserts_old_db = await get_all_profiles(db_path=old_db)

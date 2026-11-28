@@ -225,7 +225,6 @@ def fill_posts_missing_fields(
         conn.commit()
 
 
-
 @wrapper.operation_wrapper_async
 def get_timeline_posts_info(model_id=None, username=None, conn=None, **kwargs) -> list:
     return media.post_info(conn, timelinePostInfo, model_id)
@@ -309,12 +308,12 @@ def add_column_post_mentions(conn=None, **kwargs):
 
 @wrapper.operation_wrapper_async
 def get_archived_post_info(model_id=None, username=None, conn=None, **kwargs) -> list:
-    return media.post_info(conn, archivedPostInfo, model_id, commit=True)
+    return media.post_info(conn, archivedPostInfo, model_id)
 
 
 @wrapper.operation_wrapper_async
 def get_streams_post_info(model_id=None, username=None, conn=None, **kwargs) -> list:
-    return media.post_info(conn, streamsPostInfo, model_id, commit=True)
+    return media.post_info(conn, streamsPostInfo, model_id)
 
 
 async def rebuild_posts_table(model_id=None, username=None, db_path=None, **kwargs):
@@ -398,6 +397,7 @@ async def get_oldest_timeline_date(model_id=None, username=None, **kwargs):
 async def get_youngest_timeline_date(model_id=None, username=None, **kwargs):
     read = media.get_timeline_media
     return await media.area_date(read, model_id, username, newest=True)
+
 
 @wrapper.operation_wrapper_async
 def get_deleted_post_ids(model_id=None, username=None, conn=None, **kwargs) -> set:
