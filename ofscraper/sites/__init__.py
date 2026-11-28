@@ -147,7 +147,7 @@ def resolve_site(args) -> str:
             config_data.get_main_profile()
         )
         profile = profile_tools.profile_name_fixer(profile)
-        if _session_site and (_session_profile is None or profile == _session_profile):
+        if _session_site and _session_profile is not None and profile == _session_profile:
             return _session_site
         profile_dir = common_paths.get_config_home() / profile
     except Exception as e:

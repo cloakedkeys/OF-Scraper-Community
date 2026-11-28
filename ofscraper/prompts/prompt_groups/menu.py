@@ -20,25 +20,30 @@ import ofscraper.sites as sites
 import ofscraper.utils.of_env.of_env as of_env
 
 
+def _get_non_property(obj, attr):
+    if isinstance(getattr(type(obj), attr, None), property):
+        return None
+    return getattr(obj, attr, None)
+
+
 def _peek_current_model_manager(mgr):
     if mgr is None:
         return None
     # Prefer peeking on an already-initialized ProfileManager so rendering
     # the menu never eagerly creates a ProfileManager or ModelManager.
-    mgr_dict = vars(mgr) if hasattr(mgr, "__dict__") else {}
-    if "_profile_manager" in mgr_dict:
-        pm = mgr_dict["_profile_manager"]
+    if hasattr(mgr, "_profile_manager"):
+        pm = _get_non_property(mgr, "_profile_manager")
         if pm is None:
             return None
         if hasattr(pm, "peek_model_manager"):
             return pm.peek_model_manager()
-        return vars(pm).get("current_model_manager") if hasattr(pm, "__dict__") else None
-    pm = mgr_dict.get("profile_manager")
+        return _get_non_property(pm, "current_model_manager")
+    pm = _get_non_property(mgr, "profile_manager")
     if pm is not None:
         if hasattr(pm, "peek_model_manager"):
             return pm.peek_model_manager()
-        return vars(pm).get("current_model_manager") if hasattr(pm, "__dict__") else None
-    return mgr_dict.get("current_model_manager")
+        return _get_non_property(pm, "current_model_manager")
+    return _get_non_property(mgr, "current_model_manager")
 
 
 def _main_menu_status() -> str:
