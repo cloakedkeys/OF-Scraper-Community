@@ -1,18 +1,7 @@
 from typing import List, Union
 
 import ofscraper.utils.console as console
-from ofscraper.utils.live.progress import (
-    activity_counter,
-    activity_desc,
-    api_job_progress,
-    api_overall_progress,
-    download_job_progress,
-    download_overall_progress,
-    like_overall_progress,
-    metadata_overall_progress,
-    userlist_job_progress,
-    userlist_overall_progress,
-)
+import ofscraper.utils.live.updater as updater
 
 
 def clear():
@@ -23,67 +12,33 @@ def clear():
     console.get_shared_console().line(2)
 
 
-def _hide_tasks_in_progress(progress_instance):
-    """Helper function to hide all tasks in a given Progress instance."""
-    try:
-        for task in progress_instance.tasks:
-            progress_instance.update(task.id, visible=False)
-    except Exception:
-        pass  # Failsafe for any potential race conditions or errors
-
-
-def clear_api_tasks():
-    _hide_tasks_in_progress(api_job_progress)
-    _hide_tasks_in_progress(api_overall_progress)
-
-
-def clear_download_tasks():
-    _hide_tasks_in_progress(download_job_progress)
-    _hide_tasks_in_progress(download_overall_progress)
-
-
-def clear_metadata_tasks():
-    _hide_tasks_in_progress(metadata_overall_progress)
-
-
-def clear_like_tasks():
-    _hide_tasks_in_progress(like_overall_progress)
-
-
-def clear_userlist_tasks():
-    _hide_tasks_in_progress(userlist_job_progress)
-    _hide_tasks_in_progress(userlist_overall_progress)
-
-
-def clear_activity_tasks():
-    _hide_tasks_in_progress(activity_counter)
-    _hide_tasks_in_progress(activity_desc)
-
-
 def clear_all_tasks():
     """Hides all tasks from all progress managers."""
-    clear_activity_tasks()
-    clear_api_tasks()
-    clear_download_tasks()
-    clear_metadata_tasks()
-    clear_like_tasks()
-    clear_userlist_tasks()
+    for manager in (
+        updater.activity,
+        updater.api,
+        updater.download,
+        updater.metadata,
+        updater.like,
+        updater.userlist,
+    ):
+        manager.clear()
 
 
 TASK_CLEAR_MAP = {
-    "api": clear_api_tasks,
-    "download": clear_download_tasks,
-    "metadata": clear_metadata_tasks,
-    "like": clear_like_tasks,
-    "userlist": clear_userlist_tasks,
+    "api": updater.api.clear,
+    "download": updater.download.clear,
+    "metadata": updater.metadata.clear,
+    "like": updater.like.clear,
+    "userlist": updater.userlist.clear,
     "all": clear_all_tasks,
-    "activity": clear_activity_tasks,
+    "activity": updater.activity.clear,
 }
 
 
 def clear_tasks_by_name(names: Union[str, List[str]]):
     """
-    Calls the appropriate clear_..._tasks() function for each name provided.
+    Hides the tasks of each named progress group (see TASK_CLEAR_MAP).
     Accepts a single string or a list of strings.
 
     Args:

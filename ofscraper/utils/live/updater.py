@@ -54,12 +54,19 @@ class ProgressManager:
 
     def clear(self):
         """Hides all tasks managed by this manager."""
-        if self.job:
-            for task in self.job.tasks:
-                self.job.update(task.id, visible=False)
-        if self.overall:
-            for task in self.overall.tasks:
-                self.overall.update(task.id, visible=False)
+        hide_tasks(self.job)
+        hide_tasks(self.overall)
+
+
+def hide_tasks(progress: Progress | None):
+    """Hides every task in ``progress`` (None: there's nothing to hide)."""
+    if progress is None:
+        return
+    try:
+        for task in progress.tasks:
+            progress.update(task.id, visible=False)
+    except Exception:
+        pass  # Failsafe for any potential race conditions or errors
 
 
 class ActivityManager:
@@ -84,6 +91,11 @@ class ActivityManager:
     def update_user(self, visible=True, **kwargs):
         """Updates the 'user-specific' progress bar (description, progress, etc.)."""
         self.counter.update(self.get_user_id(), visible=visible, **kwargs)
+
+    def clear(self):
+        """Hides the activity counter and description tasks."""
+        hide_tasks(self.counter)
+        hide_tasks(self.desc)
 
     def get_description(self) -> str | None:
         """Gets the current description of the main activity task."""
