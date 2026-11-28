@@ -120,6 +120,7 @@ def _toggle_requests(c, post: Post, model_id, liked: bool):
     wrong state was already in the wanted one and is toggled again.
     Returns 1 when toggled, 2 when toggled back, 3 when it failed.
     """
+    liked = bool(liked)  # compared by value below: any truthy value means liked
     if liked:
         # pauses between the two toggles
         sleep_duration = random.uniform(
@@ -136,14 +137,14 @@ def _toggle_requests(c, post: Post, model_id, liked: bool):
     if favorited is None:
         mark(success=False)
         return 3
-    if bool(favorited) is liked:
+    if bool(favorited) == liked:
         log.debug(f"ID: {id} changed to {state}")
         mark()
         return 1
     log.debug(f"ID: {id} was already {state}; {verb} it again")
     time.sleep(sleep_duration)
     favorited, _ = _like_request(c, id, model_id)
-    if favorited is None or bool(favorited) is not liked:
+    if favorited is None or bool(favorited) != liked:
         mark(success=False)
         return 3
     log.debug(f"ID: {id} restored to {state}")
