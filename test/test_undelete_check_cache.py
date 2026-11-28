@@ -225,9 +225,10 @@ def from_api(call):
 
 
 def test_every_scan_area_saves_its_items_as_from_the_api():
-    # timeline, archived, streams, pinned, labels, messages, paid and scrape paid
+    # labels and scrape paid; the other areas save through _process_area,
+    # whose from_api test_post_area_wrappers.py checks per area
     calls = save_calls(scan_post)
-    assert len(calls) == 8
+    assert len(calls) == 2
     for call in calls:
         value = from_api(call)
         assert isinstance(value, ast.Constant) and value.value is True, ast.unparse(call)
