@@ -1,14 +1,14 @@
 import logging
 import shutil
-import arrow
 import traceback
 
-from ofscraper.utils.markup import escape_text
+import arrow
 
+import ofscraper.utils.console as console_
+import ofscraper.utils.context.stdout as stdout
 import ofscraper.utils.paths.common as common_paths
 import ofscraper.utils.settings as settings
-import ofscraper.utils.context.stdout as stdout
-import ofscraper.utils.console as console_
+from ofscraper.utils.markup import escape_text
 
 console=console_.get_shared_console()
 

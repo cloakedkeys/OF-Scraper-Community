@@ -36,6 +36,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse, urlsplit
 
 import ofscraper.utils.events as events
 
+import ofscraper.utils.events as events
+
 log = logging.getLogger("shared")
 
 INSTALL_HINT = (
