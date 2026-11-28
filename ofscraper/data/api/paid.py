@@ -254,10 +254,3 @@ def create_all_paid_dict(paid_content):
         user_dict.setdefault(str(user_id), []).append(ele)
     [update_check(val, key, None, API) for key, val in user_dict.items()]
     return user_dict
-
-
-def get_individual_paid_post(username, model_id, postid):
-    data = get_paid_posts(username, model_id)
-    postid = int(postid)
-    posts = list(filter(lambda x: int(x.get("id")) == postid, data))
-    return posts[0] if posts else None

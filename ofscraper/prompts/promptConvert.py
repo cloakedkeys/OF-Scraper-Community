@@ -226,8 +226,6 @@ def get_default_instructions(funct):
 
     elif funct.__name__ == "checkbox":
         return prompt_strings.FUZZY_INSTRUCTION
-    elif funct.__name__ == "checkbox":
-        return prompt_strings.FUZZY_INSTRUCTION
 
 
 @wrapper

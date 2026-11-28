@@ -94,7 +94,3 @@ def cleanDB():
         )
     except PermissionError:
         pass
-
-
-def speed_file():
-    return pathlib.Path(common_paths.get_profile_path() / "speed.zip")

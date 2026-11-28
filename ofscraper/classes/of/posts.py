@@ -180,11 +180,6 @@ class Post(base.base):
         or "failed"."""
         self.text_status = status
 
-    @property
-    def missed_downloads(self):
-        """Convenience property to see what failed to download."""
-        return self.failed_downloads
-
     # --------------------------------------------------------------------------------
     # --- Data Access Properties (Complete) ---
     # --------------------------------------------------------------------------------

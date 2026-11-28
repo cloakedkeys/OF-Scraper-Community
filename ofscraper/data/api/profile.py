@@ -15,7 +15,6 @@ import logging
 import traceback
 from typing import Union
 
-from rich.console import Console
 from xxhash import xxh128
 
 import ofscraper.managers.manager as manager
@@ -25,7 +24,6 @@ import ofscraper.utils.settings as settings
 
 from ...utils import encoding
 
-console = Console()
 log = logging.getLogger("shared")
 API = "Profile"
 

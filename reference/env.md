@@ -111,7 +111,6 @@ Defined in `ofscraper/utils/of_env/values/general.py`.
 |---|---|
 | <a id="supress_outputs"></a>`OFSC_SUPRESS_OUTPUTS`<br>Key: `SUPRESS_OUTPUTS` | **Default:** `['CRITICAL', 'ERROR', 'LOW', 'OFF', 'PROMPT', 'WARNING']`. Output levels (`--output`) at which `lowstdout()` silences standard output. |
 | <a id="show_avatar"></a>`OFSC_SHOW_AVATAR`<br>Key: `SHOW_AVATAR` | **Default:** `True`. Whether to include the creator's avatar URL in scrape headers and summaries. |
-| <a id="show_results_log"></a>`OFSC_SHOW_RESULTS_LOG`<br>Key: `SHOW_RESULTS_LOG` | **Default:** `True`. Whether to print the final run summary log at exit. |
 | <a id="model_price_placeholder"></a>`OFSC_MODEL_PRICE_PLACEHOLDER`<br>Key: `MODEL_PRICE_PLACEHOLDER` | **Default:** `'Unknown_Price'`. Fallback value for price placeholders (`{current_price}`, `{regular_price}`, `{promo_price}`, `{renewal_price}`) when a creator's model isn't loaded. |
 | <a id="deleted_model_placeholder"></a>`OFSC_DELETED_MODEL_PLACEHOLDER`<br>Key: `DELETED_MODEL_PLACEHOLDER` | **Default:** `'modeldeleted'`. Fallback username prefix used for deleted accounts whose real username isn't recorded. |
 | <a id="app_token"></a>`OFSC_APP_TOKEN`<br>Key: `APP_TOKEN` | **Default:** `'33d57ade8c02dbc5a333db99ff9ae26a'`. The OnlyFans `app-token` header value sent on API requests. |

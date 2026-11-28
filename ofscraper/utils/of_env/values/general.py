@@ -38,13 +38,6 @@ def load_general_config():
         "1",
     )
 
-    # SHOW_RESULTS_LOG: Whether to print the final run summary log at exit.
-    # Default: True
-    config["SHOW_RESULTS_LOG"] = os.getenv("OFSC_SHOW_RESULTS_LOG", "True").lower() in (
-        "true",
-        "1",
-    )
-
     # MODEL_PRICE_PLACEHOLDER: Fallback value for price placeholders (`{current_price}`, `{regular_price}`, `{promo_price}`, `{renewal_price}`) when a creator's model isn't loaded.
     # Default: "Unknown_Price"
     config["MODEL_PRICE_PLACEHOLDER"] = os.getenv(

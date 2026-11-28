@@ -74,11 +74,6 @@ def get_download_group():
     return download_progress_group
 
 
-download_overall_progress_group = Group(
-    activity_desc_counter_group, download_overall_panel, fit=True
-)
-
-
 # metadata
 metadata_overall_panel = Blue_Panel(
     metadata_overall_progress, style="bold deep_sky_blue2"

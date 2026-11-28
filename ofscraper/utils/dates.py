@@ -71,10 +71,6 @@ def setLogDate(dateDict_=None):
         }
 
 
-def getLogDateVManager():
-    return dateDict
-
-
 def resetLogDate():
     global dateDict
     dateDict = None
