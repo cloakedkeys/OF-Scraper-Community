@@ -55,8 +55,8 @@ def pricePaidFreeFilterHelper(filterusername):
 
 
 def _min_max_filter(users, bound, attr, op, label):
-    # as on main, a bound of 0 is skipped like an unset one
-    if not bound:
+    # 0 is a real bound (--current-price-max 0 keeps free accounts)
+    if bound is None:
         return users
     return filter_users(
         users,
