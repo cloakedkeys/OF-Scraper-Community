@@ -31,6 +31,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
   - [Content Options](#content-options)
   - [Metadata Options](#metadata-options)
   - [Sorting for the table](#sorting-for-the-table)
+  - [Livestream Options](#livestream-options)
 
 ## Quick reference
 
@@ -44,6 +45,7 @@ Every command and option the CLI accepts. Built from the click program in `ofscr
 | [`post_check`](#post_check) (56 options) | Produces a media table from posts with filterable entries and quick downloads |
 | [`metadata`](#metadata) (87 options) | Modify metadata or db files |
 | [`db`](#db) (61 options) | Print information from the database |
+| [`live_tui`](#live_tui) (55 options) | Interactive TUI dashboard for monitoring and recording livestreams |
 | [`creator_names`](#creator_names-separate-entry-point) (argparse) | List and record the usernames each creator account has had. |
 | [`doctor`](#doctor-separate-entry-point) (argparse) | Check the setup without running a scrape. |
 | [`health`](#health-separate-entry-point) (argparse) | Check whether an unattended daemon is healthy from its status file. |
@@ -119,6 +121,12 @@ The run reads `auth.json` and `config.json` from the profile. It writes media un
 **Options:** 61 · **`--help` summary:** Print information from the database
 
 `ofscraper db`, with user selection, area (`-o`) and media filters (type, size, length, downloaded, locked, preview, protected, post and media ids, dates), sorting and a hard limit. `--post-id` and `--media-id` take one id, or several separated by commas or spaces. An id is decimal digits, from any script. A value with no id in it, or with anything else (such as `²` or `-4`), is a usage error. It reads media rows from each selected creator's `user_data.db` and prints them as a table. `-ep`/`--export PATH` also writes a `.csv`. It makes no API calls for the media itself. With several creators, every selected creator's rows go into the one CSV. `--unmark-permanent-skips` narrows the rows to the permanent `skip_download_script` skips and sets them back to not downloaded after printing them.
+
+### `live_tui`
+
+**Options:** 55 · **`--help` summary:** Open an interactive terminal dashboard (TUI) to monitor and record Fansly or OnlyFans livestreams in real time. Polls continuously by default; pass --once / --live for a single check.
+
+`ofscraper live_tui`, with livestream options (`--once`/`--live`, `--live-interval`, `--live-jitter`, `--live-max`, `--live-chat`, `--refresh-users`) and the usual user selection and filter options. Opens an interactive Textual dashboard to monitor and record Fansly or OnlyFans livestreams in real time. Polls continuously by default; pass `--once` / `--live` for a single check. Cannot be combined with `--no-live` / `--no-rich`.
 
 ### `creator_names` (separate entry point)
 
@@ -478,7 +486,7 @@ The lowest video quality to accept. The smallest available quality at or above i
 
 #### `--mediatype`
 
-**Also:** `-mt`, `--mediatypes`, `--media-types`, `--media-type` · **Type:** one of `Videos`, `Audios`, `Images`; repeatable · **Default:** `[]` · **Commands:** all · **Config fallback:** `download_options.filter`
+**Also:** `-mt`, `--mediatypes`, `--media-types`, `--media-type` · **Type:** one of `Videos`, `Audios`, `Images`; repeatable · **Default:** `[]` · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `db` · **Config fallback:** `download_options.filter`
 
 Filter by media type (Videos, Audios, Images)
 
@@ -486,7 +494,7 @@ Filter by media type (Videos, Audios, Images)
 
 #### `--size-max`
 
-**Also:** `-sx` · **Type:** text, parsed by `parse_size` · **Default:** none · **Commands:** all · **Config fallback:** `content_filter_options.file_size_max`
+**Also:** `-sx` · **Type:** text, parsed by `parse_size` · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `db` · **Config fallback:** `content_filter_options.file_size_max`
 
 Filter out files larger than the given size (bytes or human-readable, e.g., 10mb)
 
@@ -494,7 +502,7 @@ Filter out files larger than the given size (bytes or human-readable, e.g., 10mb
 
 #### `--size-min`
 
-**Also:** `-sm` · **Type:** text, parsed by `parse_size` · **Default:** none · **Commands:** all · **Config fallback:** `content_filter_options.file_size_min`
+**Also:** `-sm` · **Type:** text, parsed by `parse_size` · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `db` · **Config fallback:** `content_filter_options.file_size_min`
 
 Filter out files smaller than the given size (bytes or human-readable, e.g., 10mb)
 
@@ -502,7 +510,7 @@ Filter out files smaller than the given size (bytes or human-readable, e.g., 10m
 
 #### `--length-max`
 
-**Also:** `-lx` · **Type:** integer range · **Default:** none · **Commands:** all · **Config fallback:** `content_filter_options.length_max`
+**Also:** `-lx` · **Type:** integer range · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `db` · **Config fallback:** `content_filter_options.length_max`
 
 Max duration in seconds (whole number, e.g. 90); only applies to videos
 
@@ -510,7 +518,7 @@ Max duration in seconds (whole number, e.g. 90); only applies to videos
 
 #### `--length-min`
 
-**Also:** `-lm` · **Type:** integer range · **Default:** none · **Commands:** all · **Config fallback:** `content_filter_options.length_min`
+**Also:** `-lm` · **Type:** integer range · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `db` · **Config fallback:** `content_filter_options.length_min`
 
 Min duration in seconds (whole number, e.g. 90); only applies to videos
 
@@ -518,7 +526,7 @@ Min duration in seconds (whole number, e.g. 90); only applies to videos
 
 #### `--media-id`
 
-**Also:** `-mid` · **Type:** text; repeatable · **Default:** none · **Commands:** all
+**Also:** `-mid` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `db`
 
 Filter media based on media id
 
@@ -856,7 +864,7 @@ Comma- or space-separated profiles to run one after another on each --daemon pas
 
 Record the selected creators (all followed creators without -u) who are live now, then continue. OnlyFans needs the optional live install (a Chromium browser)
 
-**Dest:** `live` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`
+**Dest:** `live` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`, `ofscraper/utils/args/parse/commands/live_tui.py`
 
 #### `--live-watch`
 
@@ -870,7 +878,7 @@ When `-u`, a user list or other subscription filters choose the creators, the ch
 
 #### `--live-interval`
 
-**Type:** integer range · **Default:** none · **Commands:** main program
+**Type:** integer range · **Default:** none · **Commands:** main program, `live_tui`
 
 Seconds between live checks in --live-watch (default 60, plus random jitter up to --live-jitter)
 
@@ -878,7 +886,7 @@ Seconds between live checks in --live-watch (default 60, plus random jitter up t
 
 #### `--live-jitter`
 
-**Type:** float range · **Default:** none · **Commands:** main program
+**Type:** float range · **Default:** none · **Commands:** main program, `live_tui`
 
 Max random extra seconds added to each --live-watch check interval (default 10)
 
@@ -888,7 +896,7 @@ Overrides `LIVE_JITTER` (`OFSC_LIVE_JITTER`) for the run, on OnlyFans and Fansly
 
 #### `--live-max`
 
-**Type:** integer range · **Default:** none · **Commands:** main program
+**Type:** integer range · **Default:** none · **Commands:** main program, `live_tui`
 
 Most livestreams recorded at the same time (default 2)
 
@@ -896,7 +904,7 @@ Most livestreams recorded at the same time (default 2)
 
 #### `--live-chat`
 
-**Type:** flag · **Default:** off · **Commands:** main program
+**Type:** flag · **Default:** off · **Commands:** main program, `live_tui`
 
 Fansly only: also save livestream chat to a .jsonl file (read-only; off by default)
 
@@ -904,7 +912,7 @@ Fansly only: also save livestream chat to a .jsonl file (read-only; off by defau
 
 #### `--refresh-users`
 
-**Also:** `--live-pull`, `--daemon-pull` · **Type:** flag · **Default:** off · **Commands:** main program
+**Also:** `--live-pull`, `--daemon-pull` · **Type:** flag · **Default:** off · **Commands:** main program, `live_tui`
 
 Force a refresh of the model list on each pass in daemon, live, and prompt modes across OnlyFans and Fansly
 
@@ -916,7 +924,7 @@ In daemon and prompt runs, the creator list is read again before each pass and t
 
 #### `--usernames` (`usernames`)
 
-**Also:** `-u`, `--username`, `--users`, `--user` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-u`, `--username`, `--users`, `--user` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Select which usernames to process (name,name2). Set to ALL for all users
 
@@ -924,7 +932,7 @@ Select which usernames to process (name,name2). Set to ALL for all users
 
 #### `--excluded-username`
 
-**Also:** `-eu` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-eu` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Select which usernames to exclude (name,name2). Has preference over --username. Also skips these models during --scrape-paid, e.g. --scrape-paid --excluded-username name
 
@@ -932,7 +940,7 @@ Select which usernames to exclude (name,name2). Has preference over --username. 
 
 #### `--user_list`
 
-**Also:** `-ul`, `--user-list`, `--userlist`, `--userlists`, `--user-lists` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `metadata`, `db` · **Config fallback:** `advanced_options.default_user_list`
+**Also:** `-ul`, `--user-list`, `--userlist`, `--userlists`, `--user-lists` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui` · **Config fallback:** `advanced_options.default_user_list`
 
 Filter by userlist. Note: the lists 'ofscraper.main', 'ofscraper.expired', and 'ofscraper.active' are reserved and should not be the name of any list you have on OF
 
@@ -940,7 +948,7 @@ Filter by userlist. Note: the lists 'ofscraper.main', 'ofscraper.expired', and '
 
 #### `--black_list`
 
-**Also:** `-bl`, `--black-lists`, `--blacklist`, `--blacklists`, `--black-list` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `metadata`, `db` · **Config fallback:** `advanced_options.default_black_list`
+**Also:** `-bl`, `--black-lists`, `--blacklist`, `--blacklists`, `--black-list` · **Type:** text; repeatable · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui` · **Config fallback:** `advanced_options.default_black_list`
 
 Remove all users from selected list. Note: the lists 'ofscraper.main', 'ofscraper.expired', and 'ofscraper.active' are reserved and should not be the name of any list you have on OF
 
@@ -950,7 +958,7 @@ Remove all users from selected list. Note: the lists 'ofscraper.main', 'ofscrape
 
 #### `--current-price`
 
-**Also:** `-cp` · **Type:** one of `paid`, `free` · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-cp` · **Type:** one of `paid`, `free` · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts based on either the subscription price, lowest claimable promotional price, or regular price
 
@@ -958,7 +966,7 @@ Filter accounts based on either the subscription price, lowest claimable promoti
 
 #### `--renewal-price`
 
-**Also:** `-rp` · **Type:** one of `paid`, `free` · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-rp` · **Type:** one of `paid`, `free` · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts based on either the lowest claimable promotional price, or regular price
 
@@ -966,7 +974,7 @@ Filter accounts based on either the lowest claimable promotional price, or regul
 
 #### `--regular-price`
 
-**Also:** `-gp` · **Type:** one of `paid`, `free` · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-gp` · **Type:** one of `paid`, `free` · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts based on the regular price
 
@@ -974,7 +982,7 @@ Filter accounts based on the regular price
 
 #### `--promo-price`
 
-**Also:** `-pp` · **Type:** one of `paid`, `free` · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-pp` · **Type:** one of `paid`, `free` · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts based on either the lowest promotional price regardless of claimability, or regular price
 
@@ -982,7 +990,7 @@ Filter accounts based on either the lowest promotional price regardless of claim
 
 #### `--last-seen-only`
 
-**Also:** `-lo`, `-ls`, `--last-seen-skip` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-lo`, `-ls`, `--last-seen-skip` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Flag for filtering accounts based on last seen being visible [select one --last-seen-only or --last-seen-skip]
 
@@ -990,7 +998,7 @@ Flag for filtering accounts based on last seen being visible [select one --last-
 
 #### `--free-trial-only`
 
-**Also:** `-fo`, `-fs`, `--free-trial-skip` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-fo`, `-fs`, `--free-trial-skip` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Flag for enabling/disabling accounts with free trial [must be normally paid] [select one --free-trial-only or --free-trial-skip]
 
@@ -998,7 +1006,7 @@ Flag for enabling/disabling accounts with free trial [must be normally paid] [se
 
 #### `--promo-only`
 
-**Also:** `-po`, `-ps`, `--promo-skip` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-po`, `-ps`, `--promo-skip` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Flag for enabling/disabling accounts with a claimable promo price [select one --promo-only or --promo-skip]
 
@@ -1006,7 +1014,7 @@ Flag for enabling/disabling accounts with a claimable promo price [select one --
 
 #### `--all-promo-only`
 
-**Also:** `-ao`, `--all-promo-skip` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-ao`, `--all-promo-skip` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Flag for enabling/disabling accounts with any promo price [select one --all-promo-only or --all-promo-skip]
 
@@ -1014,7 +1022,7 @@ Flag for enabling/disabling accounts with any promo price [select one --all-prom
 
 #### `--active-subscription`
 
-**Also:** `-ts`, `--active-subscriptions`, `-es`, `--expired-subscription`, `--expired-subscriptions` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-ts`, `--active-subscriptions`, `-es`, `--expired-subscription`, `--expired-subscriptions` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Flag for enabling/disabling accounts with active or expired subscription [select one --active-subscription or --expired-subscription]
 
@@ -1022,7 +1030,7 @@ Flag for enabling/disabling accounts with active or expired subscription [select
 
 #### `--renew-on`
 
-**Also:** `-ro`, `-rf`, `--renew-off` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-ro`, `-rf`, `--renew-off` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Flag for enabling/disabling accounts with the renew flag on [select one --renew-on or --renew-off]
 
@@ -1032,7 +1040,7 @@ Flag for enabling/disabling accounts with the renew flag on [select one --renew-
 
 #### `--promo-price-min`
 
-**Also:** `-ppn` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-ppn` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts where the lowest promo price matches or falls above the provided value
 
@@ -1040,7 +1048,7 @@ Filter accounts where the lowest promo price matches or falls above the provided
 
 #### `--promo-price-max`
 
-**Also:** `-ppm` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-ppm` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts where the lowest promo price matches or falls below the provided value
 
@@ -1048,7 +1056,7 @@ Filter accounts where the lowest promo price matches or falls below the provided
 
 #### `--regular-price-min`
 
-**Also:** `-gpn` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-gpn` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts where the regular price matches or falls above the provided value
 
@@ -1056,7 +1064,7 @@ Filter accounts where the regular price matches or falls above the provided valu
 
 #### `--regular-price-max`
 
-**Also:** `-gpm` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-gpm` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts where the regular price matches or falls below the provided value
 
@@ -1064,7 +1072,7 @@ Filter accounts where the regular price matches or falls below the provided valu
 
 #### `--current-price-min`
 
-**Also:** `-cpn` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-cpn` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts where the current regular price matches or falls above the provided value
 
@@ -1072,7 +1080,7 @@ Filter accounts where the current regular price matches or falls above the provi
 
 #### `--current-price-max`
 
-**Also:** `-cpm` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-cpm` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts where the current price matches or falls below the provided value
 
@@ -1080,7 +1088,7 @@ Filter accounts where the current price matches or falls below the provided valu
 
 #### `--renewal-price-min`
 
-**Also:** `-rpn` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-rpn` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts where the renewal regular price matches or falls above the provided value
 
@@ -1088,7 +1096,7 @@ Filter accounts where the renewal regular price matches or falls above the provi
 
 #### `--renewal-price-max`
 
-**Also:** `-rpm` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-rpm` · **Type:** integer · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts where the renewal price matches or falls below the provided value
 
@@ -1096,7 +1104,7 @@ Filter accounts where the renewal price matches or falls below the provided valu
 
 #### `--last-seen-before`
 
-**Also:** `-lsb` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-lsb` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts by last seen being at or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
@@ -1104,7 +1112,7 @@ Filter accounts by last seen being at or before the given date (YYYY-MM-DD, MM/D
 
 #### `--last-seen-after`
 
-**Also:** `-lsa` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-lsa` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts by last seen being at or after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
@@ -1112,7 +1120,7 @@ Filter accounts by last seen being at or after the given date (YYYY-MM-DD, MM/DD
 
 #### `--expired-after`
 
-**Also:** `-ea` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-ea` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts by expiration/renewal being at or after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
@@ -1120,7 +1128,7 @@ Filter accounts by expiration/renewal being at or after the given date (YYYY-MM-
 
 #### `--expired-before`
 
-**Also:** `-eb` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-eb` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts by expiration/renewal being at or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
@@ -1128,7 +1136,7 @@ Filter accounts by expiration/renewal being at or before the given date (YYYY-MM
 
 #### `--subscribed-after`
 
-**Also:** `-sa` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-sa` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts by subscription date being after the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
@@ -1136,7 +1144,7 @@ Filter accounts by subscription date being after the given date (YYYY-MM-DD, MM/
 
 #### `--subscribed-before`
 
-**Also:** `-sb` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`
+**Also:** `-sb` · **Type:** Arrow · **Default:** none · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Filter accounts by subscription date being at or before the given date (YYYY-MM-DD, MM/DD/YYYY or a relative date such as '3 weeks ago')
 
@@ -1146,7 +1154,7 @@ Filter accounts by subscription date being at or before the given date (YYYY-MM-
 
 #### `--sort`
 
-**Also:** `-st` · **Type:** one of `name`, `subscribed`, `expired`, `current-price`, `renewal-price`, `regular-price`, `promo-price`, `last-seen` · **Default:** `'Name'` · **Commands:** main program, `metadata`, `db`
+**Also:** `-st` · **Type:** one of `name`, `subscribed`, `expired`, `current-price`, `renewal-price`, `regular-price`, `promo-price`, `last-seen` · **Default:** `'Name'` · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 What to sort the model list by
 
@@ -1154,7 +1162,7 @@ What to sort the model list by
 
 #### `--desc`
 
-**Also:** `-ds` · **Type:** flag · **Default:** off · **Commands:** main program, `metadata`, `db`
+**Also:** `-ds` · **Type:** flag · **Default:** off · **Commands:** main program, `metadata`, `db`, `live_tui`
 
 Sort the model list in descending order
 
@@ -1164,7 +1172,7 @@ Sort the model list in descending order
 
 #### `--users-first`
 
-**Also:** `-uf`, `--user-first`, `--usersfirst`, `--userfirst` · **Type:** flag · **Default:** off · **Commands:** main program, `metadata`
+**Also:** `-uf`, `--user-first`, `--usersfirst`, `--userfirst` · **Type:** flag · **Default:** off · **Commands:** main program, `metadata`, `live_tui`
 
 Process all users first rather than one at a time (affects --action)
 
@@ -1172,7 +1180,7 @@ Process all users first rather than one at a time (affects --action)
 
 #### `--username-individual-search`
 
-**Also:** `-fi`, `--user-individual-search`, `-fl`, `--username-list-search`, `--user-list-search` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`
+**Also:** `-fi`, `--user-individual-search`, `-fl`, `--username-list-search`, `--user-list-search` · **Type:** flag · **Default:** none · **Commands:** main program, `metadata`, `live_tui`
 
 How to find the --username creators. -fi: look up each username on its own. -fl: fetch your subscriptions and lists, then pick the names. With neither, -fi is used when --username has no more than one name per 12 subscriptions, otherwise -fl.
 
@@ -1242,7 +1250,7 @@ Stops treating files skipped for good by `skip_download_script` (`medias.skip_pe
 
 #### `--no-cache`
 
-**Also:** `-nc` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
+**Also:** `-nc` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui`
 
 Disable cache and force a fresh sequential API scan
 
@@ -1252,7 +1260,7 @@ Disables both the general cache and the API cache for the run, and turns off inc
 
 #### `--no-api-cache`
 
-**Also:** `-nca` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
+**Also:** `-nca` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui`
 
 Force a fresh sequential API scan
 
@@ -1262,7 +1270,7 @@ Disables only the API response cache. Setting `advanced_options.cache-mode` to `
 
 #### `--key-mode`
 
-**Also:** `-k` · **Type:** one of `cdrm`, `manual` · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata` · **Config fallback:** `cdm_options.key-mode-default`
+**Also:** `-k` · **Type:** one of `cdrm`, `manual` · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui` · **Config fallback:** `cdm_options.key-mode-default`
 
 Key mode for decrypting content (cdrm is deprecated: its service no longer works)
 
@@ -1272,7 +1280,7 @@ Key mode for decrypting content (cdrm is deprecated: its service no longer works
 
 #### `--private-key`
 
-**Also:** `-pk` · **Type:** text · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata` · **Config fallback:** `cdm_options.private-key`
+**Also:** `-pk` · **Type:** text · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui` · **Config fallback:** `cdm_options.private-key`
 
 Private key path for manual key mode
 
@@ -1280,7 +1288,7 @@ Private key path for manual key mode
 
 #### `--client-id`
 
-**Also:** `-ci` · **Type:** text · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata` · **Config fallback:** `cdm_options.client-id`
+**Also:** `-ci` · **Type:** text · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui` · **Config fallback:** `cdm_options.client-id`
 
 Client ID path for manual key mode
 
@@ -1288,7 +1296,7 @@ Client ID path for manual key mode
 
 #### `--dynamic-rules`
 
-**Also:** `-dr`, `--dynamic-rule` · **Type:** one of `digitalcriminals`, `manual`, `generic`, `xagler`, `rafa`, `dc`, `digital`, `digitals`, `digitalcriminal`, `datawhores` · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata` · **Config fallback:** `advanced_options.dynamic-mode-default`
+**Also:** `-dr`, `--dynamic-rule` · **Type:** one of `digitalcriminals`, `manual`, `generic`, `xagler`, `rafa`, `dc`, `digital`, `digitals`, `digitalcriminal`, `datawhores` · **Default:** none · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui` · **Config fallback:** `advanced_options.dynamic-mode-default`
 
 Dynamic signing rule source
 
@@ -1304,7 +1312,7 @@ Get up-to-date profile info instead of using cache
 
 #### `--auth-fail`
 
-**Also:** `-al`, `--auth-quit` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`
+**Also:** `-al`, `--auth-quit` · **Type:** flag · **Default:** off · **Commands:** main program, `manual`, `msg_check`, `story_check`, `paid_check`, `post_check`, `metadata`, `live_tui`
 
 Quit on authentication failure rather than prompting
 
@@ -1491,4 +1499,14 @@ Changes order of table
 Change the sort order of the table to ascending
 
 **Dest:** `db_asc` · **Defined in:** `ofscraper/utils/args/parse/arguments/post_content.py`
+
+### Livestream Options
+
+#### `--once`
+
+**Also:** `--live` · **Type:** flag · **Default:** off · **Commands:** `live_tui`
+
+Check who is live right now, record active streams until they end, and exit without polling again
+
+**Dest:** `live` · **Defined in:** `ofscraper/utils/args/parse/arguments/automatic.py`, `ofscraper/utils/args/parse/commands/live_tui.py`
 
