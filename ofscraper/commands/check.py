@@ -632,18 +632,9 @@ async def post_check_retriver(forced=False, only_model_id=None):
                     )
                     if was_fresh:
                         fresh.add(name)
-                timeline_data = area_data["Timeline"]
-                archived_data = area_data["Archived"]
-                pinned_data = area_data["Pinned"]
-                labels_data = area_data["Labels"]
-                streams_data = area_data["Streams"]
-
                 in_order = [
-                    ("Pinned", pinned_data),
-                    ("Archived", archived_data),
-                    ("Labels", labels_data),
-                    ("Timeline", timeline_data),
-                    ("Streams", streams_data),
+                    (name, area_data[name])
+                    for name in ("Pinned", "Archived", "Labels", "Timeline", "Streams")
                 ]
                 fresh_ids = {
                     post["id"] for name, data in in_order if name in fresh for post in data
@@ -674,9 +665,9 @@ async def post_check_retriver(forced=False, only_model_id=None):
                     )
 
                 all_post_data = (
-                    to_posts(pinned_data + archived_data + labels_data)
-                    + timeline.filter_timeline_post(to_posts(timeline_data))
-                    + to_posts(streams_data)
+                    to_posts(area_data["Pinned"] + area_data["Archived"] + area_data["Labels"])
+                    + timeline.filter_timeline_post(to_posts(area_data["Timeline"]))
+                    + to_posts(area_data["Streams"])
                 )
 
                 # saved above with fresh copies winning; this list can end on a
@@ -851,9 +842,7 @@ async def message_check_retriver(forced=False, only_model_id=None):
     links = list(url_helper())
     if settings.get_settings().force:
         forced = True
-    async with manager.Manager.session.aget_ofsession(
-        sem_count=of_env.getattr("API_REQ_CHECK_MAX"),
-    ) as c:
+    async with manager.Manager.session.aget_ofsession() as c:
         for item in links:
             if not item:
                 continue
