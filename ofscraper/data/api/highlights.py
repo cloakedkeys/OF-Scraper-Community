@@ -61,7 +61,8 @@ async def scrape_stories(c, user_id):
         log.traceback_(traceback.format_exc())
         incomplete.mark_incomplete(user_id, API_S, f"{type(E).__name__}: {E}")
     finally:
-        if task:
+        # rich task ids start at 0
+        if task is not None:
             progress_utils.api.remove_job_task(task)
 
 
@@ -190,7 +191,8 @@ async def scrape_highlights_from_list(c, id):
         log.traceback_(E)
         incomplete.mark_incomplete(None, API_H, f"highlight {id}: {type(E).__name__}: {E}")
     finally:
-        if task:
+        # rich task ids start at 0
+        if task is not None:
             progress_utils.api.remove_job_task(task)
 
 

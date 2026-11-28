@@ -165,7 +165,8 @@ async def scrape_for_list(c, offset=0, *, strict=False):
             log.traceback_(traceback.format_exc())
             break
         finally:
-            if task:
+            # rich task ids start at 0
+            if task is not None:
                 progress_updater.userlist.remove_job_task(task)
 
 
@@ -252,5 +253,6 @@ async def scrape_list_members(c, item, offset=0, *, strict=False):
             log.traceback_(traceback.format_exc())
             break
         finally:
-            if task:
+            # rich task ids start at 0
+            if task is not None:
                 progress_updater.userlist.remove_job_task(task)
