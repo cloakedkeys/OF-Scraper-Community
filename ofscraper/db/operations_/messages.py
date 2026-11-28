@@ -330,7 +330,7 @@ def get_deleted_messages_ids(model_id=None, username=None, conn=None, **kwargs) 
 @wrapper.operation_wrapper_async
 def add_column_message_is_deleted(conn=None, **kwargs):
     if db_columns.add_column(conn, "messages", "is_deleted", "BOOLEAN DEFAULT 0"):
-        log.info("Adding is_deleted column to messages table")
+        log.info("Added is_deleted column to messages table")
 
 
 @wrapper.operation_wrapper_async
