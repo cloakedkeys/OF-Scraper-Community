@@ -223,19 +223,20 @@ class MainDownloadManager(DownloadManager):
                     self._resume_cleaner(resume_size, total, tempholderObj.tempfilepath)
                     # the part and its saved size and validator are replaced
                     # only once the reply's first bytes arrive (#271)
-                    written = await self._download_fileobject_writer(
+                    self.ctx.log.debug(
+                        f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] writing media to disk"
+                    )
+                    written = await self._download_fileobject_writer_streamer(
+                        r,
                         ele,
-                        self.ctx.attempt,
-                        partial(
-                            self._download_fileobject_writer_streamer,
-                            r,
-                            ele,
-                            tempholderObj,
-                            placeholderObj,
-                            total,
-                            resume_size,
-                            partial(self._set_data, ele, data),
-                        ),
+                        tempholderObj,
+                        placeholderObj,
+                        total,
+                        resume_size,
+                        partial(self._set_data, ele, data),
+                    )
+                    self.ctx.log.debug(
+                        f"{common_logs.get_medialog(ele)} [attempt {self.ctx.attempt.get()}/{get_download_retries()}] finished writing media to disk"
                     )
                     if total is None:
                         total = self._size_written(ele, written)
@@ -311,9 +312,16 @@ class MainDownloadManager(DownloadManager):
         )
 
         stop.check()
-        # 3. Move the verified file to its final path, date it, mark it
-        # downloaded and run the after-download script
-        await self._finalize_download(temp, path_to_file, ele, username, model_id)
+        # 3. Move the verified file to its final path, date it and mark it
+        # downloaded
+        path_to_file = await self._move_download(
+            temp, path_to_file, ele, username, model_id
+        )
+        await self._record_download(path_to_file, ele, username, model_id)
+        ele.add_filepath(path_to_file)
+
+        # 4. Run Post-Download Scripts
+        await self._after_download_script(path_to_file, ele)
 
         return ele.mediatype, total
 

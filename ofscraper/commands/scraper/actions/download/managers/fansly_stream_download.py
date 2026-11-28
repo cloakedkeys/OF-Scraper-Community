@@ -1074,17 +1074,16 @@ class FanslyStreamDownloadManager(DownloadManager):
         if not settings.get_settings().verify_all_integrity:
             return
         # with no expected duration, any duration ffprobe reads passes
-        if not await self._verify_integrity(temp, ele, duration_fallback=True):
+        if not await self._verify_integrity(temp, ele):
             temp.unlink(missing_ok=True)
             raise Exception("Fansly stream download failed the integrity check")
 
     async def _finish(self, temp, placeholderObj, ele, username, model_id, total):
         old = getattr(ele, "replace_silent", None)
-
-        async def replace(temp, _target):
+        if old:
             # a silent copy downloaded again with sound takes its place
             try:
-                return await asyncio.get_event_loop().run_in_executor(
+                path_to_file = await asyncio.get_event_loop().run_in_executor(
                     self.ctx.thread, partial(self._replace_in_place, temp, old)
                 )
             except OSError as E:
@@ -1092,18 +1091,13 @@ class FanslyStreamDownloadManager(DownloadManager):
                 # next download would end the same, so this uses a check
                 ele.not_kept = f"the saved copy could not be replaced ({type(E).__name__})"
                 raise
-
-        async def saved(path_to_file):
-            await self._remember_sound(model_id, ele, path_to_file)
-            ele.add_size(total)
-
-        await self._finalize_download(
-            temp,
-            None if old else placeholderObj.trunicated_filepath,
-            ele,
-            username,
-            model_id,
-            move=replace if old else None,
-            on_saved=saved,
-        )
+        else:
+            path_to_file = await self._move_download(
+                temp, placeholderObj.trunicated_filepath, ele, username, model_id
+            )
+        await self._record_download(path_to_file, ele, username, model_id)
+        await self._remember_sound(model_id, ele, path_to_file)
+        ele.add_filepath(path_to_file)
+        ele.add_size(total)
+        await self._after_download_script(path_to_file, ele)
         return ele.mediatype, total

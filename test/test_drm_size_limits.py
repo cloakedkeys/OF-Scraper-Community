@@ -113,7 +113,8 @@ def _run(
     requests the server saw, the .part files left). A non-DRM file's merge
     is under "file", and "marked" is set when it's saved as downloaded
     without a file ("permanent" when skip_download_script skipped it for
-    good). With ignore_range the server answers a range request as one
+    good), and "saved" is (path, size) when the real merge saves the video
+    it made. With ignore_range the server answers a range request as one
     without it. With real_merge the real _handle_result_alt runs: the caller
     stubs what it calls (ffmpeg, the move, the database)."""
     monkeypatch.setattr(
@@ -247,8 +248,10 @@ def _run(
         monkeypatch.setattr(dm, "skip_download_script", _script)
 
     async def _mark(ele, filepath=None, downloaded=None, skip_permanent=None, **kwargs):
-        if real_merge and filepath is not None:
+        if filepath is not None:
             # the real merge saving the video it made
+            assert real_merge and downloaded is True
+            merged["saved"] = (filepath, kwargs["size"])
             return
         # the database row the real _force_download saves
         assert filepath is None and downloaded is True

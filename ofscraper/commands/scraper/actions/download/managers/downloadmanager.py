@@ -34,10 +34,7 @@ import ofscraper.utils.of_env.of_env as of_env
 import ofscraper.utils.settings as settings
 import ofscraper.utils.system.free as system
 from ofscraper.commands.scraper.actions.download.utils.chunk import get_chunk_size
-from ofscraper.commands.scraper.actions.download.utils.retries import (
-    NoRetry,
-    get_download_retries,
-)
+from ofscraper.commands.scraper.actions.download.utils.retries import NoRetry
 from ofscraper.commands.scraper.actions.utils.log import get_medialog
 from ofscraper.commands.scraper.actions.utils.progress.update import update_total
 from ofscraper.db.operations_.media import (
@@ -51,7 +48,7 @@ from ofscraper.scripts.skip_download_script import (
     skip_download_script,
 )
 from ofscraper.utils.cache.profile import set_profile_cache
-from ofscraper.utils.system.ffprobe import get_media_duration, verify_media_integrity
+from ofscraper.utils.system.ffprobe import verify_media_integrity
 
 
 class StartOver(Exception):
@@ -146,78 +143,42 @@ class DownloadManager:
                 raise E
         return written
 
-    async def _download_fileobject_writer(self, ele, attempt, streamer):
-        """Run streamer (the manager's _download_fileobject_writer_streamer,
-        with its arguments bound) and return the bytes it wrote. attempt is
-        the attempt counter the log lines show."""
-        self.ctx.log.debug(
-            f"{get_medialog(ele)} [attempt {attempt.get()}/{get_download_retries()}] writing media to disk"
-        )
-        written = await streamer()
-        self.ctx.log.debug(
-            f"{get_medialog(ele)} [attempt {attempt.get()}/{get_download_retries()}] finished writing media to disk"
-        )
-        return written
-
-    async def _verify_integrity(self, path, ele, duration_fallback=False):
+    async def _verify_integrity(self, path, ele):
         """Whether the media file at path is whole, checked with ffprobe
         against ele.duration on the thread pool, so the event loop keeps
-        running meanwhile. With duration_fallback and no expected duration,
-        a file ffprobe reads a duration from passes. The callers decide
-        whether a file is checked at all."""
-        loop = asyncio.get_event_loop()
-        expected = ele.duration
-        if expected or not duration_fallback:
-            return await loop.run_in_executor(
-                self.ctx.thread, partial(verify_media_integrity, path, expected)
-            )
-        duration = await loop.run_in_executor(
-            self.ctx.thread, partial(get_media_duration, path)
+        running meanwhile. With no expected duration, any file ffprobe
+        reads a duration from passes. The callers decide whether a file is
+        checked at all."""
+        return await asyncio.get_event_loop().run_in_executor(
+            self.ctx.thread, partial(verify_media_integrity, path, ele.duration)
         )
-        return duration is not None
 
-    async def _finalize_download(
-        self,
-        temp,
-        target,
-        ele,
-        username,
-        model_id,
-        move=None,
-        profile_cache=True,
-        on_saved=None,
-    ):
-        """Save a finished download and return its path: move temp to target
-        (it can end up under another name if a different file already has
-        this one, #48), set its date, mark it downloaded, then hand it to
-        after_download_script.
+    async def _move_download(self, temp, target, ele, username, model_id):
+        """Move a finished download from temp to target and return where it
+        ended up: under another name if a different file already has this
+        one (#48)."""
+        return await asyncio.get_event_loop().run_in_executor(
+            self.ctx.thread,
+            partial(
+                common_paths.moveHelper,
+                temp,
+                target,
+                ele,
+                username=username,
+                model_id=model_id,
+            ),
+        )
 
-        move, an async (temp, target) -> path, replaces the usual move.
-        profile_cache=False skips the avatar/header cache (DRM videos are
-        never either). on_saved, an async (path), runs once the file is
-        marked downloaded, before it's handed on."""
-        loop = asyncio.get_event_loop()
-        if move:
-            path_to_file = await move(temp, target)
-        else:
-            path_to_file = await loop.run_in_executor(
-                self.ctx.thread,
-                partial(
-                    common_paths.moveHelper,
-                    temp,
-                    target,
-                    ele,
-                    username=username,
-                    model_id=model_id,
-                ),
-            )
+    async def _record_download(self, path_to_file, ele, username, model_id):
+        """Record a download saved at path_to_file: note its folder, set its
+        date, mark it downloaded and cache it if it's an avatar or header."""
         common_paths.addGlobalDir(path_to_file.parent, self.ctx.dirSet)
         if ele.postdate:
             newDate = dates.convert_local_time(ele.postdate)
             self.ctx.log.debug(
                 f"{get_medialog(ele)} Attempt to set Date to {arrow.get(newDate).format('YYYY-MM-DD HH:mm')}"
             )
-            await loop.run_in_executor(
+            await asyncio.get_event_loop().run_in_executor(
                 self.ctx.thread,
                 partial(common_paths.set_time, path_to_file, newDate),
             )
@@ -231,13 +192,7 @@ class DownloadManager:
                 hashdata=await common.get_hash(path_to_file, self.ctx.thread),
                 size=path_to_file.stat().st_size,
             )
-        if profile_cache:
-            await set_profile_cache(ele, self.ctx.thread)
-        if on_saved:
-            await on_saved(path_to_file)
-        ele.add_filepath(path_to_file)
-        await self._after_download_script(path_to_file, ele)
-        return path_to_file
+        await set_profile_cache(ele, self.ctx.thread)
 
     async def _get_cached_reply(self, key):
         """The reply data saved under key when its part was started."""

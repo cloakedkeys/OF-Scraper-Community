@@ -344,18 +344,19 @@ class AltDownloadManager(DownloadManager):
                 elif total != resume_size:
                     # the part and its saved size and validator are replaced
                     # only once the reply's first bytes arrive (#271)
-                    written = await self._download_fileobject_writer(
+                    self.ctx.log.debug(
+                        f"{get_medialog(ele)} [attempt {self._alt_attempt_get(item).get()}/{get_download_retries()}] writing media to disk"
+                    )
+                    written = await self._download_fileobject_writer_streamer(
                         ele,
-                        self._alt_attempt_get(item),
-                        partial(
-                            self._download_fileobject_writer_streamer,
-                            ele,
-                            total,
-                            l,
-                            placeholderObj,
-                            resume_size,
-                            partial(self._set_data, ele, item, data),
-                        ),
+                        total,
+                        l,
+                        placeholderObj,
+                        resume_size,
+                        partial(self._set_data, ele, item, data),
+                    )
+                    self.ctx.log.debug(
+                        f"{get_medialog(ele)} [attempt {self._alt_attempt_get(item).get()}/{get_download_retries()}] finished writing media to disk"
                     )
                     if total is None:
                         total = self._size_written(ele, written)
@@ -454,7 +455,11 @@ class AltDownloadManager(DownloadManager):
         # always checked, unlike the normal downloader's files: a merge can
         # come out truncated
         valid = await self._verify_integrity(temp_path, ele)
-        # a stop asked for while ffprobe ran: cancel here, before the move
+        if stop.requested.is_set():
+            # a stop asked for while ffprobe ran: cancel here, before the
+            # move. The merge is made again from the encrypted parts, which
+            # are kept for Resume
+            temp_path.unlink(missing_ok=True)
         stop.check()
         if not valid:
             self.ctx.log.warning(
@@ -467,15 +472,13 @@ class AltDownloadManager(DownloadManager):
             f"Moving intermediate path {temp_path} to {sharedPlaceholderObj.trunicated_filepath}"
         )
 
-        # a DRM video is never an avatar or header: no profile cache
-        await self._finalize_download(
-            temp_path,
-            sharedPlaceholderObj.trunicated_filepath,
-            ele,
-            username,
-            model_id,
-            profile_cache=False,
+        final_path = await self._move_download(
+            temp_path, sharedPlaceholderObj.trunicated_filepath, ele, username, model_id
         )
+        await self._record_download(final_path, ele, username, model_id)
+        ele.add_filepath(final_path)
+
+        await self._after_download_script(final_path, ele)
 
         audio_total = audio["total"] if audio else 0
         video_total = video["total"] if video else 0

@@ -292,7 +292,7 @@ def _drm_run(tmp_path, monkeypatch, **kwargs):
     async def no_hash(*a, **k):
         return "hash"
 
-    async def mark(*a, **k):
+    async def no_script(*a, **k):
         return None
 
     monkeypatch.setattr(ad, "async_run", merge)
@@ -302,15 +302,17 @@ def _drm_run(tmp_path, monkeypatch, **kwargs):
     monkeypatch.setattr(dm.common_paths, "addGlobalDir", lambda *a: None)
     monkeypatch.setattr(dm.common, "get_hash", no_hash)
     # _run stubs the database
-    monkeypatch.setattr(dm, "after_download_script", mark)
-    counted, *_ = _run(tmp_path, monkeypatch, real_merge=True, **kwargs)
-    return counted, final
+    monkeypatch.setattr(dm, "after_download_script", no_script)
+    counted, merged, *_ = _run(tmp_path, monkeypatch, real_merge=True, **kwargs)
+    # the (path, size) the database saved the merged video under
+    return counted, final, merged.get("saved")
 
 
 def test_drm_download_sends_both_events_once(tmp_path, monkeypatch, heard):
-    counted, final = _drm_run(tmp_path, monkeypatch)
+    counted, final, saved = _drm_run(tmp_path, monkeypatch)
     assert counted == {"videos": 1, "forced_skipped": 0, "failed": 0}
     assert final.read_bytes() == AUDIO + VIDEO
+    assert saved == (final, len(AUDIO + VIDEO))
     assert heard == [
         ("item_downloaded", 7, final),
         ("item_finished", 7, "model", "downloaded", None),
@@ -319,14 +321,16 @@ def test_drm_download_sends_both_events_once(tmp_path, monkeypatch, heard):
 
 def test_drm_without_cdm_keys_says_so(tmp_path, monkeypatch, heard):
     monkeypatch.setattr(ad.keyhelpers, "missing_cdm_keys", lambda: "client_id.bin")
-    counted, _ = _drm_run(tmp_path, monkeypatch)
+    counted, _, saved = _drm_run(tmp_path, monkeypatch)
     assert counted == {"videos": 0, "forced_skipped": 1, "failed": 0}
+    assert saved is None
     assert heard == [("item_finished", 7, "model", "skipped", "CDM keys not found")]
 
 
 def test_drm_size_skip_says_size_limit(tmp_path, monkeypatch, heard):
-    counted, _ = _drm_run(tmp_path, monkeypatch, size_min=len(AUDIO + VIDEO) + 1)
+    counted, _, saved = _drm_run(tmp_path, monkeypatch, size_min=len(AUDIO + VIDEO) + 1)
     assert counted == {"videos": 0, "forced_skipped": 1, "failed": 0}
+    assert saved is None
     assert heard == [("item_finished", 7, "model", "skipped", "size limit")]
 
 

@@ -458,9 +458,9 @@ def test_downloaders_record_and_use_final_path(tmp_path, monkeypatch, downloader
     monkeypatch.setattr(dm.common, "get_hash", hashing)
     monkeypatch.setattr(dm.common_paths, "set_time", dating)
     monkeypatch.setattr(dm.common_paths, "addGlobalDir", Mock())
+    monkeypatch.setattr(dm, "set_profile_cache", AsyncMock())
     if downloader == "normal":
         temp.write_bytes(payload)
-        monkeypatch.setattr(dm, "set_profile_cache", AsyncMock())
         asyncio.run(manager._handle_result_main(
             (len(payload), temp, placeholder), ele, "model", 10
         ))
