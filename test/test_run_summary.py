@@ -190,7 +190,7 @@ def test_post_script_gets_the_old_keys_and_the_summary(run, monkeypatch, tmp_pat
     )
     monkeypatch.setattr(final_script.settings, "get_settings", lambda: run.settings)
     sent = []
-    monkeypatch.setattr(final_script, "run", lambda cmd, input=None, **k: sent.append(json.loads(input)))
+    monkeypatch.setattr(final_script.runner, "run", lambda cmd, input=None, **k: sent.append(json.loads(input)))
     record = run_record.finish()
     final_script.final_script(record)
     payload = sent[0]

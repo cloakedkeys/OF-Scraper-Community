@@ -1,16 +1,10 @@
-import json
 import logging
-import os
-import subprocess
-import traceback
 
 import arrow
 
+import ofscraper.scripts.runner as runner
 import ofscraper.utils.config.data as config_data
-import ofscraper.utils.dry_run as dry_run
-import ofscraper.utils.of_env.of_env as env
 import ofscraper.utils.settings as settings
-from ofscraper.utils.system.subprocess import async_run  # Changed to async_run
 
 # isort: split
 # posts imports this module through filters -> db -> placeholder, so look
@@ -19,30 +13,25 @@ import ofscraper.classes.of.posts as posts_
 from ofscraper.classes.of.media import Media
 
 
-async def naming_script(dir, file, ele, formats=None): # Made async
+async def naming_script(dir, file, ele, formats=None):
     """formats: the (dir_format, file_format) the file was named with, which
     a type_options entry can set; file_options' when not given"""
     log = logging.getLogger("shared")
+    name = "naming script"
     script_path = settings.get_settings().naming_script
-
-    if not script_path:
-        log.debug(
-            "naming script is disabled via settings; skipping excution"
-        )
-        return
-    if dry_run.active():
-        return  # a dry run runs no scripts; its paths say so
-
-    elif not os.path.exists(script_path):
-        log.info(
-            f"naming script path is invalid: '{script_path}'. Aborting final script."
-        )
+    if not runner.script_ready(script_path, name):
         return
 
-    log.info(f"Attempting to run naming script: {script_path}")
+    if isinstance(ele, Media):
+        details = _media_details
+    elif isinstance(ele, posts_.Post):
+        details = _post_details
+    else:
+        log.info(f"Unsupported type for naming script: {type(ele)}")
+        return
 
-    try:
-        payload_data = {
+    def payload():
+        return {
             "dir": str(dir),
             "file": str(file),
             "dir_format": formats[0] if formats else config_data.get_dirformat(),
@@ -53,63 +42,38 @@ async def naming_script(dir, file, ele, formats=None): # Made async
             "value": ele.value.capitalize(),
             "response_type": ele.modified_responsetype,
             "label": ele.label_string,
+            **details(ele),
         }
 
-        if isinstance(ele, Media):
-            payload_data.update(
-                {
-                    "media": ele.media,
-                    "post": ele.post.post,
-                    "post_id": ele.post_id,
-                    "media_id": ele.id,
-                    "media_type": ele.mediatype.capitalize(),
-                    # undated: the same fallback as the {date} placeholder
-                    "date": arrow.get(ele.postdate or ele.date or 0).format(
-                        config_data.get_date()
-                    ),
-                    "download_type": ele.downloadtype,
-                }
-            )
-        elif isinstance(ele, posts_.Post):
-            payload_data.update(
-                {
-                    "media": None,
-                    "post": ele.post,
-                    "post_id": ele.id,
-                    "media_id": None,
-                    "media_type": None,
-                    "date": arrow.get(ele.date or 0).format(config_data.get_date()),
-                    "download_type": None,
-                }
-            )
-        else:
-            log.info(f"Unsupported type for naming script: {type(ele)}")
-            return
+    result = await runner.async_run_user_script(
+        script_path,
+        payload,
+        name=name,
+        level_key="NAMING_SCRIPT_SUBPROCESS_LEVEL",
+    )
+    return result.stdout.strip() if result and result.stdout else None
 
-        input_json_str = json.dumps(payload_data, indent=None, ensure_ascii=False)
 
-        # Await the new async runner
-        result = await async_run(
-            [script_path],
-            input=input_json_str,
-            capture_output=True,
-            text=True,
-            check=True,
-            level=env.getattr("NAMING_SCRIPT_SUBPROCESS_LEVEL"),
-            name="naming script",
-        )
-        log.info("Naming script ran successfully via stdin.")
-        return result.stdout.strip() if result and result.stdout else None
+def _media_details(ele):
+    return {
+        "media": ele.media,
+        "post": ele.post.post,
+        "post_id": ele.post_id,
+        "media_id": ele.id,
+        "media_type": ele.mediatype.capitalize(),
+        # undated: the same fallback as the {date} placeholder
+        "date": arrow.get(ele.postdate or ele.date or 0).format(config_data.get_date()),
+        "download_type": ele.downloadtype,
+    }
 
-    except FileNotFoundError:
-        log.info(f"Naming script executable not found: '{script_path}'.")
-    except subprocess.CalledProcessError as e:
-        log.info(f"Naming script failed with exit code {e.returncode}: '{script_path}'")
-        if e.stdout and e.stdout.strip(): log.debug(f"Stdout:\n{e.stdout.strip()}")
-        if e.stderr and e.stderr.strip(): log.debug(f"Stderr:\n{e.stderr.strip()}")
-    except json.JSONDecodeError as e:
-        log.info(f"Failed to serialize payload to JSON for naming script: {e}")
-    except Exception as e:
-        log.info(f"An unexpected error occurred while running naming script '{script_path}': {e}", exc_info=True)
-        log.traceback_(e)
-        log.traceback_(traceback.format_exc())
+
+def _post_details(ele):
+    return {
+        "media": None,
+        "post": ele.post,
+        "post_id": ele.id,
+        "media_id": None,
+        "media_type": None,
+        "date": arrow.get(ele.date or 0).format(config_data.get_date()),
+        "download_type": None,
+    }

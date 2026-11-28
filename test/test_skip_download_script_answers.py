@@ -38,7 +38,7 @@ def ask(monkeypatch, tmp_path):
                 raise error
             return SimpleNamespace(stdout=stdout, stderr="")
 
-        monkeypatch.setattr(script_mod, "async_run", fake_run)
+        monkeypatch.setattr(script_mod.runner, "async_run", fake_run)
         return asyncio.run(skip_download_script(1000, ele))
 
     return run

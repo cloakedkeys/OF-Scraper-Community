@@ -577,7 +577,7 @@ def action_script(env, monkeypatch, tmp_path):
     monkeypatch.setattr(manager, "Manager", SimpleNamespace(current_model_manager=SimpleNamespace(
         get_model=lambda username: {"username": username, "id": MODEL_ID})))
     sent = []
-    monkeypatch.setattr(action_runner, "run", lambda cmd, input=None, **k: sent.append(input))
+    monkeypatch.setattr(action_runner.runner, "run", lambda cmd, input=None, **k: sent.append(input))
 
     def media(items):
         script_mod.after_download_action_script(USERNAME, items)
