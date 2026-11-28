@@ -202,7 +202,12 @@ class LiveWatcher:
         if self._wake is not None:
             self._wake.set()
 
-    def _stop_one(self, key_str: str) -> bool:
+    def _stop_one(
+        self,
+        key_str: str,
+        *,
+        stopped_reason: str = "Stopped by user (click [Resume] or press r)",
+    ) -> bool:
         ev = self.creator_stops.get(key_str)
         info = self._last_online.get(key_str) or {}
         uname = info.get("username") or key_str
@@ -214,7 +219,7 @@ class LiveWatcher:
                 account_id=key_str,
                 username=uname,
                 status="stopping",
-                reason="Finalizing recording...",
+                reason="Finalizing MP4 cleanly...",
             )
             return True
         # Not actively recording (was queued or online): mark stopped immediately
@@ -224,7 +229,7 @@ class LiveWatcher:
             account_id=key_str,
             username=uname,
             status="stopped",
-            reason="Stopped by user (click [Resume] or press r)",
+            reason=stopped_reason,
         )
         return False
 
@@ -271,7 +276,13 @@ class LiveWatcher:
         keys |= set(self._last_online.keys())
         self._pending_resume.clear()
         self.suppressed |= keys
-        stopped = sum(1 for key_str in keys if self._stop_one(key_str))
+        stopped = sum(
+            1
+            for key_str in keys
+            if self._stop_one(
+                key_str, stopped_reason="Stopped by user (click [Resume] or press a)"
+            )
+        )
         if self._wake is not None:
             self._wake.set()
         return stopped
@@ -462,7 +473,7 @@ class LiveWatcher:
                                     status="stopped",
                                     title=s.get("title"),
                                     started_at=s.get("startedAt"),
-                                    reason="Paused by user",
+                                    reason="Paused by user (click [Resume] or press r)",
                                 )
                         queue = [s for s in fetched if str(s["accountId"]) not in self.suppressed]
                     except Exception as e:
@@ -731,9 +742,12 @@ class LiveThread(threading.Thread):
 
     def __init__(self, watch: bool, runner=None, *, site: str | None = None):
         if site is None:
-            import ofscraper.sites as sites
+            try:
+                import ofscraper.sites as sites
 
-            resolved_site = sites.current_site()
+                resolved_site = sites.current_site()
+            except Exception:
+                resolved_site = None
         else:
             resolved_site = site
         name = f"{resolved_site}-live" if resolved_site else "live-watch"
