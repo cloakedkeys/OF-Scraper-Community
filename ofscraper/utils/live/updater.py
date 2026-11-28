@@ -62,11 +62,11 @@ def hide_tasks(progress: Progress | None):
     """Hides every task in ``progress`` (None: there's nothing to hide)."""
     if progress is None:
         return
-    try:
-        for task in progress.tasks:
+    for task in progress.tasks:  # a copy, taken under the progress's lock
+        try:
             progress.update(task.id, visible=False)
-    except Exception:
-        pass  # Failsafe for any potential race conditions or errors
+        except Exception:
+            pass  # e.g. removed meanwhile: still hide the rest
 
 
 class ActivityManager:

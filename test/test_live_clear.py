@@ -59,3 +59,19 @@ def test_hide_tasks_swallows_a_failing_update():
 
     updater.hide_tasks(Broken())
     updater.hide_tasks(None)
+
+
+def test_hide_tasks_hides_the_rest_after_one_fails():
+    # a task removed while hiding (KeyError) doesn't leave the others shown
+    class Partly:
+        tasks = [type("T", (), {"id": n})() for n in (1, 2, 3)]
+        hidden = []
+
+        def update(self, task_id, visible):
+            if task_id == 2:
+                raise KeyError(task_id)
+            self.hidden.append(task_id)
+
+    progress = Partly()
+    updater.hide_tasks(progress)
+    assert progress.hidden == [1, 3]
