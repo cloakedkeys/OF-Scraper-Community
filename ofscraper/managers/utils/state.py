@@ -96,51 +96,51 @@ class StateManager:
         # Return a new list preserving the original order
         return [user for user in queued if user not in processed]
 
+    def _activities(self, group=None) -> List[Enum]:
+        """The activities in ``group`` (an EActivity enum class), or all of
+        them when it is None."""
+        return [a for a in self._queues if group is None or isinstance(a, group)]
+
+    def _queued_usernames(self, group=None) -> List[str]:
+        """Unique usernames queued for the activities in ``group``, in the
+        order they first appear."""
+        return list(
+            dict.fromkeys(
+                username
+                for activity in self._activities(group)
+                for username in self._queues[activity]["queued"]
+            )
+        )
+
+    def _reset_processed(self, group=None) -> None:
+        for activity in self._activities(group):
+            self._queues[activity]["processed"].clear()
+
+    def _clear_queues(self, group=None) -> None:
+        for activity in self._activities(group):
+            self._queues[activity]["processed"].clear()
+            self._queues[activity]["queued"] = []
+
     def get_all_queued_usernames(self) -> List[str]:
         """
         Returns a single list of all unique usernames currently in any activity queue,
         preserving the order of first appearance.
         """
-        all_usernames_ordered = []
-        seen = set()
-        for activity in self._queues:
-            for username in self._queues[activity]["queued"]:
-                if username not in seen:
-                    all_usernames_ordered.append(username)
-                    seen.add(username)
-        return all_usernames_ordered
+        return self._queued_usernames()
 
     def get_paid_queued_usernames(self) -> List[str]:
         """
         Returns a single list of unique usernames from all PaidActivity queues,
         preserving the order of first appearance.
         """
-        all_usernames_ordered = []
-        seen = set()
-        for activity in self._queues:
-            # Only include queues from PaidActivity instances
-            if self._is_paid_activity(activity):
-                for username in self._queues[activity]["queued"]:
-                    if username not in seen:
-                        all_usernames_ordered.append(username)
-                        seen.add(username)
-        return all_usernames_ordered
+        return self._queued_usernames(EActivity.PaidActivity)
 
     def get_scrape_queued_usernames(self) -> List[str]:
         """
         Returns a single list of unique usernames from all ScrapeActivity queues,
         preserving the order of first appearance.
         """
-        all_usernames_ordered = []
-        seen = set()
-        for activity in self._queues:
-            # Only include queues from ScrapeActivity instances
-            if self._is_scrape_activity(activity):
-                for username in self._queues[activity]["queued"]:
-                    if username not in seen:
-                        all_usernames_ordered.append(username)
-                        seen.add(username)
-        return all_usernames_ordered
+        return self._queued_usernames(EActivity.ScrapeActivity)
 
     def get_queued_usernames(self, activity: EActivity) -> List[str]:
         """
@@ -173,28 +173,21 @@ class StateManager:
         """
         Resets the processed status for ALL activities.
         """
-        for activity in self._queues:
-            self._queues[activity]["processed"].clear()
+        self._reset_processed()
         log.info("Processed status for all activities has been reset.")
 
     def reset_paid_processed_status(self) -> None:
         """
         Resets the processed status for all PaidActivity instances.
         """
-        for activity in self._queues:
-            # Only reset status for PaidActivity instances
-            if self._is_paid_activity(activity):
-                self._queues[activity]["processed"].clear()
+        self._reset_processed(EActivity.PaidActivity)
         log.info("Processed status for all Paid activities has been reset.")
 
     def reset_scrape_processed_status(self) -> None:
         """
         Resets the processed status for all ScrapeActivity instances.
         """
-        for activity in self._queues:
-            # Only reset status for ScrapeActivity instances
-            if self._is_scrape_activity(activity):
-                self._queues[activity]["processed"].clear()
+        self._reset_processed(EActivity.ScrapeActivity)
         log.info("Processed status for all Scrape activities has been reset.")
 
     def clear_queue(self, activity: EActivity):
@@ -212,40 +205,22 @@ class StateManager:
         clears the  queue for all activities.
         This resets any previous progress for all activities.
         """
-        for activity in self._queues:
-            self._queues[activity]["processed"].clear()
-            self._queues[activity]["queued"] = []
+        self._clear_queues()
         log.info("clear the queue for the all activities")
 
     def clear_paid_queues(self) -> None:
         """
         Clears the 'queued' and 'processed' lists for all PaidActivity instances.
         """
-        for activity in self._queues:
-            # Only clear queues for PaidActivity instances
-            if self._is_paid_activity(activity):
-                self._queues[activity]["processed"].clear()
-                self._queues[activity]["queued"] = []
+        self._clear_queues(EActivity.PaidActivity)
         log.info("Cleared all Paid activity queues.")
 
     def clear_scrape_queues(self) -> None:
         """
         Clears the 'queued' and 'processed' lists for all ScrapeActivity instances.
         """
-        for activity in self._queues:
-            # Only clear queues for ScrapeActivity instances
-            if self._is_scrape_activity(activity):
-                self._queues[activity]["processed"].clear()
-                self._queues[activity]["queued"] = []
+        self._clear_queues(EActivity.ScrapeActivity)
         log.info("Cleared all Scrape activity queues.")
-
-    def _is_paid_activity(self, activity: Enum) -> bool:
-        """Checks if the activity is a PaidActivity."""
-        return isinstance(activity, EActivity.PaidActivity)
-
-    def _is_scrape_activity(self, activity: Enum) -> bool:
-        """Checks if the activity is a ScrapeActivity."""
-        return isinstance(activity, EActivity.ScrapeActivity)
 
 
 ACTIVITY_MAP = {

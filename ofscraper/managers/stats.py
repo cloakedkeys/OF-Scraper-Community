@@ -12,6 +12,16 @@ from ofscraper.managers.utils.state import EActivity, string_to_activity
 log = logging.getLogger("shared")
 
 
+def _styled(text: str, style: str, on: bool) -> str:
+    """``text`` in Rich ``style`` markup when ``on``, else plain."""
+    return f"[{style}]{text}[/{style}]" if on else text
+
+
+def _count(n: int, label: str, style: str) -> str:
+    """``"<n> <label>"``, in ``style`` only when ``n`` is above zero."""
+    return _styled(f"{n} {label}", style, n > 0)
+
+
 class MetadataStats:
     """Holds statistics for metadata update activities."""
 
@@ -33,40 +43,12 @@ class MetadataStats:
         return self.changed_video > 0 or self.changed_audio > 0 or self.changed_photo
 
     def __str__(self):
-        # Conditionally format the 'changed' media types
-        videos_str = (
-            f"[bold green]{self.changed_video} videos[/bold green]"
-            if self.changed_video > 0
-            else "0 videos"
-        )
-        audios_str = (
-            f"[bold green]{self.changed_audio} audios[/bold green]"
-            if self.changed_audio > 0
-            else "0 audios"
-        )
-        photos_str = (
-            f"[bold green]{self.changed_photo} photos[/bold green]"
-            if self.changed_photo > 0
-            else "0 photos"
-        )
-
-        # Conditionally format unchanged and failed counts
-        unchanged_str = (
-            f"[bold yellow]{self.unchanged_count} items unchanged[/bold yellow]"
-            if self.unchanged_count > 0
-            else "0 items unchanged"
-        )
-        skipped_str = (
-            f"[bold yellow]{self.skipped_count} skipped[/bold yellow]"
-            if self.skipped_count > 0
-            else "0 skipped"
-        )
-        failed_str = (
-            f"[bold red]{self.failed_count} failed[/bold red]"
-            if self.failed_count > 0
-            else "0 failed"
-        )
-
+        videos_str = _count(self.changed_video, "videos", "bold green")
+        audios_str = _count(self.changed_audio, "audios", "bold green")
+        photos_str = _count(self.changed_photo, "photos", "bold green")
+        unchanged_str = _count(self.unchanged_count, "items unchanged", "bold yellow")
+        skipped_str = _count(self.skipped_count, "skipped", "bold yellow")
+        failed_str = _count(self.failed_count, "failed", "bold red")
         return (
             f"({self.total_changed} changed media item total "
             f"[{videos_str}, {audios_str}, {photos_str}], "
@@ -86,17 +68,8 @@ class TextStats:
         self.failed_count = 0
 
     def __str__(self):
-        # Apply formatting only if the count > 0
-        text_str = (
-            f"[bold green]{self.text_count} text[/bold green]"
-            if self.text_count > 0
-            else f"{self.text_count} text"
-        )
-        failed_str = (
-            f"[bold red]{self.failed_count} failed[/bold red]"
-            if self.failed_count > 0
-            else f"{self.failed_count} failed"
-        )
+        text_str = _count(self.text_count, "text", "bold green")
+        failed_str = _count(self.failed_count, "failed", "bold red")
         return f"\\[{text_str}, {self.skipped_count} already saved, {failed_str}]"
 
     @property
@@ -132,37 +105,14 @@ class DownloadStats:
         else:
             size_str = f"{self.total_bytes / (1024**2):.2f} MB"
 
-        # Apply formatting conditionally
-        size_str = f"[bold]{size_str}[/bold]" if self.total_bytes > 0 else size_str
-        videos_str = (
-            f"[bold green]{self.video_count} videos[/bold green]"
-            if self.video_count > 0
-            else f"{self.video_count} videos"
-        )
-        audios_str = (
-            f"[bold green]{self.audio_count} audios[/bold green]"
-            if self.audio_count > 0
-            else f"{self.audio_count} audios"
-        )
-        photos_str = (
-            f"[bold green]{self.photo_count} photos[/bold green]"
-            if self.photo_count > 0
-            else f"{self.photo_count} photos"
-        )
-        skipped_str = (
-            f"[bold yellow]{self.skipped_count} skipped[/bold yellow]"
-            if self.skipped_count > 0
-            else f"{self.skipped_count} skipped"
-        )
-        failed_str = (
-            f"[bold red]{self.failed_count} failed[/bold red]"
-            if self.failed_count > 0
-            else f"{self.failed_count} failed"
-        )
-        downloads_str = (
-            f"[bold]{self.total_count} downloads total[/bold]"
-            if self.has_changes
-            else f"{self.total_count} downloads total"
+        size_str = _styled(size_str, "bold", self.total_bytes > 0)
+        videos_str = _count(self.video_count, "videos", "bold green")
+        audios_str = _count(self.audio_count, "audios", "bold green")
+        photos_str = _count(self.photo_count, "photos", "bold green")
+        skipped_str = _count(self.skipped_count, "skipped", "bold yellow")
+        failed_str = _count(self.failed_count, "failed", "bold red")
+        downloads_str = _styled(
+            f"{self.total_count} downloads total", "bold", self.has_changes
         )
         return (
             f"({size_str}) ({downloads_str} "
@@ -194,32 +144,11 @@ class LikeStats:
         return self.posts_changed > 0 or self.posts_failed > 0
 
     def __str__(self):
-        # Apply formatting conditionally
-        liked_str = (
-            f"[bold green]{self.posts_liked} liked[/bold green]"
-            if self.posts_liked > 0
-            else f"{self.posts_liked} liked"
-        )
-        unliked_str = (
-            f"[bold green]{self.posts_unliked} unliked[/bold green]"
-            if self.posts_unliked > 0
-            else f"{self.posts_unliked} unliked"
-        )
-        failed_str = (
-            f"[bold red]{self.posts_failed} failed[/bold red]"
-            if self.posts_failed > 0
-            else f"{self.posts_failed} failed"
-        )
-        unchanged_str = (
-            f"[bold]{self.posts_unchanged} unchanged[/bold]"
-            if self.posts_unchanged > 0
-            else f"{self.posts_unchanged} unchanged"
-        )
-        checked_str = (
-            f"[bold]{self.posts_checked} posts checked[/bold]"
-            if self.posts_checked > 0
-            else f"{self.posts_checked} posts checked"
-        )
+        liked_str = _count(self.posts_liked, "liked", "bold green")
+        unliked_str = _count(self.posts_unliked, "unliked", "bold green")
+        failed_str = _count(self.posts_failed, "failed", "bold red")
+        unchanged_str = _count(self.posts_unchanged, "unchanged", "bold")
+        checked_str = _count(self.posts_checked, "posts checked", "bold")
         return (
             f"[{checked_str}, "
             f"({liked_str}, {unliked_str}), "
@@ -350,18 +279,7 @@ class StatsManager:
         Removes all stat entries for any activity that is a ScrapeActivity
         across all users, while leaving other activity types untouched.
         """
-        # Iterate through all users
-        for username in list(self._stats.keys()):
-            user_activities = self._stats[username]
-            # 1. Find all keys that need to be deleted for this user
-            keys_to_delete = [
-                activity_enum
-                for activity_enum in user_activities
-                if isinstance(activity_enum, EActivity.ScrapeActivity)
-            ]
-            # 2. Safely delete those keys
-            for key in keys_to_delete:
-                del user_activities[key]
+        self._clear_group_stats(EActivity.ScrapeActivity)
         # a new run: the timeline's full-rescan hint may show again
         import ofscraper.data.api.common.scan_range as scan_range
 
@@ -370,22 +288,16 @@ class StatsManager:
 
     def clear_paid_stats(self):
         """
-        Removes all stat entries for any activity that is a ScrapeActivity
+        Removes all stat entries for any activity that is a PaidActivity
         across all users, while leaving other activity types untouched.
         """
-        # Iterate through all users
-        for username in list(self._stats.keys()):
-            user_activities = self._stats[username]
-            # 1. Find all keys that need to be deleted for this user
-            keys_to_delete = [
-                activity_enum
-                for activity_enum in user_activities
-                if isinstance(activity_enum, EActivity.PaidActivity)
-            ]
+        self._clear_group_stats(EActivity.PaidActivity)
 
-            # 2. Safely delete those keys
-            for key in keys_to_delete:
-                del user_activities[key]
+    def _clear_group_stats(self, group):
+        """Removes every user's stats for the activities in ``group``."""
+        for user_activities in self._stats.values():
+            for activity in [a for a in user_activities if isinstance(a, group)]:
+                del user_activities[activity]
 
     def clear_activity_stats(self, activity: Union[str, EActivity]):
         """
