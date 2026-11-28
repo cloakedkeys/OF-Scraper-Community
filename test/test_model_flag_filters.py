@@ -8,6 +8,8 @@ import ofscraper.filters.models.flags as flags
 import ofscraper.filters.models.sort as sort
 import ofscraper.filters.models.subtype as subtype
 import ofscraper.utils.settings as settings
+from ofscraper.classes.of.models import Model
+from ofscraper.utils.args.parse.arguments.user_sort import sort_by_option
 
 
 class _Settings(SimpleNamespace):
@@ -69,6 +71,23 @@ def test_free_trial_flag(monkeypatch):
     assert _names(flags.promoFilterHelper(models)) == ["paid", "free"]
 
 
+def test_free_trial_flag_unknown_regular_price(monkeypatch):
+    # final_regular_price is None when the API leaves the price out; these
+    # pin main's results, including its TypeError
+    unpriced_paid = _priced("unpriced_paid", 5, 5, None)
+    unpriced_trial = _priced("unpriced_trial", 0, 5, None)
+
+    _patch_settings(monkeypatch, free_trial=True)
+    assert flags.promoFilterHelper([unpriced_paid]) == []
+    with pytest.raises(TypeError):
+        flags.promoFilterHelper([unpriced_trial])
+
+    _patch_settings(monkeypatch, free_trial=False)
+    assert _names(flags.promoFilterHelper([unpriced_paid, unpriced_trial])) == [
+        "unpriced_paid"
+    ]
+
+
 @pytest.mark.parametrize(
     "setting, attr", [("renewal", "renewed"), ("sub_status", "active")]
 )
@@ -85,19 +104,14 @@ def test_subtype_flags(monkeypatch, setting, attr):
     assert _names(subtype.subType(models)) == ["on", "off"]
 
 
-@pytest.mark.parametrize(
-    "key, attr",
-    [
-        ("name", "name"),
-        ("last-seen", "final_last_seen"),
-        ("expired", "final_expired"),
-        ("subscribed", "final_subscribed"),
-        ("current-price", "final_current_price"),
-        ("promo-price", "final_promo_price"),
-        ("renewal-price", "final_renewal_price"),
-        ("regular-price", "final_regular_price"),
-    ],
-)
+def test_sort_attrs_cover_every_sort_choice():
+    option = sort_by_option(lambda: None).__click_params__[0]
+    assert set(sort.SORT_ATTRS) == set(option.type.choices)
+    for attr in sort.SORT_ATTRS.values():
+        assert hasattr(Model, attr), attr
+
+
+@pytest.mark.parametrize("key, attr", sorted(sort.SORT_ATTRS.items()))
 def test_sort_by_each_key(monkeypatch, key, attr):
     def model(name, value):
         m = SimpleNamespace(name=name)

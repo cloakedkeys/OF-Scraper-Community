@@ -2,7 +2,7 @@ import logging
 import operator
 
 import ofscraper.utils.settings as settings
-from ofscraper.filters.models.utils.logs import filter_users
+from ofscraper.filters.models.utils.filtering import filter_users
 
 log = logging.getLogger("shared")
 
@@ -28,8 +28,21 @@ MIN_MAX_FILTERS = [
 
 
 def _is_paid(price):
-    # final_regular_price can be None when the API leaves the price out
+    # same accounts as main's `> 0` checks and its truthiness check on the
+    # regular price, which is the only price that can be None
     return price is not None and price > 0
+
+
+def _paid_free_filter(users, value, attr, label):
+    if value == "paid":
+        return filter_users(
+            users, lambda x: _is_paid(getattr(x, attr)), f"paid {label} filter"
+        )
+    if value == "free":
+        return filter_users(
+            users, lambda x: getattr(x, attr) == 0, f"free {label} filter"
+        )
+    return users
 
 
 def pricePaidFreeFilterHelper(filterusername):
@@ -37,19 +50,19 @@ def pricePaidFreeFilterHelper(filterusername):
     for key, attr, label in PAID_FREE_FILTERS:
         value = getattr(current, key)
         log.debug(f"{label} filter: {value}")
-        if value == "paid":
-            filterusername = filter_users(
-                filterusername,
-                lambda x, a=attr: _is_paid(getattr(x, a)),
-                f"paid {label} filter",
-            )
-        elif value == "free":
-            filterusername = filter_users(
-                filterusername,
-                lambda x, a=attr: getattr(x, a) == 0,
-                f"free {label} filter",
-            )
+        filterusername = _paid_free_filter(filterusername, value, attr, label)
     return priceMinMaxFilters(filterusername)
+
+
+def _min_max_filter(users, bound, attr, op, label):
+    # as on main, a bound of 0 is skipped like an unset one
+    if not bound:
+        return users
+    return filter_users(
+        users,
+        lambda x: op(getattr(x, attr), bound),
+        f"{label} filter",
+    )
 
 
 def priceMinMaxFilters(filterusername):
@@ -57,14 +70,5 @@ def priceMinMaxFilters(filterusername):
     for key, attr, op, label in MIN_MAX_FILTERS:
         bound = getattr(current, key)
         log.debug(f"{label} filter: {bound}")
-        # 0 is a valid bound (--current-price-max 0 keeps free accounts)
-        if bound is None:
-            continue
-        filterusername = filter_users(
-            filterusername,
-            lambda x, a=attr, o=op, b=bound: (
-                getattr(x, a) is not None and o(getattr(x, a), b)
-            ),
-            f"{label} filter",
-        )
+        filterusername = _min_max_filter(filterusername, bound, attr, op, label)
     return filterusername
