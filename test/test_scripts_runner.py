@@ -64,20 +64,41 @@ def test_skip_script_gets_json_and_answers(configured):
     assert asyncio.run(skip.skip_download_script(1000, _ele())) == skip.SKIP_PERMANENT
 
 
-def test_output_logging_with_an_untyped_level_keeps_the_answer(
-    configured, monkeypatch, caplog
+@pytest.mark.parametrize(
+    "value, level",
+    [
+        (20, logging.INFO),
+        ("20", logging.INFO),
+        (" 30 ", logging.WARNING),
+        ("INFO", logging.INFO),
+        ("warning", logging.WARNING),
+        (None, logging.DEBUG),
+        ("", logging.DEBUG),
+        ("loud", logging.DEBUG),
+        ("-5", logging.DEBUG),
+        (2.5, logging.DEBUG),
+    ],
+)
+def test_output_level(value, level):
+    # SCRIPT_OUTPUT_SUBPROCCESS_LEVEL isn't a typed setting: from the
+    # environment it's a string
+    assert runner.output_level(value) == level
+
+
+@pytest.mark.parametrize("value", ["20", "INFO"])
+def test_output_logging_uses_the_level_and_keeps_the_answer(
+    configured, monkeypatch, caplog, value
 ):
-    # SCRIPT_OUTPUT_SUBPROCCESS_LEVEL set from the environment is a string,
-    # which log.log rejects: the script still succeeded, so its answer counts
     configured("print('skip-permanent')\n")
     real = runner.env.getattr
-    overrides = {"SCRIPT_OUTPUT_SUBPROCCESS": True, "SCRIPT_OUTPUT_SUBPROCCESS_LEVEL": "INFO"}
+    overrides = {"SCRIPT_OUTPUT_SUBPROCCESS": True, "SCRIPT_OUTPUT_SUBPROCCESS_LEVEL": value}
     monkeypatch.setattr(
         runner.env, "getattr", lambda key, *a: overrides.get(key, real(key, *a))
     )
     with caplog.at_level(logging.DEBUG, logger="shared"):
         assert asyncio.run(skip.skip_download_script(1000, _ele())) == skip.SKIP_PERMANENT
-    assert any("stdout for" in r.getMessage() for r in caplog.records)
+    output = [r for r in caplog.records if "stdout for" in r.getMessage()]
+    assert [r.levelno for r in output] == [logging.INFO]
 
 
 def test_failing_script_is_logged_and_downloads(configured, caplog):

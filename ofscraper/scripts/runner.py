@@ -113,17 +113,26 @@ def _options(name, level_key, timeout):
     )
 
 
+def output_level(value):
+    """SCRIPT_OUTPUT_SUBPROCCESS_LEVEL as a logging level. It isn't a typed
+    setting, so from the environment it's a string: a number ("20") or a
+    level name ("INFO") is used, anything else is DEBUG."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            return int(text)
+        return logging.getLevelNamesMapping().get(text.upper(), logging.DEBUG)
+    return logging.DEBUG
+
+
 def _log_success(result, name, about):
     if result is not None and env.getattr("SCRIPT_OUTPUT_SUBPROCCESS"):
+        level = output_level(env.getattr("SCRIPT_OUTPUT_SUBPROCCESS_LEVEL"))
         for label, text in (("stdout", result.stdout), ("stderr", result.stderr)):
             if text and text.strip():
-                message = f"{name.capitalize()} {label}{about}:\n{text.strip()}"
-                try:
-                    log.log(env.getattr("SCRIPT_OUTPUT_SUBPROCCESS_LEVEL"), message)
-                except TypeError:
-                    # the level isn't a typed setting: set from the environment
-                    # it's a string, which log.log rejects
-                    log.debug(message)
+                log.log(level, f"{name.capitalize()} {label}{about}:\n{text.strip()}")
     log.info(f"{name.capitalize()} ran successfully{about}.")
 
 
