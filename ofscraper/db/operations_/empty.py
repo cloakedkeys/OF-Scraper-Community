@@ -14,11 +14,8 @@ r"""
 import contextlib
 import logging
 
-from rich.console import Console
-
 import ofscraper.db.operations_.wrapper as wrapper
 
-console = Console()
 log = logging.getLogger("shared")
 postsEmpty = """
 SELECT COUNT(*) FROM posts;

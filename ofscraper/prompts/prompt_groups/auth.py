@@ -17,14 +17,11 @@ from functools import partial
 from InquirerPy.base import Choice
 from InquirerPy.separator import Separator
 from InquirerPy.validator import EmptyInputValidator
-from rich.console import Console
 
 import ofscraper.prompts.prompt_strings as prompt_strings
 import ofscraper.prompts.prompt_validators as prompt_validators
 import ofscraper.prompts.promptConvert as promptClasses
 from ofscraper.utils.auth.utils.warning.print import print_auth_warning
-
-console = Console()
 
 
 def auth_prompt(auth) -> dict:

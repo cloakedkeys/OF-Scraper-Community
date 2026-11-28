@@ -17,7 +17,6 @@ import pathlib
 import sqlite3
 
 import arrow
-from rich.console import Console
 
 import ofscraper.classes.placeholder as placeholder
 import ofscraper.db.operations_.wrapper as wrapper
@@ -26,7 +25,6 @@ import ofscraper.utils.of_env.of_env as of_env
 from ofscraper.db.difference import get_group_difference
 from ofscraper.utils.paths.manage import copy_path
 
-console = Console()
 log = logging.getLogger("shared")
 
 

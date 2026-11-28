@@ -14,8 +14,6 @@ r"""
 import contextlib
 import logging
 
-from rich.console import Console
-
 import ofscraper.classes.labels as labels_class
 import ofscraper.db.operations_.posts as post_
 import ofscraper.db.operations_.wrapper as wrapper
@@ -25,7 +23,6 @@ import ofscraper.db.utils.rebuild as rebuild
 import ofscraper.utils.settings as settings
 from ofscraper.db.operations_.profile import get_single_model_via_profile
 
-console = Console()
 log = logging.getLogger("shared")
 
 labelsCreate = """

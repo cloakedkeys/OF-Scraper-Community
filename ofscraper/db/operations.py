@@ -14,8 +14,6 @@ r"""
 import asyncio
 import logging
 
-from rich.console import Console
-
 import ofscraper.classes.labels as labels
 import ofscraper.db.operations_.wrapper as wrapper
 import ofscraper.sites as sites
@@ -51,7 +49,6 @@ from ofscraper.db.operations_.stories import (
 from ofscraper.db.transition import modify_tables, size_skip_labels_in_backups
 from ofscraper.utils.context.run_async import run
 
-console = Console()
 log = logging.getLogger("shared")
 
 
