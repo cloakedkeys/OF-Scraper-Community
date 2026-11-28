@@ -165,28 +165,27 @@ def profile_menu_helper(result_profiles_prompt):
         prompts.press_enter_to_continue()
 
 
+# config menu choice -> the prompt in ofscraper.prompts.prompts that asks
+# that section, looked up when chosen
+CONFIG_SECTION_PROMPTS = {
+    "download": "download_config",
+    "file": "file_config",
+    "general": "general_config",
+    "binary": "binary_config",
+    "cdm": "cdm_config",
+    "performance": "performance_config",
+    "advanced": "advanced_config",
+    "response": "response_type",
+    "content": "content_config",
+    "script": "script_config",
+}
+
+
 @back_to_menu
 def config_menu_helper(result_config_prompt):
-    if result_config_prompt == "download":
-        config_menu.download_config()
-    elif result_config_prompt == "file":
-        config_menu.file_config()
-    elif result_config_prompt == "general":
-        config_menu.general_config()
-    elif result_config_prompt == "binary":
-        config_menu.binary_config()
-    elif result_config_prompt == "cdm":
-        config_menu.cdm_config()
-    elif result_config_prompt == "performance":
-        config_menu.performance_config()
-    elif result_config_prompt == "advanced":
-        config_menu.advanced_config()
-    elif result_config_prompt == "response":
-        config_menu.response_type()
-    elif result_config_prompt == "content":
-        config_menu.content_config()
-    elif result_config_prompt == "script":
-        config_menu.script_config()
+    prompt_name = CONFIG_SECTION_PROMPTS.get(result_config_prompt)
+    if prompt_name:
+        config_menu.run_config_section(getattr(prompts, prompt_name))
 
 
 def reset_menu_helper():
