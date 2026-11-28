@@ -6,18 +6,20 @@ from ofscraper.filters.models.utils.filtering import yes_no_filter
 log = logging.getLogger("shared")
 
 
+def _regular_price(x):
+    # an unknown (None) regular price counts as 0, like the other prices'
+    # fallback when the API leaves them out
+    return x.final_regular_price or 0
+
+
 def _free_trial(x):
-    return (
-        x.final_current_price == 0 or x.final_promo_price == 0
-    ) and x.final_regular_price > 0
+    free_now = x.final_current_price == 0 or x.final_promo_price == 0
+    return free_now and _regular_price(x) > 0
 
 
 def _no_free_trial(x):
-    # Not written as `not _free_trial(x)`: the two differ when
-    # final_regular_price is None, and this keeps main's result for that case.
-    return (
-        x.final_current_price > 0 and x.final_promo_price > 0
-    ) or x.final_regular_price == 0
+    paid_now = x.final_current_price > 0 and x.final_promo_price > 0
+    return paid_now or _regular_price(x) == 0
 
 
 def promoFilterHelper(filterusername):

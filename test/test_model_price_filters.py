@@ -128,13 +128,15 @@ def test_missing_regular_price(monkeypatch):
     assert price_filters.pricePaidFreeFilterHelper(models) == []
 
 
-@pytest.mark.parametrize("bound", ["regular_price_min", "regular_price_max"])
-def test_regular_bound_with_unknown_regular_price(monkeypatch, bound):
-    # as on main, a non-zero bound compares None with an int and raises
+@pytest.mark.parametrize(
+    "bound, expected",
+    [("regular_price_min", ["paid"]), ("regular_price_max", ["unknown"])],
+)
+def test_regular_bound_with_unknown_regular_price(monkeypatch, bound, expected):
+    # an unknown regular price counts as 0; it used to raise TypeError
     models = [_model("unknown", regular=None), _model("paid", regular=5)]
     _patch_settings(monkeypatch, **{bound: 1})
-    with pytest.raises(TypeError):
-        price_filters.priceMinMaxFilters(models)
+    assert [m.name for m in price_filters.priceMinMaxFilters(models)] == expected
 
 
 def test_combined_paid_and_bound_filters(monkeypatch):

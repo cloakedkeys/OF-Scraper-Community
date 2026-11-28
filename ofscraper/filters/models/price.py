@@ -60,7 +60,8 @@ def _min_max_filter(users, bound, attr, op, label):
         return users
     return filter_users(
         users,
-        lambda x: op(getattr(x, attr), bound),
+        # an unknown (None) regular price counts as 0; no other price is None
+        lambda x: op(getattr(x, attr) or 0, bound),
         f"{label} filter",
     )
 

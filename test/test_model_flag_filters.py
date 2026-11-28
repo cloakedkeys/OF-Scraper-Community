@@ -72,19 +72,20 @@ def test_free_trial_flag(monkeypatch):
 
 
 def test_free_trial_flag_unknown_regular_price(monkeypatch):
-    # final_regular_price is None when the API leaves the price out; these
-    # pin main's results, including its TypeError
+    # final_regular_price is None when the API leaves the price out; it now
+    # counts as 0, so neither account is a free trial
     unpriced_paid = _priced("unpriced_paid", 5, 5, None)
     unpriced_trial = _priced("unpriced_trial", 0, 5, None)
 
+    # used to raise TypeError on unpriced_trial
     _patch_settings(monkeypatch, free_trial=True)
-    assert flags.promoFilterHelper([unpriced_paid]) == []
-    with pytest.raises(TypeError):
-        flags.promoFilterHelper([unpriced_trial])
+    assert flags.promoFilterHelper([unpriced_paid, unpriced_trial]) == []
 
+    # used to keep only unpriced_paid
     _patch_settings(monkeypatch, free_trial=False)
     assert _names(flags.promoFilterHelper([unpriced_paid, unpriced_trial])) == [
-        "unpriced_paid"
+        "unpriced_paid",
+        "unpriced_trial",
     ]
 
 
