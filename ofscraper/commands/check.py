@@ -563,11 +563,6 @@ async def post_check_retriver(forced=False, only_model_id=None):
             name_match2 = re.search(f"^{of_env.getattr('USERNAME_REGEX')}+$", ele)
             user_name = None
             model_id = None
-            timeline_data = []
-            labels_data = []
-            pinned_data = []
-            archived_data = []
-            streams_data = []
             # areas read from the API in this run, not from the check cache
             fresh = set()
 
@@ -605,79 +600,43 @@ async def post_check_retriver(forced=False, only_model_id=None):
                 await operations.table_init_create(
                     username=user_name, model_id=model_id
                 )
-                if "Timeline" in areas:
-                    oldtimeline = read_check(model_id, timeline.API)
-                    if oldtimeline is not None and not forced:
-                        log.info(f"[{user_name}] Using cache for {timeline.API}")
-                        timeline_data = oldtimeline
-                    else:
-                        log.info(
-                            f"[{user_name}] Fetching fresh data for {timeline.API}"
-                        )
-                        timeline_data = await _get_timeline(model_id, user_name, c=c)
-                        set_check(timeline_data, model_id, timeline.API)
-                        fresh.add("Timeline")
-
-                if "Archived" in areas:
-                    oldarchive = read_check(model_id, archived.API)
-                    if oldarchive is not None and not forced:
-                        log.info(f"[{user_name}] Using cache for {archived.API}")
-                        archived_data = oldarchive
-                    else:
-                        log.info(
-                            f"[{user_name}] Fetching fresh data for {archived.API}"
-                        )
-                        archived_data = await archived.get_archived_posts(
-                            model_id, user_name, c=c
-                        )
-                        set_check(archived_data, model_id, archived.API)
-                        fresh.add("Archived")
-
-                if "Pinned" in areas:
-                    oldpinned = read_check(model_id, pinned.API)
-                    if oldpinned is not None and not forced:
-                        log.info(f"[{user_name}] Using cache for {pinned.API}")
-                        pinned_data = oldpinned
-                    else:
-                        log.info(f"[{user_name}] Fetching fresh data for {pinned.API}")
-                        pinned_data = await pinned.get_pinned_posts(model_id, c=c)
-                        set_check(pinned_data, model_id, pinned.API)
-                        fresh.add("Pinned")
-
-                if "Labels" in areas:
-                    oldlabels = read_check(model_id, labels.API)
-                    if oldlabels is not None and not forced:
-                        log.info(f"[{user_name}] Using cache for {labels.API}")
-                        labels_data = oldlabels
-                    else:
-                        log.info(f"[{user_name}] Fetching fresh data for {labels.API}")
-                        labels_resp = await labels.get_labels(model_id, c=c)
-                        await operations.make_label_table_changes(
-                            labels_resp,
-                            model_id=model_id,
-                            username=user_name,
-                            posts=False,
-                        )
-                        labels_data = [
-                            post
-                            for label in labels_resp
-                            for post in label.get("posts", [])
-                        ]
-                        set_check(labels_data, model_id, labels.API)
-                        fresh.add("Labels")
-
-                if "Streams" in areas:
-                    oldstreams = read_check(model_id, streams.API)
-                    if oldstreams is not None and not forced:
-                        log.info(f"[{user_name}] Using cache for {streams.API}")
-                        streams_data = oldstreams
-                    else:
-                        log.info(f"[{user_name}] Fetching fresh data for {streams.API}")
-                        streams_data = await streams.get_streams_posts(
-                            model_id, user_name, c=c
-                        )
-                        set_check(streams_data, model_id, streams.API)
-                        fresh.add("Streams")
+                # in the order they were always fetched
+                fetchers = {
+                    "Timeline": (
+                        timeline.API,
+                        partial(_get_timeline, model_id, user_name, c=c),
+                    ),
+                    "Archived": (
+                        archived.API,
+                        partial(archived.get_archived_posts, model_id, user_name, c=c),
+                    ),
+                    "Pinned": (
+                        pinned.API,
+                        partial(pinned.get_pinned_posts, model_id, c=c),
+                    ),
+                    "Labels": (
+                        labels.API,
+                        partial(_get_label_posts, model_id, user_name, c=c),
+                    ),
+                    "Streams": (
+                        streams.API,
+                        partial(streams.get_streams_posts, model_id, user_name, c=c),
+                    ),
+                }
+                area_data = {name: [] for name in fetchers}
+                for name, (api, fetch) in fetchers.items():
+                    if name not in areas:
+                        continue
+                    area_data[name], was_fresh = await _fetch_or_cache(
+                        model_id, user_name, api, fetch, forced
+                    )
+                    if was_fresh:
+                        fresh.add(name)
+                timeline_data = area_data["Timeline"]
+                archived_data = area_data["Archived"]
+                pinned_data = area_data["Pinned"]
+                labels_data = area_data["Labels"]
+                streams_data = area_data["Streams"]
 
                 in_order = [
                     ("Pinned", pinned_data),
@@ -795,6 +754,32 @@ def _site_areas(areas, user_name):
     return kept
 
 
+async def _fetch_or_cache(model_id, user_name, api, fetch, forced):
+    """(posts, fresh) for one check area: the cached list unless ``forced``
+    or there is none, else ``await fetch()``, which is then cached."""
+    cached = read_check(model_id, api)
+    log.debug(f"[{user_name}] {len(cached or [])} items in cache for {api}")
+    if cached is not None and not forced:
+        log.info(f"[{user_name}] Using cache for {api}")
+        return cached, False
+    log.info(f"[{user_name}] Fetching fresh data for {api}")
+    data = await fetch()
+    set_check(data, model_id, api)
+    return data, True
+
+
+async def _get_label_posts(model_id, user_name, c=None):
+    """The posts in the creator's labels; the labels table is updated too."""
+    labels_resp = await labels.get_labels(model_id, c=c)
+    await operations.make_label_table_changes(
+        labels_resp,
+        model_id=model_id,
+        username=user_name,
+        posts=False,
+    )
+    return [post for label in labels_resp for post in label.get("posts", [])]
+
+
 async def _get_timeline(model_id, user_name, c=None):
     if sites.is_fansly():
         return await fansly_scrape.get_timeline_posts(model_id, user_name, c=c)
@@ -866,7 +851,9 @@ async def message_check_retriver(forced=False, only_model_id=None):
     links = list(url_helper())
     if settings.get_settings().force:
         forced = True
-    async with manager.Manager.session.aget_ofsession() as c:
+    async with manager.Manager.session.aget_ofsession(
+        sem_count=of_env.getattr("API_REQ_CHECK_MAX"),
+    ) as c:
         for item in links:
             if not item:
                 continue
@@ -906,19 +893,13 @@ async def message_check_retriver(forced=False, only_model_id=None):
                 )
 
                 # --- Messages ---
-                messages = None
-                messages_fresh = False
-                oldmessages = read_check(model_id, messages_.API)
-                log.debug(f"Number of messages in cache {len(oldmessages or [])}")
-
-                if oldmessages is not None and not forced:
-                    log.info(f"[{user_name}] Using cache for {messages_.API}")
-                    messages = oldmessages
-                else:
-                    log.info(f"[{user_name}] Fetching fresh data for {messages_.API}")
-                    messages = await _get_messages(model_id, user_name, c=c)
-                    set_check(messages, model_id, messages_.API)
-                    messages_fresh = True
+                messages, messages_fresh = await _fetch_or_cache(
+                    model_id,
+                    user_name,
+                    messages_.API,
+                    partial(_get_messages, model_id, user_name, c=c),
+                    forced,
+                )
 
                 message_posts_array = list(
                     map(lambda x: posts_.Post(x, model_id, user_name), messages)
@@ -933,18 +914,13 @@ async def message_check_retriver(forced=False, only_model_id=None):
                 )
 
                 # --- Paid Content ---
-                oldpaid = read_check(model_id, paid_.API)
-                paid = None
-                paid_fresh = False
-
-                if oldpaid is not None and not forced:
-                    log.info(f"[{user_name}] Using cache for {paid_.API}")
-                    paid = oldpaid
-                else:
-                    log.info(f"[{user_name}] Fetching fresh data for {paid_.API}")
-                    paid = await _get_paid(user_name, model_id, c=c)
-                    set_check(paid, model_id, paid_.API)
-                    paid_fresh = True
+                paid, paid_fresh = await _fetch_or_cache(
+                    model_id,
+                    user_name,
+                    paid_.API,
+                    partial(_get_paid, user_name, model_id, c=c),
+                    forced,
+                )
 
                 paid_posts_array = list(
                     map(lambda x: posts_.Post(x, model_id, user_name, purchased=True), paid)
@@ -972,7 +948,6 @@ async def purchase_checker_runner():
 
 @run
 async def purchase_check_retriver(forced=False, only_model_id=None):
-    user_dict = {}
     if not sites.is_fansly():
         auth_requests.make_headers()
     if settings.get_settings().force:
@@ -996,21 +971,15 @@ async def purchase_check_retriver(forced=False, only_model_id=None):
                 ),
                 visible=True,
             )
-            user_dict[model_id] = user_dict.get(model_id, [])
-
             await operations.table_init_create(model_id=model_id, username=user_name)
 
-            oldpaid = read_check(model_id, paid_.API)
-            paid = None
             # a cached list can be days older than the rows: --metadata
             # leaves them alone
             skip_update = None
-
-            if oldpaid is not None and not forced:
-                log.info(f"[{user_name}] Using cache for {paid_.API}")
-                paid = oldpaid
-                skip_update = True
-            elif user_name == of_env.getattr("DELETED_MODEL_PLACEHOLDER"):
+            if user_name == of_env.getattr("DELETED_MODEL_PLACEHOLDER") and (
+                forced or read_check(model_id, paid_.API) is None
+            ):
+                # a deleted model can't be fetched from the API
                 log.info(f"[{user_name}] Processing deleted model cache/data")
                 paid_user_dict = await paid_.get_all_paid_posts()
                 seen = set()
@@ -1020,9 +989,15 @@ async def purchase_check_retriver(forced=False, only_model_id=None):
                     if post["id"] not in seen and not seen.add(post["id"])
                 ]
             else:
-                log.info(f"[{user_name}] Fetching fresh data for {paid_.API}")
-                paid = await _get_paid(user_name, model_id, c=c)
-                set_check(paid, model_id, paid_.API)
+                paid, paid_fresh = await _fetch_or_cache(
+                    model_id,
+                    user_name,
+                    paid_.API,
+                    partial(_get_paid, user_name, model_id, c=c),
+                    forced,
+                )
+                if not paid_fresh:
+                    skip_update = True
             posts_array = list(
                 map(lambda x: posts_.Post(x, model_id, user_name, purchased=True), paid)
             )
@@ -1042,7 +1017,6 @@ async def stories_checker_runner():
 
 @run
 async def stories_check_retriver(forced=False, only_model_id=None):
-    user_dict = {}
     async with manager.Manager.session.aget_ofsession(
         sem_count=of_env.getattr("API_REQ_CHECK_MAX"),
     ) as c:
@@ -1056,7 +1030,6 @@ async def stories_check_retriver(forced=False, only_model_id=None):
                     username=user_name, activity="Stories posts"
                 )
             )
-            user_dict[model_id] = user_dict.get(model_id, [])
             await operations.table_init_create(model_id=model_id, username=user_name)
             stories = await highlights.get_stories_post(model_id, c=c)
             highlights_ = await highlights.get_highlight_post(model_id, c=c)
@@ -1110,20 +1083,15 @@ async def insert_media(username, model_id, media):
 
 @run
 async def get_paid_ids(model_id, user_name):
-    oldpaid = read_check(model_id, paid_.API)
-    paid = None
-
-    if oldpaid is not None and not settings.get_settings().force:
-        log.info(f"[{user_name}] Using cache for {paid_.API}")
-        paid = oldpaid
-    else:
-        log.info(f"[{user_name}] Fetching fresh data for {paid_.API}")
+    async def fetch():
         async with manager.Manager.session.aget_ofsession(
             sem_count=of_env.getattr("API_REQ_CHECK_MAX")
         ) as c:
-            paid = await _get_paid(user_name, model_id, c=c)
-            set_check(paid, model_id, paid_.API)
+            return await _get_paid(user_name, model_id, c=c)
 
+    paid, _ = await _fetch_or_cache(
+        model_id, user_name, paid_.API, fetch, settings.get_settings().force
+    )
     media = await process_post_media(user_name, model_id, paid)
     media = list(filter(lambda x: x.canview is True, media))
     return list(map(lambda x: x.id, media))
