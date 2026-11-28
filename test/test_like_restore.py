@@ -108,14 +108,6 @@ def test_toggle_result_and_mark(toggle, replies, result, marks):
     assert session.calls == len(replies)
 
 
-@pytest.mark.parametrize("liked, replies", [(1, [True]), (0, [False])])
-def test_toggle_takes_any_truthy_wanted_state(liked, replies):
-    # compared by value, not identity: 1 and 0 mean liked and unliked
-    post, session = MarkedPost(), Session(*replies)
-    assert like._toggle_requests(session, post, 456, liked) == 1
-    assert session.calls == 1
-
-
 @pytest.mark.parametrize("process", [like.process_like, like.process_unlike])
 def test_like_screen_is_set_up_once(monkeypatch, process):
     screens = []

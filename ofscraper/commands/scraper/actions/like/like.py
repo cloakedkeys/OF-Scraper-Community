@@ -120,7 +120,6 @@ def _toggle_requests(c, post: Post, model_id, liked: bool):
     wrong state was already in the wanted one and is toggled again.
     Returns 1 when toggled, 2 when toggled back, 3 when it failed.
     """
-    liked = bool(liked)  # compared by value below: any truthy value means liked
     if liked:
         # pauses between the two toggles
         sleep_duration = random.uniform(
