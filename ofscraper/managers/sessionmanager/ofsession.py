@@ -49,10 +49,11 @@ def _apply_default_request_kwargs(
     *,
     treat_empty_actions_as_default: bool = False,
 ) -> None:
-    actions = kwargs.get("actions")
-    if actions is None or (treat_empty_actions_as_default and not actions):
+    if "actions" not in kwargs or (
+        treat_empty_actions_as_default and not kwargs.get("actions")
+    ):
         kwargs["actions"] = _default_actions()
-    if kwargs.get("exceptions") is None:
+    if "exceptions" not in kwargs or kwargs["exceptions"] is None:
         kwargs["exceptions"] = list(default_exceptions)
 
 

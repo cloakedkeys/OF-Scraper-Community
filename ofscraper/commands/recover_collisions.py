@@ -52,7 +52,7 @@ def collisions(rows, path_root=None, written_here=False):
     for model, media, directory, filename, downloaded in rows:
         path = Path(directory or "", filename)
         if not path.is_absolute():
-            if written_here and _from_another_system(path):
+            if written_here and db_cli.from_another_system(path):
                 raise ValueError(
                     f"The recorded path {path} is a full path on another system"
                     " than this one. Run this where the scraper runs, so that"
@@ -76,12 +76,6 @@ def collisions(rows, path_root=None, written_here=False):
         rows for rows in groups.values()
         if len({(r[0], r[1]) for r in rows}) > 1
     ]
-
-
-def _from_another_system(path):
-    """Whether a path that isn't a full path here is one elsewhere: C:\\...
-    read on Linux, or /... read on Windows. --path-root is not for those."""
-    return db_cli.from_another_system(path, os_name=os.name)
 
 
 def report(groups, media_to_mark, apply):
@@ -405,7 +399,6 @@ def _undo_row(row):
     )
 
 
-_goes_by = db_cli.goes_by
 validate_db_args = db_cli.validate_db_args
 
 

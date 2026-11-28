@@ -195,10 +195,14 @@ async def scrape_subscriptions_active(c, offset=0, strict=False):
     Yields batches page-by-page. With ``strict``, a failed request raises
     instead of ending the list, so an empty list and a failed one differ.
     """
-    async for batch in _scrape_subscriptions(
+    gen = _scrape_subscriptions(
         c, "subscriptionsActiveEP", "active", offset=offset, strict=strict
-    ):
-        yield batch
+    )
+    try:
+        async for batch in gen:
+            yield batch
+    finally:
+        await gen.aclose()
 
 
 async def scrape_subscriptions_disabled(c, offset=0, *, strict=False):
@@ -206,7 +210,11 @@ async def scrape_subscriptions_disabled(c, offset=0, *, strict=False):
     Async Generator Worker Loop for expired subscriptions.
     Yields batches page-by-page.
     """
-    async for batch in _scrape_subscriptions(
+    gen = _scrape_subscriptions(
         c, "subscriptionsExpiredEP", "expired", offset=offset, strict=strict
-    ):
-        yield batch
+    )
+    try:
+        async for batch in gen:
+            yield batch
+    finally:
+        await gen.aclose()

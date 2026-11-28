@@ -17,6 +17,14 @@ from ofscraper.managers.sessionmanager.sleepers import sleepers
 
 @pytest.fixture(autouse=True)
 def plain_settings(monkeypatch):
+    import ofscraper.utils.of_env.of_env as of_env
+
+    real_getattr = of_env.getattr
+    monkeypatch.setattr(
+        of_env,
+        "getattr",
+        lambda key, default=None: False if key == "API_FORCE_KEY" else real_getattr(key, default),
+    )
     monkeypatch.setattr(
         settings,
         "get_settings",
@@ -146,11 +154,15 @@ def test_of_session_request_defaults_sync_and_async(monkeypatch):
             "https://example.test", actions=[], exceptions=[]
         ):
             pass
+        async with sess.requests_async("https://example.test", actions=None):
+            pass
 
     asyncio.run(run())
     with sess.requests("https://example.test"):
         pass
     with sess.requests("https://example.test", actions=[], exceptions=[]):
+        pass
+    with sess.requests("https://example.test", actions=None):
         pass
 
     for seen in (async_seen, sync_seen):
@@ -158,4 +170,6 @@ def test_of_session_request_defaults_sync_and_async(monkeypatch):
         assert seen[0]["exceptions"] == [sm.TOO_MANY, sm.AUTH, sm.FORBIDDEN]
         assert seen[1]["actions"] == []
         assert seen[1]["exceptions"] == []
+        assert seen[2]["actions"] is None
+        assert seen[2]["exceptions"] == [sm.TOO_MANY, sm.AUTH, sm.FORBIDDEN]
 
