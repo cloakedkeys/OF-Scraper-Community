@@ -264,9 +264,9 @@ def test_alerts_state_persists_across_restarts(env_status, monkeypatch, tmp_path
     s = SimpleNamespace(discord_level="OFF", alert_script=str(script), site="onlyfans")
     monkeypatch.setattr(alerts.settings, "get_settings", lambda: s)
     sent = []
-    import ofscraper.utils.system.subprocess as subprocess_
+    import ofscraper.scripts.runner as runner
 
-    monkeypatch.setattr(subprocess_, "run", lambda cmd, input=None, **k: sent.append(json.loads(input)))
+    monkeypatch.setattr(runner, "run", lambda cmd, input=None, **k: sent.append(json.loads(input)))
 
     alerts.reset()
     assert alerts.failing(alerts.LOGIN, "rejected")

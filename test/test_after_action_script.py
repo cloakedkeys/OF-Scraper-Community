@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import ofscraper.scripts.after_action_script as after_action
+import ofscraper.scripts.runner as runner
 from ofscraper.scripts.after_download_action_script import after_download_action_script
 from ofscraper.scripts.after_like_action_script import after_like_action_script
 
@@ -23,7 +24,7 @@ def test_missing_username_key_logs_error_instead_of_unbound_local(
         "get_settings",
         lambda: SimpleNamespace(after_action_script=str(script)),
     )
-    monkeypatch.setattr(after_action.dry_run, "active", lambda: False)
+    monkeypatch.setattr(runner.dry_run, "active", lambda: False)
     monkeypatch.setattr(
         after_action.manager,
         "Manager",
@@ -53,7 +54,7 @@ def test_none_media_does_not_crash_and_runs_script(monkeypatch, tmp_path, caplog
         "get_settings",
         lambda: SimpleNamespace(after_action_script=str(script)),
     )
-    monkeypatch.setattr(after_action.dry_run, "active", lambda: False)
+    monkeypatch.setattr(runner.dry_run, "active", lambda: False)
     monkeypatch.setattr(
         after_action.manager,
         "Manager",
@@ -69,7 +70,7 @@ def test_none_media_does_not_crash_and_runs_script(monkeypatch, tmp_path, caplog
         captured["cmd"] = cmd
         captured["payload"] = json.loads(kwargs["input"])
 
-    monkeypatch.setattr(after_action, "run", fake_run)
+    monkeypatch.setattr(runner, "run", fake_run)
     with caplog.at_level(logging.INFO, logger="shared"):
         after_download_action_script("creator_a", None)
 
@@ -89,7 +90,7 @@ def test_called_process_error_with_none_stdout_stderr(monkeypatch, tmp_path, cap
         "get_settings",
         lambda: SimpleNamespace(after_action_script=str(script)),
     )
-    monkeypatch.setattr(after_action.dry_run, "active", lambda: False)
+    monkeypatch.setattr(runner.dry_run, "active", lambda: False)
     monkeypatch.setattr(
         after_action.manager,
         "Manager",
@@ -103,7 +104,7 @@ def test_called_process_error_with_none_stdout_stderr(monkeypatch, tmp_path, cap
     def fail_run(*args, **kwargs):
         raise subprocess.CalledProcessError(2, [str(script)], output=None, stderr=None)
 
-    monkeypatch.setattr(after_action, "run", fail_run)
+    monkeypatch.setattr(runner, "run", fail_run)
     with caplog.at_level(logging.DEBUG, logger="shared"):
         after_like_action_script("creator_a", [])
 

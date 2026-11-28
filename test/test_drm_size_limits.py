@@ -584,7 +584,7 @@ def _script_media(tmp_path, monkeypatch, items):
     monkeypatch.setattr(manager, "Manager", SimpleNamespace(current_model_manager=SimpleNamespace(
         get_model=lambda username: {"username": username, "id": 1})))
     sent = []
-    monkeypatch.setattr(action_runner, "run", lambda cmd, input=None, **k: sent.append(input))
+    monkeypatch.setattr(action_runner.runner, "run", lambda cmd, input=None, **k: sent.append(input))
     script_mod.after_download_action_script("model", items)
     (payload,) = sent
     return json.loads(payload)["media"]

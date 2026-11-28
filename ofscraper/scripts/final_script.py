@@ -1,45 +1,23 @@
-import json
-import logging
-import os
-import subprocess
-import traceback
-
 import ofscraper.managers.manager as manager
-import ofscraper.utils.dry_run as dry_run
-import ofscraper.utils.of_env.of_env as env
+import ofscraper.scripts.runner as runner
 import ofscraper.utils.settings as settings
-from ofscraper.utils.system.subprocess import run
 
 
 def final_script(summary=None):
     """Run post_script with the processed and unprocessed users per action,
     and the run record (run_record.py) as ``summary``."""
-    log = logging.getLogger("shared")
-    script_path=settings.get_settings().post_script
-    if not script_path:
-        log.debug("Final script is disabled; skipping excution")
-        return
-    if dry_run.active():
-        log.info("Dry run: not running the post script")
-        return
-    elif not os.path.exists(script_path):
-        log.info(
-            f"Post script path is invalid: '{script_path}'. Aborting final script."
-        )
+    name = "final script"
+    script_path = settings.get_settings().post_script
+    if not runner.script_ready(script_path, name):
         return
 
-    log.info(f"Attempting to run final script: {script_path}")
-
-    try:
+    def payload():
         model_manager = manager.Manager.current_model_manager
-
         if settings.get_settings().command == "metadata":
             scrape_paid_activity = "scrape_paid_metadata"
         else:
             scrape_paid_activity = "scrape_paid_download"
-
-        # Dynamically build the payload
-        payload_data = {
+        return {
             "like_processed_users": list(model_manager.get_processed("like")),
             "like_unprocessed_users": list(model_manager.get_unprocessed("like")),
             "unlike_processed_users": list(model_manager.get_processed("unlike")),
@@ -48,7 +26,6 @@ def final_script(summary=None):
             "download_unprocessed_users": list(
                 model_manager.get_unprocessed("download")
             ),
-            # Use the dynamic activity string here
             "scrape_paid_processed_users": list(
                 model_manager.get_processed(scrape_paid_activity)
             ),
@@ -57,36 +34,11 @@ def final_script(summary=None):
             ),
             "summary": summary,
         }
-        # Dump JSON to a string, no indent for efficiency, ensure_ascii=False for non-ASCII chars
-        input_json_str = json.dumps(payload_data, indent=None, ensure_ascii=False)
 
-        run(
-            [script_path],
-            input=input_json_str,  # Pass the JSON string as stdin
-            capture_output=True,  # Capture stdout and stderr
-            text=True,  # Decode stdout/stderr as text
-            check=True,  # Raise CalledProcessError if script exits with non-zero status
-            level=env.getattr("FINAL_SCRIPT_SUBPROCESS_LEVEL"),
-            name="Final script",
-            timeout=1800  # Set a timeout of 30 minutes to prevent hanging
-        )
-        log.info("Final script ran successfully via stdin.")
-
-    # 4. Add comprehensive error handling
-    except FileNotFoundError:
-        log.info(
-            f"Final script executable not found: '{script_path}'. Please ensure the path is correct and the script is executable."
-        )
-    except subprocess.CalledProcessError as e:
-        log.info(f"Final script failed with exit code {e.returncode}: '{script_path}'")
-        log.debug(f"Final script stdout:\n{e.stdout.strip()}")
-        log.debug(f"Final script stderr:\n{e.stderr.strip()}")
-    except json.JSONDecodeError as e:
-        log.info(f"Failed to serialize payload to JSON for final script: {e}")
-    except Exception as e:
-        log.info(
-            f"An unexpected error occurred while running final script with script '{script_path}': {e}",
-            exc_info=True,
-        )
-        log.traceback_(e)
-        log.traceback_(traceback.format_exc())
+    runner.run_user_script(
+        script_path,
+        payload,
+        name=name,
+        level_key="FINAL_SCRIPT_SUBPROCESS_LEVEL",
+        timeout=1800,
+    )
