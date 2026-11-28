@@ -94,5 +94,6 @@ async def offset_paginate(
             log.traceback_(traceback.format_exc())
             return
         finally:
-            if task:
+            # rich task ids start at 0
+            if task is not None:
                 progress_utils.api.remove_job_task(task)

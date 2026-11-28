@@ -97,6 +97,15 @@ def test_pages_advance_by_batch_size_until_has_more_is_false(tasks):
     assert tasks == []
 
 
+def test_a_progress_task_with_id_0_is_removed_too(monkeypatch):
+    # rich hands out task ids from 0
+    removed = []
+    monkeypatch.setattr(progress_utils.api, "add_job_task", lambda *a, **k: 0, raising=False)
+    monkeypatch.setattr(progress_utils.api, "remove_job_task", removed.append, raising=False)
+    _paginate(_Client(_page([1], has_more=False)), PageEnd(), offset=0)
+    assert removed == [0]
+
+
 def test_empty_page_ends_cleanly(tasks):
     end = PageEnd()
     assert _paginate(_Client(_page([1]), _page([])), end) == [[{"id": 1}]]
