@@ -14,6 +14,7 @@ that area's scan. Shared utilities (``settings``, ``of_env``, ``incomplete``,
 """
 
 import logging
+import math
 import traceback
 from dataclasses import dataclass
 
@@ -112,17 +113,20 @@ def _parse_created_at(value):
     if value in (None, ""):
         return None
     try:
-        return float(value)
+        ts = float(value)
     except (TypeError, ValueError):
         return None
+    return ts if math.isfinite(ts) else None
 
 
 def split_posts(m, oldposts, after):
-    dated_posts = [
-        (ts, x)
-        for x in oldposts
-        if (ts := _parse_created_at(x.get("created_at"))) is not None
-    ]
+    dated_posts = []
+    for x in oldposts:
+        ts = _parse_created_at(x.get("created_at"))
+        if ts is None:
+            continue
+        row = x if isinstance(x.get("created_at"), (int, float)) else {**x, "created_at": ts}
+        dated_posts.append((ts, row))
     if len(dated_posts) == 0:
         return []
     min_posts = m.get_min_posts_batch(len(dated_posts), m.AREA.api)

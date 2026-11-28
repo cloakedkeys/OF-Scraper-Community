@@ -413,9 +413,17 @@ class tempFilePlaceholder(basePlaceholder):
 _TRACE_EXCLUDED_KEYS = frozenset({"config", "args"})
 
 
+def _trace_enabled():
+    import ofscraper.utils.logs.utils.trace as trace_utils
+
+    try:
+        return bool(trace_utils.is_trace())
+    except AttributeError:
+        return False
+
+
 def _trace_placeholders(prefix, variables):
-    is_enabled = getattr(log, "isEnabledFor", None)
-    if is_enabled is not None and not is_enabled(getattr(logging, "TRACE", 5)):
+    if not _trace_enabled():
         return
     safe = {k: v for k, v in variables.items() if k not in _TRACE_EXCLUDED_KEYS}
     log.trace(f"{prefix} {safe}")

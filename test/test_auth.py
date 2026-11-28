@@ -280,3 +280,30 @@ def test_onlyfans_edit_auth_keeps_my_info_cache_when_cancelled(monkeypatch, choi
     assert auth_file.edit_auth() == choice
     assert cleared == []
 
+
+def test_make_auth_attempt_masks_secrets_and_clears_my_info(monkeypatch, tmp_path):
+    import ofscraper.utils.auth.file as auth_file
+    import ofscraper.utils.auth.make as auth_make
+    import ofscraper.utils.profiles.data as profile_data
+
+    auth_path = tmp_path / "auth.json"
+    hidden = []
+    cleared = []
+    monkeypatch.setattr(auth_make.common_paths, "get_auth_file", lambda: auth_path)
+    monkeypatch.setattr(
+        auth_make.prompts,
+        "auth_prompt",
+        lambda current: {"sess": "fresh-sess", "x-bc": "fresh-xbc", "auth_id": "42", "user_agent": "ua"},
+    )
+    monkeypatch.setattr(auth_make, "check_auth_warning", lambda auth: True)
+    monkeypatch.setattr(auth_make.console, "print", lambda *a, **k: None)
+    monkeypatch.setattr(auth_file, "hide_secrets", lambda auth: hidden.append(dict(auth)))
+    monkeypatch.setattr(profile_data, "clear_my_info", lambda: cleared.append(True))
+
+    saved = auth_make._make_auth_attempt({}, "Enter Each Field Manually")
+    assert saved["sess"] == "fresh-sess"
+    assert auth_path.exists()
+    assert cleared == [True]
+    assert len(hidden) == 1
+    assert hidden[0]["sess"] == "fresh-sess"
+    assert hidden[0]["x-bc"] == "fresh-xbc"

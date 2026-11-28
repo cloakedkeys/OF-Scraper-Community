@@ -178,10 +178,14 @@ def test_split_posts_excludes_undated_rows_when_after_is_zero():
         {"post_id": 1, "created_at": None},
         {"post_id": 2, "created_at": ""},
         {"post_id": 4, "created_at": "not-a-timestamp"},
-        {"post_id": 3, "created_at": 1_700_000_000.25},
+        {"post_id": 5, "created_at": "nan"},
+        {"post_id": 6, "created_at": "inf"},
+        {"post_id": 7, "created_at": "-inf"},
+        {"post_id": 3, "created_at": "1700000000.25"},
     ]
     splits = dated_posts.split_posts(timeline, oldposts, after=0)
     assert splits == [[{"post_id": 3, "created_at": 1_700_000_000.25}]]
+    assert isinstance(splits[0][0]["created_at"], float)
     calls = []
 
     def fake_scrape(*args, **kwargs):
