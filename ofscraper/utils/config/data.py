@@ -25,9 +25,10 @@ from ofscraper.utils.cache.safe_disk import SafeDisk, SafeJSONDisk
 # back, so each must return what belongs in the file. Environment fallbacks
 # that shouldn't be saved go in settings.merged_settings instead.
 #
-# _first, _first_set, _value and _truthy_value are the lookups most getters
-# share; the reference builder (scripts/reference/build_reference.py) reads
-# their arguments to list each key's older names and environment default.
+# _first, _first_set, _value, _truthy_value, _parse_size_value and
+# _responsetype are the lookups most getters share; the reference builder
+# (scripts/reference/build_reference.py) reads their arguments to list each
+# key's older names and environment default.
 
 
 def strip_path_quotes(val):
@@ -113,6 +114,27 @@ def _truthy_value(config, env_key, *paths):
     return _first(config, *paths) or of_env.getattr(env_key)
 
 
+def _parse_size_value(config, env_key, *paths):
+    """_value() parsed as a size in bytes, e.g. "1.5GB"; one that can't be
+    parsed, e.g. "", counts as 0. With config=False the env_key default is
+    returned as it is."""
+    if config is False:
+        return of_env.getattr(env_key)
+    try:
+        return parse_size(str(_value(config, env_key, *paths)))
+    except (ValueError, TypeError, InvalidSize):
+        # parse_size's InvalidSize isn't a ValueError
+        return 0
+
+
+def _responsetype(config, area, *paths):
+    """_first(), falling back to RESPONSE_TYPE_DEFAULT[area] when it's falsy"""
+    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")[area]
+    if config is False:
+        return default
+    return _first(config, *paths) or default
+
+
 @wrapper.config_reader
 def get_main_profile(config=None):
     if config is False:
@@ -123,41 +145,25 @@ def get_main_profile(config=None):
 
 @wrapper.config_reader
 def get_filesize_max(config=None):
-    if config is False:
-        return of_env.getattr("FILE_SIZE_MAX_DEFAULT")
-    try:
-        size = _value(
-            config,
-            "FILE_SIZE_MAX_DEFAULT",
-            "file_size_max",
-            "download_options.file_size_max",
-            "download_options.file_size_limit",
-            "content_filter_options.file_size_max",
-        )
-        return parse_size(str(size))
-    except (ValueError, TypeError, InvalidSize):
-        # parse_size's InvalidSize isn't a ValueError; an unparsable size,
-        # e.g. "", counts as 0
-        return 0
+    return _parse_size_value(
+        config,
+        "FILE_SIZE_MAX_DEFAULT",
+        "file_size_max",
+        "download_options.file_size_max",
+        "download_options.file_size_limit",
+        "content_filter_options.file_size_max",
+    )
 
 
 @wrapper.config_reader
 def get_filesize_min(config=None):
-    if config is False:
-        return of_env.getattr("FILE_SIZE_MIN_DEFAULT")
-    try:
-        size = _value(
-            config,
-            "FILE_SIZE_MIN_DEFAULT",
-            "file_size_min",
-            "download_options.file_size_min",
-            "content_filter_options.file_size_min",
-        )
-        return parse_size(str(size))
-    except (ValueError, TypeError, InvalidSize):
-        # parse_size's InvalidSize isn't a ValueError; an unparsable size,
-        # e.g. "", counts as 0
-        return 0
+    return _parse_size_value(
+        config,
+        "FILE_SIZE_MIN_DEFAULT",
+        "file_size_min",
+        "download_options.file_size_min",
+        "content_filter_options.file_size_min",
+    )
 
 
 @wrapper.config_reader
@@ -184,20 +190,12 @@ def get_max_length(config=None):
 
 @wrapper.config_reader
 def get_system_freesize(config=None):
-    if config is False:
-        return of_env.getattr("SYSTEM_FREEMIN_DEFAULT")
-    try:
-        size = _value(
-            config,
-            "SYSTEM_FREEMIN_DEFAULT",
-            "system_free_min",
-            "download_options.system_free_min",
-        )
-        return parse_size(str(size))
-    except (ValueError, TypeError, InvalidSize):
-        # parse_size's InvalidSize isn't a ValueError; an unparsable size,
-        # e.g. "", counts as 0
-        return 0
+    return _parse_size_value(
+        config,
+        "SYSTEM_FREEMIN_DEFAULT",
+        "system_free_min",
+        "download_options.system_free_min",
+    )
 
 
 @wrapper.config_reader
@@ -408,20 +406,12 @@ def get_metadata(config=None):
 
 @wrapper.config_reader
 def get_download_limit(config=None):
-    if config is False:
-        return of_env.getattr("DOWNLOAD_LIMIT_DEFAULT")
-    try:
-        limit = _value(
-            config,
-            "DOWNLOAD_LIMIT_DEFAULT",
-            "download_limit",
-            "performance_options.download_limit",
-        )
-        return parse_size(str(limit))
-    except (ValueError, TypeError, InvalidSize):
-        # parse_size's InvalidSize isn't a ValueError; an unparsable size,
-        # e.g. "", counts as 0
-        return 0
+    return _parse_size_value(
+        config,
+        "DOWNLOAD_LIMIT_DEFAULT",
+        "download_limit",
+        "performance_options.download_limit",
+    )
 
 
 @wrapper.config_reader
@@ -464,88 +454,56 @@ def responsetype(config=None):
 
 @wrapper.config_reader
 def get_timeline_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["timeline"]
-    if config is False:
-        return default
-    val = _first(
-        config, "timeline", "post", "responsetype.timeline", "responsetype.post"
+    return _responsetype(
+        config, "timeline", "timeline", "post", "responsetype.timeline", "responsetype.post"
     )
-    return val or default
 
 
 @wrapper.config_reader
 def get_post_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["timeline"]
-    if config is False:
-        return default
-    val = _first(
-        config, "post", "timeline", "responsetype.post", "responsetype.timeline"
+    return _responsetype(
+        config, "timeline", "post", "timeline", "responsetype.post", "responsetype.timeline"
     )
-    return val or default
 
 
 @wrapper.config_reader
 def get_archived_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["archived"]
-    if config is False:
-        return default
-    return _first(config, "archived", "responsetype.archived") or default
+    return _responsetype(config, "archived", "archived", "responsetype.archived")
 
 
 @wrapper.config_reader
 def get_stories_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["stories"]
-    if config is False:
-        return default
-    return _first(config, "stories", "responsetype.stories") or default
+    return _responsetype(config, "stories", "stories", "responsetype.stories")
 
 
 @wrapper.config_reader
 def get_highlights_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["highlights"]
-    if config is False:
-        return default
-    return _first(config, "highlights", "responsetype.highlights") or default
+    return _responsetype(config, "highlights", "highlights", "responsetype.highlights")
 
 
 @wrapper.config_reader
 def get_paid_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["paid"]
-    if config is False:
-        return default
-    return _first(config, "paid", "responsetype.paid") or default
+    return _responsetype(config, "paid", "paid", "responsetype.paid")
 
 
 @wrapper.config_reader
 def get_messages_progress_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["message"]
-    if config is False:
-        return default
-    return _first(config, "message", "responsetype.message") or default
+    return _responsetype(config, "message", "message", "responsetype.message")
 
 
 @wrapper.config_reader
 def get_profile_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["profile"]
-    if config is False:
-        return default
-    return _first(config, "profile", "responsetype.profile") or default
+    return _responsetype(config, "profile", "profile", "responsetype.profile")
 
 
 @wrapper.config_reader
 def get_pinned_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["pinned"]
-    if config is False:
-        return default
-    return _first(config, "pinned", "responsetype.pinned") or default
+    return _responsetype(config, "pinned", "pinned", "responsetype.pinned")
 
 
 @wrapper.config_reader
 def get_streams_responsetype(config=None):
-    default = of_env.getattr("RESPONSE_TYPE_DEFAULT")["streams"]
-    if config is False:
-        return default
-    return _first(config, "streams", "responsetype.streams") or default
+    return _responsetype(config, "streams", "streams", "responsetype.streams")
 
 
 @wrapper.config_reader

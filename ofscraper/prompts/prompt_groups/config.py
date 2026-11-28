@@ -40,6 +40,13 @@ SPEED_MAX = 100 * 1000**3 // 8  # 100 Gbps
 SPEED_MIN = 64 * 1000 // 8  # 64 Kbps; slower would stall every download
 
 
+def _apply_config_updates(updates):
+    """the whole config, as config.json would hold it, with a section's answers applied"""
+    config = config_file.open_config()
+    config.update(updates)
+    return schema.get_current_config_schema({"config": config})
+
+
 def funct(prompt_):
     console.print("""
     For more Details => https://cloakedkeys.gitbook.io/ofsc/setup/getting-started/config-options
@@ -202,10 +209,7 @@ Enter 0 to disable
         more_instruction=prompt_strings.CONFIG_MENU,
     )
     out.update(answer)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(out)
 
 
 def file_config():
@@ -283,10 +287,7 @@ def file_config():
         more_instruction=prompt_strings.CONFIG_MENU,
     )
     out.update(answer)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(out)
 
 
 def binary_config():
@@ -307,10 +308,7 @@ Certain content requires decryption to process please provide the full path to f
         more_instruction=prompt_strings.CONFIG_MENU,
     )
     out.update(answer)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(out)
 
 
 def script_config():
@@ -363,10 +361,7 @@ def script_config():
     )
 
     out.update(answer)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(out)
 
 
 def cdm_config():
@@ -404,10 +399,7 @@ def cdm_config():
         more_instruction=prompt_strings.CONFIG_MENU,
     )
     out.update(answer)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(out)
 
 
 def performance_config():
@@ -444,10 +436,7 @@ def performance_config():
         more_instruction=prompt_strings.CONFIG_MENU,
     )
 
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(out)
 
 
 def general_config():
@@ -486,10 +475,7 @@ def general_config():
         more_instruction=prompt_strings.CONFIG_MENU,
     )
     out.update(answer)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(out)
 
 
 def content_config():
@@ -552,10 +538,7 @@ def content_config():
         more_instruction=prompt_strings.CONFIG_MENU,
     )
     out.update(answer)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(out)
 
 
 def advanced_config() -> dict:
@@ -721,105 +704,43 @@ If value is 'None' or '0' no logs will be touched
         more_instruction=prompt_strings.CONFIG_MENU,
     )
     out.update(new_settings)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema(config)
-    return final
+    return _apply_config_updates(out)
+
+
+# the response type prompts, in menu order: (key in the responsetype map, what
+# it's for, what an empty answer stands for, the getter for its default)
+RESPONSE_TYPE_PROMPTS = (
+    ("timeline", "timeline posts", "posts", data.get_timeline_responsetype),
+    ("archived", "archived posts", "archived", data.get_archived_responsetype),
+    ("pinned", "pinned posts", "pinned", data.get_pinned_responsetype),
+    ("message", "message posts", "message", data.get_messages_progress_responsetype),
+    ("paid", "paid posts", "paid", data.get_paid_responsetype),
+    ("stories", "stories", "stories", data.get_stories_responsetype),
+    ("highlights", "highlights", "highlights", data.get_highlights_responsetype),
+    ("profile", "profile", "profile", data.get_profile_responsetype),
+    ("streams", "streams", "streams", data.get_streams_responsetype),
+)
 
 
 def response_type() -> dict:
-    out = {}
     answer = promptClasses.batchConverter(
         *[
             {
                 "type": "input",
-                "name": "timeline",
-                "option_instruction": """
-set responsetype for timeline posts
-Empty string is consider to be 'posts'
-            """,
-                "default": data.get_timeline_responsetype(),
-                "message": "timeline responsetype mapping: ",
-            },
-            {
-                "type": "input",
-                "name": "archived",
-                "option_instruction": """
-set responsetype for archived posts
-Empty string is consider to be 'archived'
-            """,
-                "default": data.get_archived_responsetype(),
-                "message": "archived responsetype mapping: ",
-            },
-            {
-                "type": "input",
-                "name": "pinned",
-                "option_instruction": """
-set responsetype for pinned posts
-Empty string is consider to be 'pinned'
-            """,
-                "default": data.get_pinned_responsetype(),
-                "message": "pinned responsetype mapping: ",
-            },
-            {
-                "type": "input",
-                "name": "message",
-                "option_instruction": """
-set responsetype for message posts
-Empty string is consider to be 'message'
-            """,
-                "default": data.get_messages_progress_responsetype(),
-                "message": "message responstype mapping: ",
-            },
-            {
-                "type": "input",
-                "name": "paid",
-                "option_instruction": """
-set responsetype for paid posts
-Empty string is consider to be 'paid'
-            """,
-                "default": data.get_paid_responsetype(),
-                "message": "paid responsetype mapping: ",
-            },
-            {
-                "type": "input",
-                "name": "stories",
-                "option_instruction": """
-set responsetype for stories
-Empty string is consider to be 'stories'
-            """,
-                "default": data.get_stories_responsetype(),
-                "message": "stories responsetype mapping: ",
-            },
-            {
-                "type": "input",
-                "name": "highlights",
-                "option_instruction": """
-set responsetype for highlights
-Empty string is consider to be 'highlights'
-            """,
-                "default": data.get_highlights_responsetype(),
-                "message": "highlight responsetype mapping: ",
-            },
-            {
-                "type": "input",
-                "name": "profile",
-                "option_instruction": """
-set responsetype for profile
-Empty string is consider to be 'profile'
-            """,
-                "default": data.get_profile_responsetype(),
-                "message": "profile responsetype mapping: ",
-            },
+                "name": key,
+                "option_instruction": f"""
+set responsetype for {what}
+Empty string is consider to be '{empty}'
+""",
+                "default": getter(),
+                "message": f"{key} responsetype mapping: ",
+            }
+            for key, what, empty, getter in RESPONSE_TYPE_PROMPTS
         ],
         altx=funct,
         more_instruction=prompt_strings.CONFIG_MENU,
     )
-    out.update(answer)
-    config = config_file.open_config()
-    config.update(out)
-    final = schema.get_current_config_schema({"config": config})
-    return final
+    return _apply_config_updates(answer)
 
 
 def manual_config_prompt(configText) -> str:

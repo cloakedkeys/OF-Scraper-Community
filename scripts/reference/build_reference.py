@@ -224,13 +224,16 @@ def config_getter_map():
 
 
 # lookup helper in config/data.py -> whether its first string argument is the
-# environment default's key
+# environment default's key; a string names the default it always reads, and
+# its first string argument is a key within that default
 CONFIG_LOOKUP_HELPERS = {
     "_lookup": False,
     "_first": False,
     "_first_set": False,
     "_value": True,
     "_truthy_value": True,
+    "_parse_size_value": True,
+    "_responsetype": "RESPONSE_TYPE_DEFAULT",
 }
 
 
@@ -249,14 +252,16 @@ def getter_details(getter, module_file, key_path):
             continue
         # data.py's lookup helpers: _value(config, ENV_KEY, *paths) and
         # _truthy_value likewise, _first(config, *paths) and _first_set
-        # likewise, _lookup(config, path); a path is "key" or "section.key"
+        # likewise, _lookup(config, path), _parse_size_value as _value and
+        # _responsetype(config, area, *paths); a path is "key" or "section.key"
         helper = getattr(node.func, "id", "")
         if helper in CONFIG_LOOKUP_HELPERS:
             if len(args) != len(node.args) - 1:
                 # a path held in a variable would be left out of the reference
                 raise ValueError(f"{getter}: pass {helper}() its keys as literal strings")
-            if CONFIG_LOOKUP_HELPERS[helper]:
-                envs.append(args[0])
+            env = CONFIG_LOOKUP_HELPERS[helper]
+            if env:
+                envs.append(args[0] if env is True else env)
                 args = args[1:]
             keys.extend(part for path in args for part in path.split("."))
             continue
