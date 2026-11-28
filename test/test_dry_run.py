@@ -449,7 +449,7 @@ def test_naming_script_runs_only_outside_a_dry_run(monkeypatch, library, tmp_pat
             username="a creator", model_id=5, value="free", modified_responsetype="Timeline",
             label_string="", id=7, post={}, date=None,
         )
-        monkeypatch.setattr(naming, "Post", SimpleNamespace)  # a post, for the payload
+        monkeypatch.setattr(naming.posts_, "Post", SimpleNamespace)  # a post, for the payload
         asyncio.run(naming.naming_script("dir", "file.jpg", ele))
     except Exception:
         pass  # only whether the script was started matters here
@@ -759,6 +759,6 @@ def test_the_naming_script_is_sent_the_formats_the_file_was_named_with(monkeypat
         username="a creator", model_id=5, value="free", modified_responsetype="Timeline",
         label_string="", id=7, post={}, date=None,
     )
-    monkeypatch.setattr(naming, "Post", SimpleNamespace)
+    monkeypatch.setattr(naming.posts_, "Post", SimpleNamespace)
     asyncio.run(naming.naming_script("dir", "file.jpg", ele, ("{media_id}", "{post_id}.{ext}")))
     assert (sent[0]["dir_format"], sent[0]["file_format"]) == ("{media_id}", "{post_id}.{ext}")
